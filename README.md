@@ -2,15 +2,18 @@
 
 ## プロジェクト概要
 - **名称**: TETE AOUT（内部コード名: hotpepper-automation）
-- **目的**: ホットペッパービューティーの「サロンボード」にはAPIが提供されていないため、サロンオーナーがブラウザから自社の投稿作業（ブログ・スタイル投稿）を自動化できるSaaS型Webアプリケーションを構築する。
-- **競合参考**: サロンパラダイス (https://www.salopara.com/) — ログインIDごとに独立した作業領域を持つ外部連携システム。
+- **目的**: ホットペッパービューティーの「サロンボード」にはAPIが提供されていないため、サロンオーナーがブラウザから自社の投稿作業（スタイル投稿・ブログ投稿）を自動化できるSaaS型Webアプリケーションを構築する。
+- **競合参考**: サロンパラダイス (https://www.salopara.com/)
+- **テナント構造**: **1ユーザー = 1サロン**（マルチサロン管理には対応しない。全テーブルは`user_id`でスコープされる）
 
 ⚠️ **重要な前提（ユーザー確認済み）**
 - サロンボードの利用規約リスクは許容の上で開発を進めている
 - ID/Passを預かる仕組みのため、暗号化保存・同意取得を実装している（下記参照）
 - 自動化方式は **Cloudflare Browser Rendering**（Phase 3で実装予定）を採用
 
-## 現在完了している機能（Phase 1）
+## 現在完了している機能
+
+### Phase 1: 認証・サロンボード連携設定
 - ✅ サロンオーナー向けユーザー登録・ログイン・ログアウト（メール＋パスワード認証）
   - パスワードは PBKDF2 (100,000 iterations, SHA-256) でハッシュ化してD1に保存
   - セッションはJWT(HS256)をhttpOnly Cookieに格納（有効期限7日）
@@ -18,8 +21,25 @@
   - **AES-GCM暗号化**してD1に保存（平文保存なし）
   - 利用規約・自動投稿への同意チェックボックス（`consent_given` / `consent_at`を記録）
   - 保存済みログインIDはマスク表示（例: `sa********`）
-- ✅ ダッシュボード（連携状況・投稿予約数の表示、開発ロードマップの可視化）
 - ✅ 認証必須ルートの保護（未ログイン時は`/login`へリダイレクト、APIは401）
+
+### Phase 2: スタイル投稿・ブログ投稿の準備機能
+- ✅ **スタイル画像ライブラリ**（`/style/library`）
+  - 複数画像の一括アップロード（1回最大30枚、Cloudflare R2に保存）
+  - グリッド表示＋チェックボックスで「投稿対象」画像を選択（`is_selected`）
+  - 選択中枚数のリアルタイム表示、全選択/全解除ボタン
+  - 画像削除（R2・D1両方から削除）
+- ✅ **スタイル投稿スケジュール設定**（`/style/schedule`）
+  - 1日の投稿回数（1〜5回）と実行時刻を設定
+  - 「選択画像数 × 投稿回数 = 1日の総投稿数」を画面上に表示（例: 100枚×3回=300投稿/日）
+- ✅ **ブログマスタ設定**（`/blog/master`）
+  - サロンプロフィール（コンセプト・ターゲット層・文体・NGワード）を事前登録
+  - 投稿者（スタイリスト）・カテゴリ・クーポンのマスタデータCRUD（サロンボードのブログ投稿フォームの選択項目に対応）
+- ✅ **ブログ投稿作成フォーム**（`/blog/posts`）
+  - マスタデータから投稿者・カテゴリ・クーポンをドロップダウン選択
+  - タイトル・本文・予約日時を入力し`posts`テーブルに保存（`post_type='blog'`）
+  - AI生成ボタン（キーワード入力→タイトル・本文を自動生成）※現在ブロック中（下記「既知の問題」参照）
+- ✅ ダッシュボード（連携状況・スタイル画像選択数・投稿予約数・自動化方式の表示）
 
 ## 現在の機能エントリ一覧（パス・パラメータ）
 
@@ -34,53 +54,86 @@
 | GET | `/dashboard` | 要 | ダッシュボード画面 |
 | GET | `/settings/salonboard` | 要 | サロンボードID/Pass登録・確認画面（クエリ `saved`, `error`） |
 | POST | `/settings/salonboard` | 要 | `salonboard_login_id`, `salonboard_password`, `consent` を暗号化して保存 |
+| GET | `/style/library` | 要 | スタイル画像ライブラリ（一覧・アップロードフォーム） |
+| GET | `/style/library/image/:id` | 要 | R2画像本体を配信（`id`は`style_images.id`、所有者チェックあり） |
+| POST | `/style/library/upload` | 要 | multipart `images`（最大30枚）を一括アップロード |
+| POST | `/style/library/delete/:id` | 要 | 画像を削除（R2＋D1） |
+| POST | `/api/style/toggle` | 要 | body `{imageId, selected}` — チェックボックス切替、`{success, selectedCount}`を返す |
+| POST | `/api/style/bulk-select` | 要 | body `{selected}` — 全画像を一括選択/解除 |
+| GET | `/style/schedule` | 要 | スタイル投稿スケジュール設定画面 |
+| POST | `/style/schedule` | 要 | `enabled`, `times_per_day`, `run_time_slot[]` を保存 |
+| GET | `/blog/master` | 要 | サロンプロフィール＋投稿者/カテゴリ/クーポンのマスタ管理画面 |
+| POST | `/blog/master/profile` | 要 | サロンプロフィール（コンセプト等）を保存 |
+| POST | `/blog/master/{authors\|categories\|coupons}/add` | 要 | マスタ項目を追加 |
+| POST | `/blog/master/{authors\|categories\|coupons}/:id/delete` | 要 | マスタ項目を削除 |
+| GET | `/blog/posts` | 要 | ブログ投稿作成フォーム＋直近20件の投稿一覧 |
+| POST | `/blog/posts` | 要 | ブログ投稿を`posts`テーブルに保存（`status='pending'`） |
+| POST | `/api/blog/generate` | 要 | body `{keywords}` — AIでタイトル・本文を生成（**現在401エラーでブロック中**） |
 
 ## データアーキテクチャ
 - **DB**: Cloudflare D1 (`hotpepper-automation-production`)
-- **テーブル**（`migrations/0001_initial_schema.sql`）:
-  - `users`: サロンオーナー（email, password_hash, salon_name）
-  - `salon_credentials`: サロンボードID/Pass（AES-GCM暗号化列 `*_enc`、同意フラグ）
-  - `posts`: ブログ/スタイル投稿予約（Phase 2以降で使用。status: pending/processing/done/failed）
-  - `execution_logs`: 自動投稿ロボの実行結果ログ（Phase 3以降で使用）
+- **ストレージ**: Cloudflare R2 (`hotpepper-automation-style-images`, binding: `STYLE_IMAGES`)
+- **テナント構造**: 全テーブルは`user_id`で直接スコープ（マルチサロン非対応、`salons`テーブルは存在しない）
+- **テーブル**:
+  - `migrations/0001_initial_schema.sql`:
+    - `users`: サロンオーナー（email, password_hash, salon_name）
+    - `salon_credentials`: サロンボードID/Pass（AES-GCM暗号化列 `*_enc`、同意フラグ）
+    - `posts`: ブログ/スタイル投稿予約（status: pending/processing/done/failed、Phase 2で`author_name`/`category_name`/`coupon_name`/`image_r2_key`列を追加）
+    - `execution_logs`: 自動投稿ロボの実行結果ログ（Phase 3以降で使用）
+  - `migrations/0002_multi_salon_support.sql`（※ファイル名は初期案の名残だが内容はuser_idスコープ）:
+    - `style_images`: スタイル画像（user_id, r2_key, is_selected, post_count, sort_order等）
+    - `style_post_schedules`: スタイル投稿スケジュール（user_id UNIQUE, enabled, times_per_day, run_times JSON）
+    - `style_post_runs`: 実行履歴（Phase 3で使用予定）
+    - `blog_authors` / `blog_categories` / `blog_coupons`: ブログマスタデータ（user_id, name, is_active, sort_order）
+    - `salon_profiles`: サロンプロフィール（user_id UNIQUE, concept, target_customer, writing_tone, ng_words）
 - **暗号化**:
   - `src/lib/crypto.ts` — Web Crypto API のみで実装（Node.js `crypto` 非依存、Cloudflare Workers対応）
   - パスワード: PBKDF2ハッシュ（`salt:hash` base64形式）
   - サロンボードID/Pass: AES-GCM（`ENCRYPTION_KEY` 環境変数で暗号化・復号）
 - **認証**: `src/lib/jwt.ts`（HS256 JWT自作実装）+ `src/lib/auth-middleware.ts`（Honoミドルウェア）
+- **AI生成**: `src/lib/ai-generate.ts` — GenSpark LLM Proxy（OpenAI互換, `gpt-5-mini`）を`OPENAI_API_KEY`/`OPENAI_BASE_URL`で呼び出し
 
 ## 環境変数（Secrets）
 | 変数名 | 用途 | ローカル設定場所 |
 |---|---|---|
 | `JWT_SECRET` | セッションJWTの署名鍵 | `.dev.vars`（gitignore対象） |
 | `ENCRYPTION_KEY` | サロンボードID/PassのAES-GCM暗号化鍵（32byte base64） | `.dev.vars`（gitignore対象） |
+| `OPENAI_API_KEY` | AIブログ生成用（GenSpark LLM Proxy） | `.dev.vars`（gitignore対象） |
+| `OPENAI_BASE_URL` | AIブログ生成用エンドポイント | `.dev.vars`（gitignore対象） |
 
-本番デプロイ時は `wrangler pages secret put JWT_SECRET` / `ENCRYPTION_KEY` で設定すること。
+本番デプロイ時は `wrangler pages secret put JWT_SECRET` / `ENCRYPTION_KEY` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` で設定すること。
 **⚠️ ENCRYPTION_KEYを変更すると既存の暗号化データが復号不能になるため、本番用の値は厳重に保管すること。**
 
 ## ユーザーガイド（簡易）
 1. `/signup` でサロン名・メールアドレス・パスワードを入力し新規登録
-2. ログイン後、ダッシュボードから「サロンボード連携設定」へ進む
-3. サロンボードのログインID・パスワードを入力し、同意チェックを入れて保存
-4. （Phase 2以降）ブログ・スタイル投稿の内容を入力・AI生成し、投稿予約を作成
+2. ログイン後、ダッシュボードから「サロンボード連携設定」へ進み、サロンボードのログインID・パスワードを登録
+3. **スタイル投稿**: `/style/library` で写真を一括アップロード→チェックボックスで投稿対象を選択→`/style/schedule` で1日の投稿回数・時刻を設定
+4. **ブログ投稿**: `/blog/master` で投稿者・カテゴリ・クーポン・サロンプロフィールを登録→`/blog/posts` でAI生成または手入力で記事を作成し予約
 5. （Phase 3以降）予約時刻になると自動投稿ロボ（Cloudflare Browser Rendering）がサロンボードにログインし投稿を実行
 
+## 既知の問題
+- ⚠️ **AIブログ生成（`/api/blog/generate`）が401エラーでブロック中**
+  - エラー内容: `{"detail":"Invalid or expired token"}`
+  - Cloudflare Worker外（直接curl・Node.js SDK単体テスト）でも同じ401が再現するため、アプリコードの不具合ではなく、GenSparkプラットフォーム側のLLM APIキーが無効/期限切れの状態と判断される
+  - **対応方法**: GenSparkの「API Keys」タブでAPIキーを再生成し、「Inject」でサンドボックス環境に再設定する必要がある
+  - この機能以外のPhase 2機能（スタイル画像ライブラリ、スケジュール設定、ブログマスタ管理、投稿フォーム）は全て動作確認済み
+
 ## まだ実装されていない機能
-- ❌ Phase 2: ブログ/スタイル投稿の入力フォーム・AI（ChatGPT/Claude API）による本文自動生成・R2への画像保存
 - ❌ Phase 3: Cloudflare Browser Renderingによるサロンボードへの自動ログイン・自動投稿の実行（Cron Trigger連携）
+- ❌ AIブログ生成の動作確認（APIキー問題の解消待ち）
 - ❌ 投稿失敗時の通知（メール/LINE等）
-- ❌ 複数店舗・複数オーナー対応のマルチテナント権限設計の強化
 - ❌ パスワードリセット・メールアドレス確認フロー
 - ❌ サロンボード利用規約の詳細確認・利用規約/プライバシーポリシーページ
+- ❌ 本番Cloudflareアカウントへのデプロイ
 
 ## 推奨する次の開発ステップ
-1. **Phase 2着手**: `/posts/new` でブログ・スタイル投稿フォームを実装し、`posts`テーブルに保存
-2. AI生成機能: Hono API route (`/api/generate-blog`) からOpenAI/Claude APIを呼び出し（APIキーは`wrangler secret`で管理）
-3. スタイル写真のアップロード: Cloudflare R2バケットを追加し画像を保存
-4. **Phase 3着手**: Cloudflare Browser Rendering APIをWorkerから呼び出し、Cron Triggerで`posts`テーブルの`pending`予約を処理
-5. 本番Cloudflareアカウントへのデプロイ（D1本番データベース作成、Secrets設定）
+1. AIブログ生成のAPIキー問題を解消し、動作確認する
+2. **Phase 3着手**: Cloudflare Browser Rendering APIをWorkerから呼び出し、Cron Triggerで`style_post_schedules`/`posts`テーブルの`pending`予約を処理する自動投稿ロボを実装
+3. 投稿失敗時のリトライ・通知機能
+4. 本番Cloudflareアカウントへのデプロイ（D1/R2本番リソース作成、Secrets設定）
 
 ## デプロイ状況
 - **プラットフォーム**: Cloudflare Pages（未デプロイ、サンドボックス内でのみ動作確認済み）
-- **技術スタック**: Hono + TypeScript + Cloudflare D1 + Web Crypto API + Tailwind CSS(CDN)
+- **技術スタック**: Hono + TypeScript + Cloudflare D1 + Cloudflare R2 + Web Crypto API + Tailwind CSS(CDN) + axios(CDN)
 - **自動化方式**: Cloudflare Browser Rendering（Phase 3で実装予定、Puppeteerベース）
 - **最終更新**: 2026-08-04

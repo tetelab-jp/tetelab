@@ -1,64 +1,12 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
+import { PageLayout } from '../components/layout'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
 dashboard.use('*', requireAuth)
-
-function Sidebar({ active, salonName }: { active: string; salonName: string | null }) {
-  const items = [
-    { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード' },
-    { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定' },
-    { key: 'posts', href: '#', icon: 'fa-pen-to-square', label: 'ブログ・スタイル投稿', disabled: true }
-  ]
-  return (
-    <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
-      <div class="flex items-center gap-2 mb-8 px-1">
-        <div class="w-9 h-9 rounded-xl bg-pink-500 text-white flex items-center justify-center">
-          <i class="fas fa-scissors"></i>
-        </div>
-        <div>
-          <p class="font-bold text-sm leading-tight">TETE AOUT</p>
-          <p class="text-xs text-gray-400 leading-tight">{salonName || 'マイページ'}</p>
-        </div>
-      </div>
-      <nav class="space-y-1">
-        {items.map((item) => (
-          <a
-            href={item.href}
-            class={
-              'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ' +
-              (item.key === active
-                ? 'bg-pink-50 text-pink-600'
-                : item.disabled
-                  ? 'text-gray-300 cursor-not-allowed'
-                  : 'text-gray-600 hover:bg-gray-50')
-            }
-          >
-            <i class={`fas ${item.icon} w-4`}></i>
-            <span>{item.label}</span>
-            {item.disabled && <span class="ml-auto text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded">Phase2</span>}
-          </a>
-        ))}
-      </nav>
-      <form method="post" action="/logout" class="mt-8 px-1">
-        <button type="submit" class="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-2">
-          <i class="fas fa-arrow-right-from-bracket"></i> ログアウト
-        </button>
-      </form>
-    </aside>
-  )
-}
-
-function TopBar({ title }: { title: string }) {
-  return (
-    <header class="border-b border-gray-100 bg-white px-6 py-4 flex items-center justify-between">
-      <h1 class="text-lg font-bold text-gray-900">{title}</h1>
-    </header>
-  )
-}
 
 // ---------- Dashboard ----------
 
@@ -72,60 +20,95 @@ dashboard.get('/dashboard', async (c) => {
     .bind(user.id)
     .first<{ cnt: number }>()
 
+  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM style_images WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ total: number }>()
+
+  const styleSelectedRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as selected FROM style_images WHERE user_id = ? AND is_selected = 1'
+  )
+    .bind(user.id)
+    .first<{ selected: number }>()
+
   return c.render(
-    <div class="flex">
-      <Sidebar active="dashboard" salonName={user.salon_name} />
-      <div class="flex-1">
-        <TopBar title="ダッシュボード" />
-        <main class="p-6 space-y-6">
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="bg-white rounded-xl border border-gray-100 p-5">
-              <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-              <p class={'text-lg font-bold ' + (cred ? 'text-green-600' : 'text-gray-400')}>
-                {cred ? <><i class="fas fa-circle-check mr-1"></i>連携済み</> : <><i class="fas fa-circle-xmark mr-1"></i>未設定</>}
-              </p>
-            </div>
-            <div class="bg-white rounded-xl border border-gray-100 p-5">
-              <p class="text-xs text-gray-400 mb-1">投稿予約数</p>
-              <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
-            </div>
-            <div class="bg-white rounded-xl border border-gray-100 p-5">
-              <p class="text-xs text-gray-400 mb-1">自動投稿方式</p>
-              <p class="text-lg font-bold text-gray-800">Cloudflare Browser Rendering</p>
-            </div>
-          </div>
-
-          {!cred && (
-            <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
-              <i class="fas fa-triangle-exclamation text-amber-500 mt-0.5"></i>
-              <div>
-                <p class="font-semibold text-amber-800">サロンボードとの連携が未設定です</p>
-                <p class="text-sm text-amber-700 mt-1">
-                  自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。
-                </p>
-                <a
-                  href="/settings/salonboard"
-                  class="inline-block mt-3 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg"
-                >
-                  連携設定へ進む
-                </a>
-              </div>
-            </div>
-          )}
-
-          <div class="bg-white rounded-xl border border-gray-100 p-5">
-            <p class="font-semibold mb-2">
-              <i class="fas fa-road mr-2 text-pink-500"></i>開発ロードマップ
-            </p>
-            <ul class="text-sm text-gray-600 space-y-1 list-disc list-inside">
-              <li>✅ Phase 1: ログイン・サロンボードID/Pass登録（今回実装分）</li>
-              <li>⏳ Phase 2: ブログ・スタイル投稿の入力＆AI生成フォーム</li>
-              <li>⏳ Phase 3: Cloudflare Browser Renderingによる自動投稿の実行</li>
-            </ul>
-          </div>
-        </main>
+    <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
+          <p class={'text-lg font-bold ' + (cred ? 'text-green-600' : 'text-gray-400')}>
+            {cred ? <><i class="fas fa-circle-check mr-1"></i>連携済み</> : <><i class="fas fa-circle-xmark mr-1"></i>未設定</>}
+          </p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">スタイル画像（選択中/総数）</p>
+          <p class="text-lg font-bold text-gray-800">
+            {styleSelectedRow?.selected ?? 0} / {styleTotalRow?.total ?? 0} 枚
+          </p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
+          <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">自動投稿方式</p>
+          <p class="text-base font-bold text-gray-800">Browser Rendering</p>
+        </div>
       </div>
-    </div>,
+
+      {!cred && (
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
+          <i class="fas fa-triangle-exclamation text-amber-500 mt-0.5"></i>
+          <div>
+            <p class="font-semibold text-amber-800">サロンボードとの連携が未設定です</p>
+            <p class="text-sm text-amber-700 mt-1">
+              自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。
+            </p>
+            <a
+              href="/settings/salonboard"
+              class="inline-block mt-3 text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg"
+            >
+              連携設定へ進む
+            </a>
+          </div>
+        </div>
+      )}
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="font-semibold mb-2">
+            <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
+          </p>
+          <p class="text-sm text-gray-600 mb-3">
+            画像ライブラリに事前登録し、チェックした画像のみ自動投稿されます。
+          </p>
+          <a href="/style/library" class="text-sm font-semibold text-pink-600 hover:underline">
+            画像ライブラリを開く <i class="fas fa-arrow-right ml-1"></i>
+          </a>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="font-semibold mb-2">
+            <i class="fas fa-pen-to-square mr-2 text-pink-500"></i>ブログ投稿
+          </p>
+          <p class="text-sm text-gray-600 mb-3">
+            投稿者・カテゴリ・クーポンを事前登録し、AIで本文を生成して投稿予約できます。
+          </p>
+          <a href="/blog/posts" class="text-sm font-semibold text-pink-600 hover:underline">
+            ブログ投稿を作成する <i class="fas fa-arrow-right ml-1"></i>
+          </a>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-5">
+        <p class="font-semibold mb-2">
+          <i class="fas fa-road mr-2 text-pink-500"></i>開発ロードマップ
+        </p>
+        <ul class="text-sm text-gray-600 space-y-1 list-disc list-inside">
+          <li>✅ Phase 1: ログイン・サロンボードID/Pass登録</li>
+          <li>✅ Phase 2: スタイル画像ライブラリ・自動投稿スケジュール、ブログ基本設定・AI生成</li>
+          <li>⏳ Phase 3: Cloudflare Browser Renderingによる自動投稿の実行</li>
+        </ul>
+      </div>
+    </PageLayout>,
     { title: 'ダッシュボード' }
   )
 })
@@ -157,78 +140,74 @@ dashboard.get('/settings/salonboard', async (c) => {
   }
 
   return c.render(
-    <div class="flex">
-      <Sidebar active="settings" salonName={user.salon_name} />
-      <div class="flex-1">
-        <TopBar title="サロンボード連携設定" />
-        <main class="p-6 max-w-2xl space-y-6">
-          {saved && (
-            <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
-              <i class="fas fa-circle-check mr-2"></i>保存しました
-            </div>
-          )}
-          {error && (
-            <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
-              <i class="fas fa-circle-exclamation mr-2"></i>{error}
-            </div>
-          )}
+    <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
+      {saved && (
+        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+      {error && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-exclamation mr-2"></i>{error}
+        </div>
+      )}
 
+      <div class="max-w-2xl space-y-6">
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-1">
+            <i class="fas fa-shield-halved mr-2 text-pink-500"></i>セキュリティについて
+          </p>
+          <p class="text-sm text-gray-500 leading-relaxed">
+            入力されたログインID・パスワードはAES-GCM方式で暗号化してデータベースに保存されます。
+            自動投稿ロボがサロンボードにログインする際のみ、サーバー内で一時的に復号して使用します。
+            第三者への提供・目的外利用は行いません。
+          </p>
+        </div>
+
+        {cred && (
           <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <p class="font-semibold mb-1">
-              <i class="fas fa-shield-halved mr-2 text-pink-500"></i>セキュリティについて
-            </p>
-            <p class="text-sm text-gray-500 leading-relaxed">
-              入力されたログインID・パスワードはAES-GCM方式で暗号化してデータベースに保存されます。
-              自動投稿ロボがサロンボードにログインする際のみ、サーバー内で一時的に復号して使用します。
-              第三者への提供・目的外利用は行いません。
-            </p>
+            <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
+            <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
+            <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
           </div>
+        )}
 
-          {cred && (
-            <div class="bg-white rounded-xl border border-gray-100 p-6">
-              <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
-              <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
-              <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
-            </div>
-          )}
-
-          <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
-              <input
-                required
-                type="text"
-                name="salonboard_login_id"
-                placeholder="サロンボードのログインIDを入力"
-                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-              />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
-              <input
-                required
-                type="password"
-                name="salonboard_password"
-                placeholder="サロンボードのパスワードを入力"
-                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-              />
-            </div>
-            <label class="flex items-start gap-2 text-sm text-gray-600">
-              <input required type="checkbox" name="consent" class="mt-1" />
-              <span>
-                本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
-              </span>
-            </label>
-            <button
-              type="submit"
-              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
-            >
-              {cred ? '更新する' : '登録する'}
-            </button>
-          </form>
-        </main>
+        <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
+            <input
+              required
+              type="text"
+              name="salonboard_login_id"
+              placeholder="サロンボードのログインIDを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
+            <input
+              required
+              type="password"
+              name="salonboard_password"
+              placeholder="サロンボードのパスワードを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <label class="flex items-start gap-2 text-sm text-gray-600">
+            <input required type="checkbox" name="consent" class="mt-1" />
+            <span>
+              本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
+            </span>
+          </label>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            {cred ? '更新する' : '登録する'}
+          </button>
+        </form>
       </div>
-    </div>,
+    </PageLayout>,
     { title: 'サロンボード連携設定' }
   )
 })

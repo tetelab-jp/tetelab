@@ -19,6 +19,7 @@ export const renderer = jsxRenderer(({ children, title }) => {
           rel="stylesheet"
         />
         <link href="/static/style.css" rel="stylesheet" />
+        <script src="https://cdn.jsdelivr.net/npm/axios@1.6.0/dist/axios.min.js"></script>
       </head>
       <body class="bg-gray-50 min-h-screen text-gray-800">{children}</body>
     </html>

@@ -12,6 +12,12 @@
       "database_name": "hotpepper-automation-production",
       "database_id": "local-dev-placeholder"
     }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "STYLE_IMAGES",
+      "bucket_name": "hotpepper-automation-style-images"
+    }
   ]
   // "vars": {
   //   "MY_VAR": "my-variable"

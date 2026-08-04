@@ -1,0 +1,71 @@
+// スタイル画像ライブラリ画面の操作用JS
+document.addEventListener('DOMContentLoaded', () => {
+  const selectedCountEl = document.getElementById('selected-count')
+
+  function updateSelectedCount(count) {
+    if (selectedCountEl) selectedCountEl.textContent = count
+  }
+
+  // チェックボックスの切り替え
+  document.querySelectorAll('.style-checkbox').forEach((checkbox) => {
+    checkbox.addEventListener('change', async (e) => {
+      const target = e.target
+      const imageId = Number(target.getAttribute('data-image-id'))
+      const selected = target.checked
+
+      try {
+        const res = await axios.post('/api/style/toggle', { imageId, selected })
+        updateSelectedCount(res.data.selectedCount)
+      } catch (err) {
+        alert('更新に失敗しました。再度お試しください。')
+        target.checked = !selected
+      }
+    })
+  })
+
+  // 全選択
+  const selectAllBtn = document.getElementById('select-all-btn')
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', async () => {
+      try {
+        const res = await axios.post('/api/style/bulk-select', { selected: true })
+        document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = true))
+        updateSelectedCount(res.data.selectedCount)
+      } catch (err) {
+        alert('更新に失敗しました。')
+      }
+    })
+  }
+
+  // 全解除
+  const deselectAllBtn = document.getElementById('deselect-all-btn')
+  if (deselectAllBtn) {
+    deselectAllBtn.addEventListener('click', async () => {
+      try {
+        const res = await axios.post('/api/style/bulk-select', { selected: false })
+        document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = false))
+        updateSelectedCount(res.data.selectedCount)
+      } catch (err) {
+        alert('更新に失敗しました。')
+      }
+    })
+  }
+
+  // 画像削除
+  document.querySelectorAll('.delete-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      const target = e.currentTarget
+      const imageId = target.getAttribute('data-image-id')
+      if (!confirm('この画像を削除しますか？')) return
+
+      try {
+        await axios.post(`/style/library/delete/${imageId}`)
+        const card = document.querySelector(`[data-image-id="${imageId}"]`)
+        if (card) card.remove()
+        location.reload()
+      } catch (err) {
+        alert('削除に失敗しました。')
+      }
+    })
+  })
+})

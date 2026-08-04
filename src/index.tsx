@@ -3,6 +3,8 @@ import { getCookie } from 'hono/cookie'
 import { renderer } from './renderer'
 import auth from './routes/auth'
 import dashboard from './routes/dashboard'
+import style from './routes/style'
+import blog from './routes/blog'
 import { SESSION_COOKIE_NAME } from './lib/auth-middleware'
 import { verifyJwt } from './lib/jwt'
 import type { Bindings } from './types'
@@ -23,5 +25,7 @@ app.get('/', async (c) => {
 
 app.route('/', auth)
 app.route('/', dashboard)
+app.route('/', style)
+app.route('/', blog)
 
 export default app
