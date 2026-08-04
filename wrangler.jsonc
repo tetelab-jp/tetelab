@@ -18,7 +18,14 @@
       "binding": "STYLE_IMAGES",
       "bucket_name": "hotpepper-automation-style-images"
     }
-  ]
+  ],
+  "browser": {
+    "binding": "BROWSER"
+  }
+  // 注意: Cloudflare Pagesプロジェクトはネイティブの Cron Trigger (scheduled()) を
+  // サポートしないため、定期実行は /api/cron/run-style-posts を外部クロン
+  // (例: 別の軽量Cloudflare WorkerのCron Trigger、またはcron-job.org等)から
+  // CRON_SECRETをBearerトークンとして叩く方式で代替している（automation.ts参照）。
   // "vars": {
   //   "MY_VAR": "my-variable"
   // },

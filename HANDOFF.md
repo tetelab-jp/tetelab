@@ -233,3 +233,35 @@ npm run deploy
 
 - HPBの利用規約に違反するリスクを**明示的に承知の上で自動化を進めることに同意済み**(法的リスクは自己責任として容認)
 - 「1ユーザー=1サロン」構成を明示的に希望・確定(マルチテナント/salon_id設計は不採用)
+
+---
+
+## 追記（2026-08-05, Claude.ai上での引き継ぎ後の作業）
+
+前回のGenspark上のセッションからプロジェクト一式（zip）を引き継ぎ、Phase 3の実装に着手した。
+
+### このセッションで実装したこと
+1. `wrangler.jsonc` / `src/types.ts` に `BROWSER` バインディングを追加
+2. `src/lib/salonboard-automation.ts` を新規作成
+   - `loginToSalonBoard()`: `/CNC/login/doLogin/` を叩く `dologin()` をpage.evaluateで直接呼び出し
+   - `draftRegisterStyle()`: `addStyle()` → `styleEditForm` 入力 → `doRegister` ボタンクリック
+   - `submitReflectApplication()`: 掲載管理TOPで `reflected(` にマッチする要素をクリック
+   - `uploadFrontImage()`: **未検証**。モーダルを開いてinput[type=file]にBase64経由でFileを注入する一般的パターンで実装したが、実際のモーダルDOM構造は未確認のまま
+3. `src/lib/style-post-runner.ts`: 1回の実行（対象画像取得→ループ投稿→`style_post_runs`/`execution_logs`への記録）を共通化
+4. `migrations/0003_style_post_template.sql`: 「投稿テンプレート」テーブルを新設
+   - **重要な設計判断**: サロンボードのスタイル投稿フォームはスタイリスト・カテゴリ・ヘアレングス・メニュー詳細・コメントが必須だが、Phase 2の画像ライブラリはタイトル程度しか収集していなかった。画像1枚ごとに毎回入力させるのは運用上非現実的なため、「共通テンプレートを1つ設定し全画像に適用する」方式にした。画像ごとに内容を変えたい場合は将来的に`style_images`へ個別カラムを追加する拡張が必要。
+5. `/style/template`（GET/POST）: テンプレート設定画面（`src/routes/style.tsx`に追加）
+6. `/style/test-run`（GET）、`/api/automation/test-run`（POST）、`/api/cron/run-style-posts`（POST）: `src/routes/automation.ts` として新規作成
+   - テスト実行はログイン中ユーザー本人のみ実行可能、パスワードは画面・レスポンスに一切含めない
+   - Cloudflare Pagesはネイティブcron triggerを持たないため、外部から`CRON_SECRET`付きBearer認証で叩く受け口として実装（呼び出し元の定期実行の仕組み自体は別途構築が必要）
+7. `README.md`にPhase 3実装状況セクションを追記
+
+### 次にやるべきこと（優先順位順）
+1. **写真アップロードの実装検証**: 実際にサロンボードにログインし、Chrome DevTools NetworkタブでスタイルEdit画面の画像アップロードモーダルの挙動を確認。`uploadFrontImage()`のセレクタ・ロジックを実際のDOMに合わせて修正。
+2. **本番/リモート環境でのE2Eテスト**: ローカルサンドボックス（`wrangler pages dev --local`）ではBrowser Renderingは動作しないため、Cloudflareにデプロイするか`wrangler dev`のリモートモードでテストが必要。まずはテスト用のダミーアカウント、または本人の実アカウントで少数枚のテスト投稿から始めることを推奨。
+3. **`/style/template`の実際の値の入力**: スタイリスト選択値・ヘアレングス選択値は、実際のサロンボードのHTML（`<select>`の`<option value>`）を見て正しい値をユーザーに入力してもらう必要がある。
+4. **外部Cronトリガーの構築**: `/api/cron/run-style-posts`を定期的に叩く仕組み（軽量な別Cloudflare Workerを1つ作りCron Triggerを設定→fetchでこのエンドポイントを呼ぶ、が一番シンプル）。
+5. **ブログ投稿の自動化**: 生HTML未取得のため着手不可。ブログ一覧・編集画面のHTMLダンプをユーザーに依頼する。
+
+### セキュリティに関する注意
+アップロードされた `.dev.vars` に実際のOpenAI APIキーが平文で含まれていた（gitには含まれていないことは確認済み）。共有環境を経由したキーなので、念のためOpenAI側でローテーション（キー再発行）することを推奨する。

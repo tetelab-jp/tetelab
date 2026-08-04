@@ -114,12 +114,25 @@
 ## 既知の問題
 - 現時点で既知のブロッカーなし。AIブログ生成はユーザー提供のOpenAI公式APIキー（`gpt-4o-mini`）で動作確認済み。
 
-## まだ実装されていない機能
-- ❌ Phase 3: Cloudflare Browser Renderingによるサロンボードへの自動ログイン・自動投稿の実行（Cron Trigger連携）
+## Phase 3 実装状況（2026-08-05時点）
+- ✅ `browser`バインディング追加（wrangler.jsonc / types.ts）
+- ✅ `src/lib/salonboard-automation.ts`: ログイン・スタイル登録・反映申請のPuppeteer実装
+- ✅ `src/lib/style-post-runner.ts`: 1回分の実行ロジック（画像取得→投稿→ログ記録）
+- ✅ `/style/template`: 投稿テンプレート設定画面（スタイリスト・カテゴリ等の共通設定）
+- ✅ `/style/test-run`: 手動テスト実行画面・実行履歴表示
+- ✅ `/api/automation/test-run`: テスト実行API（本人のみ）
+- ✅ `/api/cron/run-style-posts`: 外部Cronトリガー受け口（`CRON_SECRET`によるBearer認証）
+- ⚠️ **未検証・要確認**:
+  - `SALONBOARD_BASE_URL`（実際のドメイン）
+  - 写真アップロードモーダルの実際のDOM構造・アップロード方式（`salonboard-automation.ts`の`uploadFrontImage`はUI操作の一般的パターンで実装した未検証コード）
+  - スタイリスト選択値・ヘアレングス選択値の実際の`<option value>`（`/style/template`でユーザー自身が入力する運用）
+  - ブログ投稿の生HTML未取得（フォーム構造・POST先が未確定）
+- ❌ Cloudflare Pagesはネイティブのcron triggerを持たないため、`/api/cron/run-style-posts`を定期的に呼び出す外部トリガー（別Workerや外部クロンサービス）は未構築
 - ❌ 投稿失敗時の通知（メール/LINE等）
 - ❌ パスワードリセット・メールアドレス確認フロー
 - ❌ サロンボード利用規約の詳細確認・利用規約/プライバシーポリシーページ
 - ❌ 本番Cloudflareアカウントへのデプロイ
+- ❌ 実際のサロンボード環境での動作テスト（ローカルサンドボックスではBrowser Renderingは動作しないため、本番またはwrangler devのリモートモードでのテストが必須）
 
 ## 推奨する次の開発ステップ
 1. **Phase 3着手**: Cloudflare Browser Rendering APIをWorkerから呼び出し、Cron Triggerで`style_post_schedules`/`posts`テーブルの`pending`予約を処理する自動投稿ロボを実装

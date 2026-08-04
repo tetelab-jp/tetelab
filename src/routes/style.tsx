@@ -380,4 +380,163 @@ style.post('/style/schedule', async (c) => {
   return c.redirect('/style/schedule?saved=1')
 })
 
+// ---------- 投稿テンプレート設定 ----------
+// Phase3の自動投稿で使う「スタイリスト・カテゴリ・コメント等」の共通設定。
+// サロンボードのスタイル投稿フォームは画像1枚ごとにこれらの必須入力があるが、
+// 事前登録した画像プールから毎日自動投稿する運用のため、共通テンプレートとして
+// 1回設定すれば全画像に適用される。
+
+type StyleTemplateRow = {
+  stylist_select_value: string | null
+  stylist_comment: string | null
+  category_cd: string
+  hair_length_value: string | null
+  menu_contents_cd_list: string
+  menu_detail_text: string | null
+}
+
+style.get('/style/template', async (c) => {
+  const user = c.get('user')
+  const saved = c.req.query('saved')
+
+  const tpl = await c.env.DB.prepare(
+    `SELECT stylist_select_value, stylist_comment, category_cd, hair_length_value, menu_contents_cd_list, menu_detail_text
+     FROM style_post_templates WHERE user_id = ?`
+  )
+    .bind(user.id)
+    .first<StyleTemplateRow>()
+
+  const menuCodes: string[] = tpl ? JSON.parse(tpl.menu_contents_cd_list || '[]') : []
+
+  return c.render(
+    <PageLayout active="style-template" salonName={user.salon_name} title="投稿テンプレート設定">
+      {saved && (
+        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+        <i class="fas fa-triangle-exclamation mr-2"></i>
+        ここで設定した内容が、自動投稿されるすべてのスタイル投稿に共通で使われます。
+        「スタイリスト選択値」「ヘアレングス値」はサロンボード側の実際の選択肢に対応する値が必要です。
+        サロンボードのスタイル投稿編集画面で該当項目をブラウザの開発者ツールで確認し、正しい値を入力してください。
+      </div>
+
+      <form method="post" action="/style/template" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-xl">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
+          <select name="category_cd" class="rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <option value="SG01" selected={!tpl || tpl.category_cd === 'SG01'}>レディース</option>
+            <option value="SG02" selected={tpl?.category_cd === 'SG02'}>メンズ</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            スタイリスト選択値
+            <span class="text-xs text-gray-400 ml-1">(#stylistCheckCdのoption value)</span>
+          </label>
+          <input
+            type="text"
+            name="stylist_select_value"
+            value={tpl?.stylist_select_value || ''}
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            ヘアレングス選択値
+            <span class="text-xs text-gray-400 ml-1">(ladiesHairLengthCd/mensHairLengthCdのoption value)</span>
+          </label>
+          <input
+            type="text"
+            name="hair_length_value"
+            value={tpl?.hair_length_value || ''}
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">メニュー内容（任意・カンマ区切り MC01,MC02...）</label>
+          <input
+            type="text"
+            name="menu_contents_cd_list"
+            value={menuCodes.join(',')}
+            placeholder="MC01,MC03"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">メニュー詳細（必須・最大100文字）</label>
+          <textarea
+            name="menu_detail_text"
+            rows={2}
+            maxlength={100}
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >{tpl?.menu_detail_text || ''}</textarea>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">スタイリストコメント（必須・最大240文字）</label>
+          <textarea
+            name="stylist_comment"
+            rows={4}
+            maxlength={240}
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          >{tpl?.stylist_comment || ''}</textarea>
+        </div>
+
+        <button
+          type="submit"
+          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+        >
+          保存する
+        </button>
+      </form>
+    </PageLayout>,
+    { title: '投稿テンプレート設定' }
+  )
+})
+
+style.post('/style/template', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+
+  const categoryCd = String(body.category_cd || 'SG01')
+  const stylistSelectValue = String(body.stylist_select_value || '').trim()
+  const hairLengthValue = String(body.hair_length_value || '').trim()
+  const menuDetailText = String(body.menu_detail_text || '').trim().slice(0, 100)
+  const stylistComment = String(body.stylist_comment || '').trim().slice(0, 240)
+  const menuCodes = String(body.menu_contents_cd_list || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+
+  const existing = await c.env.DB.prepare('SELECT id FROM style_post_templates WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ id: number }>()
+
+  if (existing) {
+    await c.env.DB.prepare(
+      `UPDATE style_post_templates
+       SET category_cd = ?, stylist_select_value = ?, hair_length_value = ?, menu_contents_cd_list = ?, menu_detail_text = ?, stylist_comment = ?, updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`
+    )
+      .bind(categoryCd, stylistSelectValue, hairLengthValue, JSON.stringify(menuCodes), menuDetailText, stylistComment, user.id)
+      .run()
+  } else {
+    await c.env.DB.prepare(
+      `INSERT INTO style_post_templates (user_id, category_cd, stylist_select_value, hair_length_value, menu_contents_cd_list, menu_detail_text, stylist_comment)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`
+    )
+      .bind(user.id, categoryCd, stylistSelectValue, hairLengthValue, JSON.stringify(menuCodes), menuDetailText, stylistComment)
+      .run()
+  }
+
+  return c.redirect('/style/template?saved=1')
+})
+
 export default style
