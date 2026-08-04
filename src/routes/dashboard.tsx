@@ -20,7 +20,7 @@ function Sidebar({ active, salonName }: { active: string; salonName: string | nu
           <i class="fas fa-scissors"></i>
         </div>
         <div>
-          <p class="font-bold text-sm leading-tight">サロン自動投稿</p>
+          <p class="font-bold text-sm leading-tight">TETE AOUT</p>
           <p class="text-xs text-gray-400 leading-tight">{salonName || 'マイページ'}</p>
         </div>
       </div>

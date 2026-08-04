@@ -12,7 +12,7 @@ export const renderer = jsxRenderer(({ children, title }) => {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>{title ? `${title} | サロン自動投稿ツール` : 'サロン自動投稿ツール'}</title>
+        <title>{title ? `${title} | TETE AOUT` : 'TETE AOUT'}</title>
         <script src="https://cdn.tailwindcss.com"></script>
         <link
           href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css"
