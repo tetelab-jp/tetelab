@@ -38,7 +38,7 @@
 - ✅ **ブログ投稿作成フォーム**（`/blog/posts`）
   - マスタデータから投稿者・カテゴリ・クーポンをドロップダウン選択
   - タイトル・本文・予約日時を入力し`posts`テーブルに保存（`post_type='blog'`）
-  - AI生成ボタン（キーワード入力→タイトル・本文を自動生成）※現在ブロック中（下記「既知の問題」参照）
+  - AI生成ボタン（キーワード入力→サロンプロフィールを反映したタイトル・本文を自動生成、OpenAI API `gpt-4o-mini`使用）✅ 動作確認済み
 - ✅ ダッシュボード（連携状況・スタイル画像選択数・投稿予約数・自動化方式の表示）
 
 ## 現在の機能エントリ一覧（パス・パラメータ）
@@ -91,15 +91,15 @@
   - パスワード: PBKDF2ハッシュ（`salt:hash` base64形式）
   - サロンボードID/Pass: AES-GCM（`ENCRYPTION_KEY` 環境変数で暗号化・復号）
 - **認証**: `src/lib/jwt.ts`（HS256 JWT自作実装）+ `src/lib/auth-middleware.ts`（Honoミドルウェア）
-- **AI生成**: `src/lib/ai-generate.ts` — GenSpark LLM Proxy（OpenAI互換, `gpt-5-mini`）を`OPENAI_API_KEY`/`OPENAI_BASE_URL`で呼び出し
+- **AI生成**: `src/lib/ai-generate.ts` — OpenAI公式API（`https://api.openai.com/v1`, モデル: `gpt-4o-mini`）を`OPENAI_API_KEY`/`OPENAI_BASE_URL`で呼び出し
 
 ## 環境変数（Secrets）
 | 変数名 | 用途 | ローカル設定場所 |
 |---|---|---|
 | `JWT_SECRET` | セッションJWTの署名鍵 | `.dev.vars`（gitignore対象） |
 | `ENCRYPTION_KEY` | サロンボードID/PassのAES-GCM暗号化鍵（32byte base64） | `.dev.vars`（gitignore対象） |
-| `OPENAI_API_KEY` | AIブログ生成用（GenSpark LLM Proxy） | `.dev.vars`（gitignore対象） |
-| `OPENAI_BASE_URL` | AIブログ生成用エンドポイント | `.dev.vars`（gitignore対象） |
+| `OPENAI_API_KEY` | AIブログ生成用（OpenAI公式APIキー、ユーザー提供） | `.dev.vars`（gitignore対象） |
+| `OPENAI_BASE_URL` | AIブログ生成用エンドポイント（`https://api.openai.com/v1`） | `.dev.vars`（gitignore対象） |
 
 本番デプロイ時は `wrangler pages secret put JWT_SECRET` / `ENCRYPTION_KEY` / `OPENAI_API_KEY` / `OPENAI_BASE_URL` で設定すること。
 **⚠️ ENCRYPTION_KEYを変更すると既存の暗号化データが復号不能になるため、本番用の値は厳重に保管すること。**
@@ -112,28 +112,22 @@
 5. （Phase 3以降）予約時刻になると自動投稿ロボ（Cloudflare Browser Rendering）がサロンボードにログインし投稿を実行
 
 ## 既知の問題
-- ⚠️ **AIブログ生成（`/api/blog/generate`）が401エラーでブロック中**
-  - エラー内容: `{"detail":"Invalid or expired token"}`
-  - Cloudflare Worker外（直接curl・Node.js SDK単体テスト）でも同じ401が再現するため、アプリコードの不具合ではなく、GenSparkプラットフォーム側のLLM APIキーが無効/期限切れの状態と判断される
-  - **対応方法**: GenSparkの「API Keys」タブでAPIキーを再生成し、「Inject」でサンドボックス環境に再設定する必要がある
-  - この機能以外のPhase 2機能（スタイル画像ライブラリ、スケジュール設定、ブログマスタ管理、投稿フォーム）は全て動作確認済み
+- 現時点で既知のブロッカーなし。AIブログ生成はユーザー提供のOpenAI公式APIキー（`gpt-4o-mini`）で動作確認済み。
 
 ## まだ実装されていない機能
 - ❌ Phase 3: Cloudflare Browser Renderingによるサロンボードへの自動ログイン・自動投稿の実行（Cron Trigger連携）
-- ❌ AIブログ生成の動作確認（APIキー問題の解消待ち）
 - ❌ 投稿失敗時の通知（メール/LINE等）
 - ❌ パスワードリセット・メールアドレス確認フロー
 - ❌ サロンボード利用規約の詳細確認・利用規約/プライバシーポリシーページ
 - ❌ 本番Cloudflareアカウントへのデプロイ
 
 ## 推奨する次の開発ステップ
-1. AIブログ生成のAPIキー問題を解消し、動作確認する
-2. **Phase 3着手**: Cloudflare Browser Rendering APIをWorkerから呼び出し、Cron Triggerで`style_post_schedules`/`posts`テーブルの`pending`予約を処理する自動投稿ロボを実装
-3. 投稿失敗時のリトライ・通知機能
-4. 本番Cloudflareアカウントへのデプロイ（D1/R2本番リソース作成、Secrets設定）
+1. **Phase 3着手**: Cloudflare Browser Rendering APIをWorkerから呼び出し、Cron Triggerで`style_post_schedules`/`posts`テーブルの`pending`予約を処理する自動投稿ロボを実装
+2. 投稿失敗時のリトライ・通知機能
+3. 本番Cloudflareアカウントへのデプロイ（D1/R2本番リソース作成、Secrets設定、`OPENAI_API_KEY`を`wrangler pages secret put`で設定）
 
 ## デプロイ状況
 - **プラットフォーム**: Cloudflare Pages（未デプロイ、サンドボックス内でのみ動作確認済み）
 - **技術スタック**: Hono + TypeScript + Cloudflare D1 + Cloudflare R2 + Web Crypto API + Tailwind CSS(CDN) + axios(CDN)
 - **自動化方式**: Cloudflare Browser Rendering（Phase 3で実装予定、Puppeteerベース）
-- **最終更新**: 2026-08-04
+- **最終更新**: 2026-08-04（AI生成機能 動作確認完了）
