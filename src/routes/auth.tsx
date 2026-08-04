@@ -1,0 +1,213 @@
+import { Hono } from 'hono'
+import { setCookie, deleteCookie } from 'hono/cookie'
+import { hashPassword, verifyPassword } from '../lib/crypto'
+import { signJwt } from '../lib/jwt'
+import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
+import type { Bindings } from '../types'
+
+const auth = new Hono<{ Bindings: Bindings }>()
+
+const SESSION_TTL_SECONDS = 60 * 60 * 24 * 7 // 7日間
+
+function ErrorBanner({ message }: { message?: string }) {
+  if (!message) return null
+  return (
+    <div class="mb-4 rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
+      <i class="fas fa-circle-exclamation mr-2"></i>
+      {message}
+    </div>
+  )
+}
+
+function AuthLayout({ children }: { children: any }) {
+  return (
+    <div class="min-h-screen flex items-center justify-center px-4">
+      <div class="w-full max-w-md">
+        <div class="text-center mb-6">
+          <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-pink-500 text-white text-2xl mb-3">
+            <i class="fas fa-scissors"></i>
+          </div>
+          <h1 class="text-xl font-bold text-gray-900">TETE AOUT</h1>
+          <p class="text-sm text-gray-500 mt-1">ホットペッパービューティー連携SaaS</p>
+        </div>
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">{children}</div>
+      </div>
+    </div>
+  )
+}
+
+// ---------- Signup ----------
+
+auth.get('/signup', (c) => {
+  const error = c.req.query('error')
+  return c.render(
+    <AuthLayout>
+      <h2 class="text-lg font-bold mb-6">新規登録</h2>
+      <ErrorBanner message={error} />
+      <form method="post" action="/signup" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
+          <input
+            type="text"
+            name="salon_name"
+            placeholder="例）サロンパラダイス渋谷店"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
+          <input
+            required
+            type="email"
+            name="email"
+            placeholder="owner@example.com"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">パスワード（8文字以上）</label>
+          <input
+            required
+            minlength={8}
+            type="password"
+            name="password"
+            placeholder="••••••••"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+        </div>
+        <button
+          type="submit"
+          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+        >
+          登録する
+        </button>
+      </form>
+      <p class="text-sm text-gray-500 mt-6 text-center">
+        すでにアカウントをお持ちの方は{' '}
+        <a href="/login" class="text-pink-600 font-medium hover:underline">
+          ログイン
+        </a>
+      </p>
+    </AuthLayout>,
+    { title: '新規登録' }
+  )
+})
+
+auth.post('/signup', async (c) => {
+  const body = await c.req.parseBody()
+  const email = String(body.email || '').trim().toLowerCase()
+  const password = String(body.password || '')
+  const salonName = String(body.salon_name || '').trim() || null
+
+  if (!email || password.length < 8) {
+    return c.redirect('/signup?error=' + encodeURIComponent('メールアドレスと8文字以上のパスワードを入力してください'))
+  }
+
+  const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first()
+  if (existing) {
+    return c.redirect('/signup?error=' + encodeURIComponent('このメールアドレスは既に登録されています'))
+  }
+
+  const passwordHash = await hashPassword(password)
+  const result = await c.env.DB.prepare(
+    'INSERT INTO users (email, password_hash, salon_name) VALUES (?, ?, ?)'
+  )
+    .bind(email, passwordHash, salonName)
+    .run()
+
+  const userId = result.meta.last_row_id as number
+  await setSession(c, userId, email)
+  return c.redirect('/dashboard')
+})
+
+// ---------- Login ----------
+
+auth.get('/login', (c) => {
+  const error = c.req.query('error')
+  return c.render(
+    <AuthLayout>
+      <h2 class="text-lg font-bold mb-6">ログイン</h2>
+      <ErrorBanner message={error} />
+      <form method="post" action="/login" class="space-y-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
+          <input
+            required
+            type="email"
+            name="email"
+            placeholder="owner@example.com"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">パスワード</label>
+          <input
+            required
+            type="password"
+            name="password"
+            placeholder="••••••••"
+            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+        </div>
+        <button
+          type="submit"
+          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+        >
+          ログイン
+        </button>
+      </form>
+      <p class="text-sm text-gray-500 mt-6 text-center">
+        アカウントをお持ちでない方は{' '}
+        <a href="/signup" class="text-pink-600 font-medium hover:underline">
+          新規登録
+        </a>
+      </p>
+    </AuthLayout>,
+    { title: 'ログイン' }
+  )
+})
+
+auth.post('/login', async (c) => {
+  const body = await c.req.parseBody()
+  const email = String(body.email || '').trim().toLowerCase()
+  const password = String(body.password || '')
+
+  const user = await c.env.DB.prepare('SELECT id, email, password_hash FROM users WHERE email = ?')
+    .bind(email)
+    .first<{ id: number; email: string; password_hash: string }>()
+
+  if (!user) {
+    return c.redirect('/login?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  }
+
+  const valid = await verifyPassword(password, user.password_hash)
+  if (!valid) {
+    return c.redirect('/login?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  }
+
+  await setSession(c, user.id, user.email)
+  return c.redirect('/dashboard')
+})
+
+// ---------- Logout ----------
+
+auth.post('/logout', (c) => {
+  deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' })
+  return c.redirect('/login')
+})
+
+async function setSession(c: any, userId: number, email: string) {
+  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
+  const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
+  const token = await signJwt({ sub: userId, email, exp }, secret)
+  const isHttps = c.req.url.startsWith('https://')
+  setCookie(c, SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: SESSION_TTL_SECONDS
+  })
+}
+
+export default auth

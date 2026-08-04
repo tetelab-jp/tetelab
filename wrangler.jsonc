@@ -1,11 +1,31 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "webapp",
+  "name": "hotpepper-automation",
   "compatibility_date": "2026-07-30",
   "pages_build_output_dir": "./dist",
   "compatibility_flags": [
     "nodejs_compat"
-  ]
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hotpepper-automation-production",
+      "database_id": "local-dev-placeholder"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "STYLE_IMAGES",
+      "bucket_name": "hotpepper-automation-style-images"
+    }
+  ],
+  "browser": {
+    "binding": "BROWSER"
+  }
+  // 注意: Cloudflare Pagesプロジェクトはネイティブの Cron Trigger (scheduled()) を
+  // サポートしないため、定期実行は /api/cron/run-style-posts を外部クロン
+  // (例: 別の軽量Cloudflare WorkerのCron Trigger、またはcron-job.org等)から
+  // CRON_SECRETをBearerトークンとして叩く方式で代替している（automation.ts参照）。
   // "vars": {
   //   "MY_VAR": "my-variable"
   // },
@@ -19,13 +39,6 @@
   //   {
   //     "binding": "MY_BUCKET",
   //     "bucket_name": "my-bucket"
-  //   }
-  // ],
-  // "d1_databases": [
-  //   {
-  //     "binding": "MY_DB",
-  //     "database_name": "my-database",
-  //     "database_id": ""
   //   }
   // ],
   // "ai": {

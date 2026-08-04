@@ -3,12 +3,17 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:sandbox": "wrangler pages dev dist --d1=hotpepper-automation-production --r2=STYLE_IMAGES --local --ip 0.0.0.0 --port 3000",
     "build": "vite build",
     "preview": "wrangler pages dev",
     "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings"
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "db:migrate:local": "wrangler d1 migrations apply hotpepper-automation-production --local",
+    "db:migrate:prod": "wrangler d1 migrations apply hotpepper-automation-production",
+    "db:console:local": "wrangler d1 execute hotpepper-automation-production --local"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.2.0",
     "hono": "^4.12.33"
   },
   "devDependencies": {
