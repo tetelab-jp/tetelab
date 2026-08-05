@@ -265,3 +265,37 @@ npm run deploy
 
 ### セキュリティに関する注意
 アップロードされた `.dev.vars` に実際のOpenAI APIキーが平文で含まれていた（gitには含まれていないことは確認済み）。共有環境を経由したキーなので、念のためOpenAI側でローテーション（キー再発行）することを推奨する。
+
+---
+
+## 追記（2026-08-05, Claude Code on the web上での引き継ぎ後の作業）
+
+Claude.ai上のセッションからzip一式（webapp.zip / webappphase3.zip）を引き継ぎ、
+`tetelab-jp/tetelab` リポジトリの `claude/genspark-cloude-migration-gjssen` ブランチとして
+GitHub上に移設した（PR #1）。gitの元コミット履歴（Genspark由来の7コミット）はそのまま保持。
+
+### このセッションで実施したこと
+1. **既存の型エラーを解消**（優先度4の着手前に発見・修正）
+   - `tsconfig.json` に `@cloudflare/workers-types` を追加し、`D1Database`/`R2Bucket`/`Fetcher`型を解決
+   - `src/lib/salonboard-automation.ts` の `page.evaluate()` コールバック（ブラウザ側で実行されるコード）向けに
+     `/// <reference lib="dom" />` を追加し、`window`/`document`/`HTMLFormElement`等の型エラーを解消
+   - `src/lib/crypto.ts` / `src/lib/jwt.ts` の `Uint8Array` を `Uint8Array<ArrayBuffer>` に明示し、
+     `BufferSource`への型不一致を解消
+   - `automation.ts` → `automation.tsx` にリネーム（JSXを含むのに拡張子が`.ts`のままでビルド失敗していた）
+   - `npx tsc --noEmit` がクリーンになることを確認済み
+2. **外部Cronトリガーの構築**（「次にやるべきこと」優先度4に対応）
+   - `cron-trigger-worker/` を新規プロジェクトとして追加。独立した `package.json`/`wrangler.jsonc`/`tsconfig.json`を持つ
+   - 1分間隔（`* * * * *`）で本体アプリの `/api/cron/run-style-posts` を`CRON_SECRET`付きBearer認証で叩く
+   - デプロイ手順は `cron-trigger-worker/README.md` に記載（`TARGET_URL`は本体アプリのデプロイ後URLに要書き換え）
+
+### わかったこと・今後の作業者への注意
+- **このセッションが動いていたクラウド実行環境からは、Cloudflare（`api.cloudflare.com`含む）を含むほぼ全ての外部ホストへの通信がネットワークポリシーでブロックされていた**（`cdn.tailwindcss.com`/`cdn.jsdelivr.net`も同様に403）。そのため、このセッション内ではCloudflareへの実デプロイも、TailwindCSS等CDN込みのデザイン確認もできなかった。
+  - 実際にCloudflareへデプロイする／CDN込みでデザインを確認する作業は、**ローカルPC上のClaude Code（またはインターネット制限のない環境）で行う必要がある**。
+- 上記の制約により、「次にやるべきこと」の1〜3・5番（実サロンボードへのログイン確認、本番E2Eテスト、`/style/template`の実測値入力、ブログHTML解析）はこのセッションでは着手不可だった。次の担当者（人またはAI）が実施すること。
+
+### 次にやるべきこと（優先順位順・更新）
+1. **写真アップロードの実装検証**（未着手）: HANDOFF.md旧セクション6-5と同内容。実サロンボードへのログインが必要。
+2. **本番/リモート環境でのE2Eテスト**（未着手）: Cloudflareへの実デプロイが前提。ローカルPCまたはCI等、外部ネットワーク制限のない環境で実施すること。
+3. **`/style/template`の実際の値の入力**（未着手）: 実サロンボードのHTML確認が必要。
+4. **外部Cronトリガーの構築**: ✅ コード実装完了（`cron-trigger-worker/`）。実際のデプロイ・`TARGET_URL`/`CRON_SECRET`設定は未実施。
+5. **ブログ投稿の自動化**（未着手）: ブログ一覧・編集画面の生HTMLダンプが必要。
