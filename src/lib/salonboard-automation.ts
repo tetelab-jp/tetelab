@@ -12,6 +12,10 @@
 //      セレクタ・待機条件の調整が必須。
 // ============================================
 
+// page.evaluate() のコールバックはブラウザ(Chromium)側で実行されるため、
+// Workers側の型定義とは別にDOM型を参照する必要がある。
+/// <reference lib="dom" />
+
 import type { Bindings } from '../types'
 
 // puppeteer本体はCloudflare Workers専用パッケージ。型のみ利用。

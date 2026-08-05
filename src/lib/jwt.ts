@@ -20,7 +20,7 @@ function base64UrlEncode(data: ArrayBuffer | Uint8Array | string): string {
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-function base64UrlDecode(str: string): Uint8Array {
+function base64UrlDecode(str: string): Uint8Array<ArrayBuffer> {
   const padded = str.replace(/-/g, '+').replace(/_/g, '/')
   const pad = padded.length % 4 === 0 ? '' : '='.repeat(4 - (padded.length % 4))
   const binary = atob(padded + pad)
