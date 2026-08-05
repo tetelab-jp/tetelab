@@ -141,6 +141,6 @@
 
 ## デプロイ状況
 - **プラットフォーム**: Cloudflare Pages（未デプロイ、サンドボックス内でのみ動作確認済み）
-- **技術スタック**: Hono + TypeScript + Cloudflare D1 + Cloudflare R2 + Web Crypto API + Tailwind CSS(CDN) + axios(CDN)
+- **技術スタック**: Hono + TypeScript + Cloudflare D1 + Cloudflare R2 + Web Crypto API + Tailwind CSS(自前ビルド) + FontAwesome(自前ホスト) + fetch API
 - **自動化方式**: Cloudflare Browser Rendering（Phase 3で実装予定、Puppeteerベース）
-- **最終更新**: 2026-08-04（AI生成機能 動作確認完了）
+- **最終更新**: 2026-08-05（TailwindCSS/FontAwesome/axiosのCDN依存を撤廃し自前ビルド/セルフホストに変更）

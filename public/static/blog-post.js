@@ -21,20 +21,24 @@ document.addEventListener('DOMContentLoaded', () => {
     statusEl.textContent = 'AIが本文を作成しています。しばらくお待ちください（10〜20秒程度）'
 
     try {
-      const res = await axios.post('/api/blog/generate', { keywords })
-      if (res.data.success) {
-        titleInput.value = res.data.title || ''
-        contentTextarea.value = res.data.content || ''
+      const res = await fetch('/api/blog/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ keywords })
+      })
+      const data = await res.json()
+      if (data.success) {
+        titleInput.value = data.title || ''
+        contentTextarea.value = data.content || ''
         statusEl.textContent = '生成が完了しました。内容を確認・編集してください。'
       } else {
-        statusEl.textContent = 'エラー: ' + (res.data.error || '生成に失敗しました')
+        statusEl.textContent = 'エラー: ' + (data.error || '生成に失敗しました')
       }
     } catch (err) {
-      const msg = err.response?.data?.error || '生成に失敗しました。しばらくしてから再度お試しください。'
-      statusEl.textContent = 'エラー: ' + msg
+      statusEl.textContent = 'エラー: 生成に失敗しました。しばらくしてから再度お試しください。'
     } finally {
       generateBtn.disabled = false
-      generateBtn.innerHTML = '<i class="fas fa-sparkles mr-1"></i>AIで生成'
+      generateBtn.innerHTML = '<i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成'
     }
   })
 })

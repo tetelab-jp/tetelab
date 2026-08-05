@@ -11,7 +11,7 @@
 - **対象自動化**: ①スタイル投稿(フォトギャラリー) ②ブログ投稿
 - **アーキテクチャ**: 1ユーザー = 1サロン(マルチテナント/salon_id設計は明示的に不採用)
 - **技術スタック**: Hono + TypeScript + Cloudflare Pages/Workers + D1(SQLite) + R2(画像) + Web Crypto API
-- **フロントエンド**: JSXサーバーレンダリング(`hono/jsx-renderer`) + TailwindCSS(CDN)
+- **フロントエンド**: JSXサーバーレンダリング(`hono/jsx-renderer`) + TailwindCSS(自前ビルド、後述の追記参照)
 - **禁止事項**: Node.js `fs`/`crypto`/`child_process`等は使用不可(Workers runtime制約)。暗号化はWeb Crypto APIのみ。
 
 ## 2. 現在の実装状況
@@ -292,6 +292,32 @@ GitHub上に移設した（PR #1）。gitの元コミット履歴（Genspark由�
 - **このセッションが動いていたクラウド実行環境からは、Cloudflare（`api.cloudflare.com`含む）を含むほぼ全ての外部ホストへの通信がネットワークポリシーでブロックされていた**（`cdn.tailwindcss.com`/`cdn.jsdelivr.net`も同様に403）。そのため、このセッション内ではCloudflareへの実デプロイも、TailwindCSS等CDN込みのデザイン確認もできなかった。
   - 実際にCloudflareへデプロイする／CDN込みでデザインを確認する作業は、**ローカルPC上のClaude Code（またはインターネット制限のない環境）で行う必要がある**。
 - 上記の制約により、「次にやるべきこと」の1〜3・5番（実サロンボードへのログイン確認、本番E2Eテスト、`/style/template`の実測値入力、ブログHTML解析）はこのセッションでは着手不可だった。次の担当者（人またはAI）が実施すること。
+
+### 追記2: TailwindCSS/FontAwesome/axiosのCDN依存を撤廃
+
+上記の通信制限が判明したことをきっかけに、そもそも本番運用としても好ましくない
+「CDN経由でTailwindCSS/FontAwesome/axiosを読み込む」設計自体を見直した
+（TailwindCSSの公式ドキュメントでも `cdn.tailwindcss.com` は「本番環境では非推奨」と明記されている）。
+
+- **TailwindCSS**: `tailwindcss` / `@tailwindcss/cli` (v4)をdevDependenciesに追加。
+  `src/tailwind-input.css`(`@import "tailwindcss";`のみ)を入力に、
+  `npm run build:css`(`tailwindcss -i ./src/tailwind-input.css -o ./public/static/tailwind.css --minify`)
+  でJSX内のクラス使用を自動スキャンして`public/static/tailwind.css`を生成。`npm run build`に組み込み済み。
+- **FontAwesome**: `@fortawesome/fontawesome-free`(v7)をdevDependenciesに追加し、
+  `css/all.min.css`と`webfonts/*.woff2`を`public/static/fontawesome/`にコピーして自前ホスト化。
+  移行時に使用中の全アイコンクラスがv7 Free版に存在することを確認済み。
+  なお`fa-sparkles`は元々Free版に存在しないアイコン名だった(Genspark時代からの軽微な不具合)ため、
+  `fa-wand-magic-sparkles`に修正した。
+- **axios**: 使用箇所(`public/static/blog-post.js`, `public/static/style-library.js`)を
+  すべてネイティブの`fetch()`に置き換え、CDN読み込み自体を削除。
+- `src/renderer.tsx`から`<script src="https://cdn...">`/`<link href="https://cdn...">`を全て削除し、
+  `/static/tailwind.css`・`/static/fontawesome/css/all.min.css`をローカル参照に変更。
+- 生成物である`public/static/tailwind.css`はリポジトリにコミット済み(サイズも19KB程度と小さいため)。
+  **Tailwindのクラスを新規追加・変更した場合は`npm run build:css`を実行して再コミットすること**
+  (`npm run build`にも組み込まれているため、デプロイ時は自動で最新化される)。
+
+この変更により、外部ネットワーク接続が制限された環境でも、本体アプリの見た目を含めた
+動作確認が可能になった(実際にこのセッション内のサンドボックスでスクリーンショットにより確認済み)。
 
 ### 次にやるべきこと（優先順位順・更新）
 1. **写真アップロードの実装検証**（未着手）: HANDOFF.md旧セクション6-5と同内容。実サロンボードへのログインが必要。

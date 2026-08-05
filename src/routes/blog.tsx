@@ -299,7 +299,7 @@ blog.get('/blog/posts', async (c) => {
                 type="button"
                 class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap"
               >
-                <i class="fas fa-sparkles mr-1"></i>AIで生成
+                <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成
               </button>
             </div>
             <p id="ai-status" class="text-xs text-pink-600 hidden"></p>
