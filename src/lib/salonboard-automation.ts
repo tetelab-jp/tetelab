@@ -3,13 +3,22 @@
 // Cloudflare Browser Rendering (@cloudflare/puppeteer) を使った
 // サロンボードへの自動ログイン・スタイル投稿・反映申請
 //
-// ⚠️ 未確定事項（HANDOFF.md参照。実運用前に必ず確認・調整すること）:
-//   1. SALONBOARD_BASE_URL: サロンボードの実際のドメイン。要確認。
-//   2. 写真アップロードのモーダル操作: 実際のモーダルDOM構造・
-//      アップロードAJAXエンドポイントは未調査。本実装ではUI操作
-//      （プレースホルダークリック→モーダル内file inputへuploadFile）
-//      で代替しているが、実際のモーダルを開いてDevToolsで確認後、
-//      セレクタ・待機条件の調整が必須。
+// 確定済み事項（HANDOFF.md 4章・docs/phase3-mvp-design.md 9章、実HTML解析済み）:
+//   - フォームID/name属性、doRegister()/editStyle()/addStyle()等のJS関数
+//   - 写真アップロードのトリガー(img_upload_modal_view)と完了コールバック
+//     (setUploadImage → #FRONT_IMG_ID にセット)の関数シグネチャ
+//   - クーポンは隠しフィールド frmStyleEditStyleDto.couponId に直接値をセットすればよい
+//   - モデル属性(髪量/髪質等)は自動化では触らずデフォルト('99')のままでよい
+//   - SALONBOARD_BASE_URL='https://salonboard.com'（実運用で到達確認済み）
+//
+// ⚠️ まだ未確認の事項（実運用前に必ずDevToolsで確認すること）:
+//   1. 画像アップロードモーダル内部のDOM（実際の<input type=file>のセレクタ・
+//      アップロードAJAXのリクエスト形式）: モーダルがJSで動的挿入されるため、
+//      静的HTMLからは分からず、実際にクリックして開いた状態を確認する必要がある。
+//      本実装ではUI操作（プレースホルダークリック→モーダル内file inputへ注入）で
+//      代替している。Phase 3-Hの最優先事項。
+//   2. 掲載管理TOPでの「NG」「未確認」の実際の表示形式（DOM構造・文言）。
+//      checkReflectBlockers()参照。
 // ============================================
 
 // page.evaluate() のコールバックはブラウザ(Chromium)側で実行されるため、
@@ -36,6 +45,11 @@ export type StylePostInput = {
   hairLengthValue: string // ladiesHairLengthCd or mensHairLengthCd の <option value>
   menuContentsCdList?: string[] // MC01〜MC04
   menuDetailText: string // .menuContents textarea（最大100文字）
+  couponSelectValue?: string // frmStyleEditStyleDto.couponId（CP+14桁形式）。docs/phase3-mvp-design.md 9章参照
+  // ⚠️ モデル属性(髪量/髪質/顔型/太さ/クセ/年代)は意図的に含めていない。
+  // HANDOFF.md 4-5「自動化では触らずデフォルト('99'=未設定)のままでよい」との確定方針のため。
+  // アプリのUI上でモデル情報を入力できるが、現時点ではTETE AOUT内部の記録用メタデータであり、
+  // SALON BOARDへは送信されない。
 }
 
 export type AutomationLogger = (message: string) => void
@@ -177,6 +191,19 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     if (el) el.value = text
   }, input.menuDetailText.slice(0, 100))
 
+  // ---- クーポン（任意） ----
+  // docs/phase3-mvp-design.md 9章で確定: 見た目はモーダル選択UIだが、
+  // 最終的にPOSTされるのは隠しフィールド frmStyleEditStyleDto.couponId の値
+  // (CP+14桁形式)のみのため、モーダルUIを操作せず直接値をセットする。
+  if (input.couponSelectValue) {
+    await page.evaluate((couponId: string) => {
+      const el = document.querySelector(
+        'input[name="frmStyleEditStyleDto.couponId"]'
+      ) as HTMLInputElement | null
+      if (el) el.value = couponId
+    }, input.couponSelectValue)
+  }
+
   // ---- 保存（doRegister） ----
   log('スタイルを登録中...')
   await Promise.all([
@@ -192,10 +219,17 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 
 /**
  * 写真アップロード処理。
- * ⚠️ 実際のモーダルDOM構造・アップロードAJAX仕様は未調査のため、
- * 「プレースホルダー画像クリック→モーダル内file inputへuploadFile」という
- * 一般的なUI操作パターンで実装している。実サイトのモーダルHTMLを
- * DevToolsで確認した上で、セレクタ・待機条件を調整すること。
+ *
+ * docs/phase3-mvp-design.md 9章で確定済みの情報:
+ * - `.img_new_no_photo`（`#FRONT_IMG_ID_IMG`が該当）クリックで
+ *   `img_upload_modal_view('FRONT_IMG_ID', 'ABNKD3600_FRONT', dataKey, false, 'styleEditForm')`
+ *   が発火し、`#imageUploaderModalBody`にモーダル内容がJSで動的挿入される
+ * - アップロード完了コールバック`setUploadImage(...)`が隠しフィールド`#FRONT_IMG_ID`に
+ *   画像ID(B+9桁形式)をセットする → これを完了検知の主条件として使う
+ *
+ * ⚠️ 未確認のまま残っている点: モーダル内部の実際の`<input type=file>`のセレクタ・
+ * アップロードAJAXのリクエスト形式は、モーダルがJSで動的挿入されるため静的HTMLからは
+ * 分からず、実際にクリックして開いた状態のDOMを確認する必要がある(未着手)。
  */
 async function uploadFrontImage(
   page: Page,
@@ -244,19 +278,26 @@ async function uploadFrontImage(
     fileName
   )
 
-  // アップロード完了・setUploadImage()コールバック発火を待つ
-  // （実際の完了検知条件は要調整。ここではプレースホルダー画像のsrc変化で簡易判定）
-  await page
+  // アップロード完了・setUploadImage()コールバック発火を待つ。
+  // 主条件: 隠しフィールド#FRONT_IMG_IDに画像ID(B+9桁)がセットされること
+  //（docs/phase3-mvp-design.md 9章で確定済みの完了コールバック仕様に基づく）。
+  // 副条件（フォールバック）: プレースホルダー画像のクラスが変化すること。
+  const uploadConfirmed = await page
     .waitForFunction(
       () => {
+        const hiddenField = document.getElementById('FRONT_IMG_ID') as HTMLInputElement | null
+        if (hiddenField && hiddenField.value.trim() !== '') return true
         const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
-        return img && !img.className.includes('img_new_no_photo')
+        return !!(img && !img.className.includes('img_new_no_photo'))
       },
       { timeout: 20000 }
     )
-    .catch(() => {
-      log('警告: 画像アップロード完了の検知がタイムアウトしました。処理は続行しますが要確認です。')
-    })
+    .then(() => true)
+    .catch(() => false)
+
+  if (!uploadConfirmed) {
+    log('警告: 画像アップロード完了の検知がタイムアウトしました。処理は続行しますが要確認です。')
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -282,11 +323,24 @@ export class ReflectionBlockedError extends Error {
   }
 }
 
-// 掲載管理TOPページ上でブロック要因を示すと思われるキーワード。
-// ⚠️ 実際のSALON BOARD画面のHTML/文言は未確認のため、暫定的な推測に基づく
-// プレースホルダー実装。実サイトで「NG」「未確認」がどのDOM要素・文言で
-// 表示されるか確認でき次第、セレクタベースの確実な判定に置き換えること。
-const REFLECT_BLOCKER_PATTERNS: RegExp[] = [/NGワード/, /未確認/, /確認できません/, /掲載できません/, /差し戻/]
+// 掲載管理TOPページ上でブロック要因を示すキーワード。
+// HANDOFF.md 4-3で確定済み: 「要確認」ステータスは通常運用でよくあるもので
+// 反映申請をブロックしない。ブロックされるのは「NG」判定または「未確認」が
+// 残っている場合のみ。→ 「未確認」は「要確認」の部分文字列ではないため、
+// 以下の正規表現は「要確認」には誤反応しない(意図的)。
+// ⚠️ ただし「NG」「未確認」が実際どのDOM要素・文言で表示されるかまでは
+// 未確認のため、ページ全体のテキストからのキーワード検索という
+// ベストエフォート実装のまま。確認でき次第、セレクタベースの確実な
+// 判定に置き換えること。
+const REFLECT_BLOCKER_PATTERNS: RegExp[] = [
+  /NGワード/,
+  /NG判定/,
+  /「NG」/,
+  /未確認/,
+  /確認できません/,
+  /掲載できません/,
+  /差し戻/
+]
 
 /**
  * 掲載管理TOPページを開いた状態で、NG/未確認等のブロック要因が

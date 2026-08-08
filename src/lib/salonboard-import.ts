@@ -40,6 +40,7 @@ export type ExistingStyleDetail = {
   hashtags: string[]
   modelAttributes: Record<string, string>
   stylistSelectValue: string
+  couponSelectValue: string | null
   imageUrl: string | null
 }
 
@@ -149,8 +150,6 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
 
   const detail = await page.evaluate(() => {
     const val = (selector: string) => (document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | null)?.value || ''
-    const checkedRadioValue = (name: string) =>
-      (document.querySelector(`input[name="${name}"]:checked`) as HTMLInputElement | null)?.value || ''
 
     const category = (document.getElementById('styleCategoryCd02') as HTMLInputElement | null)?.checked ? 'SG02' : 'SG01'
     const lengthSelector = category === 'SG01' ? '.ladiesHairLengthCd' : '.mensHairLengthCd'
@@ -169,6 +168,9 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       menuValues,
       menuDetailText: val('#menuDetailTxt'),
       stylistSelectValue: val('#stylistCheckCd'),
+      // docs/phase3-mvp-design.md 9章で確定済み: クーポンは隠しフィールド
+      // frmStyleEditStyleDto.couponId にCP+14桁形式で入る
+      couponSelectValue: val('input[name="frmStyleEditStyleDto.couponId"]'),
       imageUrl: img && !img.className.includes('img_new_no_photo') ? img.src : null
     }
   })
@@ -184,6 +186,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
     hashtags: [], // ⚠️ ハッシュタグ欄のセレクタ未確認のため空配列固定
     modelAttributes: {}, // ⚠️ モデル属性欄のセレクタ未確認のため空オブジェクト固定
     stylistSelectValue: detail.stylistSelectValue,
+    couponSelectValue: detail.couponSelectValue || null,
     imageUrl: detail.imageUrl
   }
 }
@@ -228,17 +231,28 @@ export async function importSelectedStyles(
         stylistDbId = stylistRow?.id ?? null
       }
 
+      let couponDbId: number | null = null
+      if (detail.couponSelectValue) {
+        const couponRow = await env.DB.prepare(
+          'SELECT id FROM coupons WHERE user_id = ? AND salonboard_coupon_key = ?'
+        )
+          .bind(userId, detail.couponSelectValue)
+          .first<{ id: number }>()
+        couponDbId = couponRow?.id ?? null
+      }
+
       const insert = await env.DB.prepare(
         `INSERT INTO styles (
-           user_id, stylist_id, source_type, source_salonboard_style_key, title, comment,
+           user_id, stylist_id, coupon_id, source_type, source_salonboard_style_key, title, comment,
            category_value, length_value, menu_values_json, menu_detail_text, hashtags_json,
            model_attributes_json, auto_post_enabled_flag, internal_save_status,
            salonboard_register_status, reflection_request_status
-         ) VALUES (?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success')`
+         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success')`
       )
         .bind(
           userId,
           stylistDbId,
+          couponDbId,
           styleId,
           detail.title.slice(0, 60),
           detail.comment.slice(0, 240),

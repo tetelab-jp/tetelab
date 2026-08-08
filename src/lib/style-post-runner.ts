@@ -45,6 +45,7 @@ type ReadyStyleRow = {
   menu_values_json: string
   menu_detail_text: string | null
   stylist_select_value: string | null
+  coupon_select_value: string | null
   front_r2_key: string | null
   front_file_name: string | null
 }
@@ -80,7 +81,8 @@ async function processStyleRow(
       categoryCd: (row.category_value as 'SG01' | 'SG02') || 'SG01',
       hairLengthValue: row.length_value || '',
       menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
-      menuDetailText: row.menu_detail_text || ''
+      menuDetailText: row.menu_detail_text || '',
+      couponSelectValue: row.coupon_select_value || undefined
     }
   } catch (imgErr: any) {
     const message = String(imgErr?.message || imgErr).slice(0, 500)
@@ -165,9 +167,11 @@ const READY_STYLE_SELECT = `
     s.id, s.title, s.comment, s.category_value, s.length_value,
     s.menu_values_json, s.menu_detail_text,
     st.salonboard_stylist_key AS stylist_select_value,
+    cp.salonboard_coupon_key AS coupon_select_value,
     si.r2_key AS front_r2_key, si.file_name AS front_file_name
   FROM styles s
   LEFT JOIN stylists st ON st.id = s.stylist_id
+  LEFT JOIN coupons cp ON cp.id = s.coupon_id
   LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
 `
 
