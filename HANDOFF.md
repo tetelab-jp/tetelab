@@ -718,4 +718,67 @@ salonboard-sync.ts)の実装・検証は、以降ローカルのClaude Codeが�
   推測される(dologin/editStyle/addStyleと同様、event引数を要求する関数の
   可能性が高い)。`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
   `doSelectLast`も同様の懸念があり未検証。実際の「次へ」ボタン要素の
-  実HTML構造も含めて、ローカル側での実機調査・修正が必要。
+  実HTML構造も含めて、ローカル側での実機調査・修正が必要。→ **2026-08-09
+  その5で対応(下記参照)。**
+
+## 追記（2026-08-09 その5、window関数の実機一括検証を試みるも salonboard.com 側の
+アクセス制限により未完了。doSelectNextはエラー内容からの類推で暫定修正）
+
+### 実施したこと
+
+`dologin`/`editStyle`/`addStyle`/`delStyle`/`unpresentStyle`/`presentStyle`/
+`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/`doSelectNext`/`doSelectLast`
+の全関数について、Playwright(非headless、ローカルMac)で実機ログインし、
+1つずつ`toString()`でソース確認・実要素セレクタ確認を行う計画で着手した。
+
+### 結果: 想定通りには進まなかった
+
+この日は既にPlaywright/curlでsalonboard.comへ何度もアクセスしていたため
+(前段の`docs/salonboard-real-html-findings.md`初回調査・その後の複数回の
+ログイン試行等)、調査の後半でAkamai系ボット対策と思われる仕組みにより
+**接続がほぼ完全にブロックされる状態**になった。ログイン後の
+`page.goto('.../CNB/draft/styleList/')`が繰り返しタイムアウトし、
+最終的には素の`curl`でも0バイトのままタイムアウトすることを確認した
+(TLSハンドシェイクは成功するがHTTPレスポンスが一切返らない)。
+そのため、`doSelectNext`以外の関数(`addStyle`/`delStyle`/`unpresentStyle`/
+`presentStyle`/`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
+`doSelectLast`)については**ソース・実要素とも今回未確認のまま**。
+
+同日中の追加アクセスはブロックの長期化を招くリスクがあるため、ユーザーとの
+合意により見送り、実機での最終確認は後日(翌日以降)改めて行う方針とした。
+
+### `doSelectNext`のみ、暫定修正を実施(⚠️類推による修正)
+
+唯一、本番の実エラーから直接的な手がかりが得られていた`doSelectNext`に
+ついてのみ、以下の方針で`src/lib/salonboard-import.ts`を修正した:
+
+- 本番で`window.doSelectNext()`を偽のevent無しで呼ぶと実際に
+  `Cannot read properties of undefined (reading 'target')`が発生することを
+  確認済み → `dologin`/`editStyle`と同じく、関数内部が`event`(おそらく
+  `event.target`)を参照する実装だと強く推測される。
+- 修正: `window.doSelectNext()`の直接呼び出しをやめ、
+  `a[onclick*="doSelectNext"], span[onclick*="doSelectNext"]`にマッチする
+  実要素を`page.$()`で探し、見つかれば`page.click()`でネイティブクリック
+  する方式に変更(login/editStyleと同じ確立済みパターン)。
+- **安全策**: 上記セレクタが実際にヒットするかどうかは今回未確認のため、
+  要素が見つからない場合・クリック/遷移待ちで例外が発生した場合は、
+  エラーにせず「次のページなし」として扱い、**それまでに取得できた
+  ページの結果だけで処理を継続する**ようにした。これにより、たとえ
+  セレクタの推測が外れていても、最低1ページ目分の取り込みは失敗せずに
+  完了する。
+- 詳細・今後の実機検証項目は`docs/salonboard-real-html-findings.md`の
+  「追記(2026-08-09 再調査)」章に記載。
+
+`npm run build`で型チェック通過を確認し、commit・push・`npm run deploy`で
+本番反映済み(コミット`fa7174d`)。**ただし本番で実際に複数ページ分の
+スタイルが取得できることの確認は、上記のアクセス制限を理由にユーザーの
+指示により今回は実施していない。** 次回、salonboard.comへの接続が
+回復してから確認すること。
+
+### 次にやるべきこと（更新）
+9. salonboard.comへの接続制限が解消してから(翌日以降目安)、Playwrightで
+   `doSelectNext`含む全関数の実機再検証を行い、
+   `docs/salonboard-real-html-findings.md`を更新する。
+10. 本番の「既存スタイル取り込み」機能で、スタイルが複数ページ
+    (150件程度/2ページ構成の想定)存在するアカウントで実際に2ページ目以降も
+    取得できることを確認する。
