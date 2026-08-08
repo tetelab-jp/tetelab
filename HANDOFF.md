@@ -896,11 +896,32 @@ salonboard-sync.ts)の実装・検証は、以降ローカルのClaude Codeが�
   表示する2段構成で、現在のTETE AOUTの`/settings/salonboard`の設計と概ね
   同じ考え方だった。
 
+### 画像アップロードモーダルの実機調査試行(2026-08-09、未完了)
+
+同日中に、優先度を「反映申請ブロック調査は後回し、登録段階の画像アップロード
+モーダル調査に集中」と再整理したうえで、`uploadFrontImage()`の実DOM調査を
+複数回試みた(ログイン→新規スタイル作成フォームを開く→画像プレースホルダー
+`#FRONT_IMG_ID_IMG`をクリック→`#imageUploaderModalBody`内の`input[type=file]`
+を確認、という手順のPlaywrightスクリプトを用意し、間隔を空けて2回試行)。
+
+**結果: 2回ともログインボタンのクリック自体は成功したが、その後の画面遷移が
+毎回タイムアウトし、モーダルのDOM構造は今回も確認できなかった。**
+本日はsalonboard.comへの接続不安定が最後まで解消せず、ユーザー判断により
+これ以上の直接アクセス試行は中止した。
+
 ### 次にやるべきこと（更新）
-11. 【最優先】salonboard.comへの接続が安定してから(翌日以降目安)、
+11. 【最優先・未着手】salonboard.comへの接続が安定してから(翌日以降目安)、
     `uploadFrontImage()`の画像アップロードモーダル(`#imageUploaderModalBody`)を
     実際に開いた状態のDOM構造を調査し、`input[type=file]`セレクタを特定して
     修正する。今回判明した「実際の投稿失敗の直接原因」であり最優先。
+    2026-08-09中に2回試行したが、いずれもログイン後の画面遷移でタイムアウトし
+    未達成。手順自体は「ログイン→`/CNB/draft/styleList/`→新規追加リンク
+    (`onclick`に`addStyle`を含む要素)をネイティブクリック→`#styleEditForm`が
+    出るまで待機→`#FRONT_IMG_ID_IMG`をクリック→数秒待って
+    `#imageUploaderModalBody`内の`input[type=file]`を確認」という単純なもの
+    なので、次回セッションでPlaywrightスクリプトとして作り直すのは容易
+    （このセッションで使った一時スクリプトはローカルの一時ディレクトリに
+    あり、次回セッションからは参照できない前提で再作成すること）。
 12. `doSelectNext`含む`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
     `doSelectLast`の実機検証は、現在のテストアカウント（スタイル16件・1ページの
     み）では構造的に検証不可能（次ページが存在しないため）。複数ページを持つ
