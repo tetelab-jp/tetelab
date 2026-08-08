@@ -64,9 +64,29 @@ export type StylePostResult = {
  * Cloudflare Browser Renderingでブラウザインスタンスを起動する。
  * 呼び出し側で必ず finally 節等で browser.close() すること
  * （Browser Renderingは同時起動数・使用時間に上限があるため）。
+ *
+ * 2026-08-09追記: 本番の「サロンボードと同期する」を短時間に複数回実行すると
+ * `Unable to create new browser: code: 429: message: Rate limit exceeded`
+ * が実機で発生することを確認済み(Cloudflare Browser Rendering自体の同時起動数
+ * 上限)。salonboard.com側の問題ではないため、指数バックオフ付きリトライで
+ * 吸収する。
  */
-export async function launchBrowser(env: Bindings): Promise<Browser> {
-  return puppeteer.launch(env.BROWSER)
+export async function launchBrowser(env: Bindings, maxRetries = 3): Promise<Browser> {
+  let lastErr: unknown
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await puppeteer.launch(env.BROWSER)
+    } catch (err: any) {
+      lastErr = err
+      const message = String(err?.message || err)
+      const isRateLimited = /429|rate limit/i.test(message)
+      if (!isRateLimited || attempt === maxRetries) throw err
+      const delayMs = 1000 * 2 ** attempt // 1s, 2s, 4s, ...
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+  }
+  // ここには到達しないが型を満たすため
+  throw lastErr
 }
 
 /**
