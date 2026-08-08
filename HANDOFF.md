@@ -432,3 +432,73 @@ GitHub上に移設した（PR #1）。gitの元コミット履歴（Genspark由�
 選択→自動入力の実際のJS挙動、モデル情報の保存・再表示、スタイル再編集、スケジュール
 保存、Cronエンドポイントの認証到達性（POST限定・requireAuthに横取りされないこと）まで
 すべて実際にブラウザ/HTTPリクエストで確認済み。
+
+## 追記（2026-08-08 その3、Phase 3-D/E/F/G実装）
+
+ユーザーから「既存スタイル取り込み・テンプレート一括適用・実行履歴汎用化・
+NG/未確認ブロック検知をすべて同時に進めてほしい」との指示を受け、4つとも実装した。
+サロンボードへの実接続が必要な検証（既存スタイル取り込み・NG検知）は
+「テスト環境の状態がすべて確定してから」という方針のため、コードは完成させたが
+実サイトでの動作確認は次のデプロイ時に持ち越し。
+
+### Phase 3-G: NG/未確認ワード等のブロック検知
+`src/lib/salonboard-automation.ts`に`checkReflectBlockers(page)`と
+`ReflectionBlockedError`を追加。`submitReflectApplication()`は反映申請ボタンを
+押す前に掲載管理TOPページのテキストから「NGワード」「未確認」等のキーワードを
+検索し、見つかった場合は`ReflectionBlockedError`をthrowして反映申請自体を行わない。
+`style-post-runner.ts`側でこれを捕捉し、`styles.reflection_request_status='blocked'`
+（通常の`failed`とは区別）として記録する。
+**⚠️ 実際の掲載管理TOPページでNG/未確認がどう表示されるか(DOM構造・文言)は未確認**
+のため、キーワード検索によるベストエフォート実装。実サイト確認後、確実な
+セレクタベースの判定に置き換えること。
+
+### Phase 3-E: 実行履歴画面の汎用化
+`automation.tsx`の`/style/test-run`を刷新。
+- `execution_logs`の`execution_type`（登録/反映申請）を表示し、関連スタイルへの
+  リンクを追加
+- `blocked`ステータス用のバッジ色（amber）を追加
+- 「失敗・ブロック中のスタイル」一覧と個別「再実行」ボタンを追加
+  （`POST /api/style/:id/retry`新設）
+- `style-post-runner.ts`は1件分の「登録＋反映申請」処理を`processStyleRow()`
+  として関数化し、通常のバッチ実行(`runStyleAutomationForUser`)と
+  単体再実行(`retryStylePost`)の両方から共有する構造にリファクタリング
+
+### Phase 3-D: テンプレート一括適用
+`POST /api/style/bulk-apply-template`を新設。`/style/library`画面で
+チェックボックス（既存の「自動投稿対象」チェックを流用）で選んだスタイルに、
+選択したテンプレートの内容を一括反映する。**画像・スタイル名・担当スタイリストは
+上書きしない**（画像とスタイリストは指示書通り、スタイル名は「複数スタイルに同じ
+タイトルが付くのはおかしい」という判断で対象外とした）。結果は
+`batch_template_apply_logs`に記録。
+
+### Phase 3-F: 既存スタイル取り込み
+`src/lib/salonboard-import.ts`を新設。
+- `fetchExistingStyles(page, log)`: スタイル一覧ページを巡回し、`styleId`
+  （`L`+9桁形式、HANDOFF.md 4-4で確認済み）とタイトルらしき文字列を取得
+- `fetchStyleDetail(page, styleId, log)`: 既存スタイル編集画面
+  （HANDOFF.md 4-4記載の`editStyle(event, styleId)`で遷移）を開き、
+  `draftRegisterStyle()`が書き込みに使っているのと同じセレクタ
+  （実HTML確認済み）でフィールド値を読み取る
+- `importSelectedStyles(...)`: 選択されたスタイルを取り込み、画像は
+  ブラウザのCookieセッション経由でfetchしR2へ保存、`styles`へ
+  `source_type='imported_from_salon_board'`、`internal_save_status='ready'`、
+  `salonboard_register_status`/`reflection_request_status`は
+  （既に実サイトで公開済みのはずのため）`'success'`で保存する。
+  重複投稿を避けるため`auto_post_enabled_flag=0`（初期OFF）とする。
+- `/style/import`画面：「一覧取得」→チェックボックスで選択→「取り込む」の
+  2ステップUI（`style-import.js`）
+
+**⚠️ `fetchExistingStyles()`のスタイル一覧ページの行DOM構造は実HTML未確認**。
+`styleId`形式（`L\d{9}`）の正規表現でhidden input/リンク等から抽出する
+ベストエフォート実装になっている。実際の一覧HTMLを確認後、確実な
+セレクタベースの実装に置き換えること。ページネーションの「次へ」トリガー
+（`doSelectNext`と推測）も未確認。
+
+### ローカルでの動作確認範囲
+Browser Renderingが必要な部分（ブラウザ起動より先）は、このセッションの
+ネットワーク制限下では検証できない。ローカル`wrangler pages dev`では、
+これらのAPI（`/api/style/import/fetch-list`・`/api/style/import/execute`・
+`/api/style/:id/retry`）を呼ぶと「ブラウザ起動失敗」のエラーがJSON形式で
+正しく返ること（＝コードパスがブラウザ起動の直前まで正常に到達すること）
+まで確認済み。それ以外（テンプレート一括適用のDB更新、実行履歴画面の表示、
+再実行ボタンのUI表示）は実際にDBへ書き込み・確認済み。

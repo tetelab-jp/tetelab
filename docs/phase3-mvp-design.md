@@ -395,10 +395,10 @@ runStyleAutomationForUser() [style-post-runner.ts]
 | 3-A | `migrations/0004`でデータモデル移行（3章。`stylists`/`coupons`統合を含む） | 不要 | ✅ 完了(0005で漏れ修正も対応) |
 | 3-B | スタイリスト/クーポン同期（`syncStylists`/`syncCoupons`）＋接続設定画面（同期状態・エラー表示） | 要（マスタページのHTML/DOM確認） | 🟡 同期関数(`salonboard-sync.ts`)は実装済み。`/settings/salonboard`への同期ボタン設置・実行確認は未着手 |
 | 3-C | スタイル一覧・作成/編集画面の再設計（担当スタイリスト紐付け、状態列表示） | 不要 | ✅ 完了(`style.tsx`書き直し・ローカルE2E確認済み) |
-| 3-D | テンプレート管理の複数化＋個別適用・一括適用モーダル | 不要 | 🟡 テンプレートCRUD自体は完了。個別/一括「適用」モーダル(`batch_template_apply_logs`活用)は未着手 |
-| 3-E | 実行履歴画面の汎用化（3状態表示、再実行ボタン） | 不要 | ❌ 未着手(`automation.tsx`の実行履歴表示は旧仕様のまま) |
-| 3-F | 既存スタイル取り込み（`fetchExistingStyles`/`fetchStyleDetail`） | 要 | ❌ 未着手 |
-| 3-G | 投稿実行フローへの状態遷移組み込み・NG/未確認判定 | 要 | 🟡 登録/反映申請の2ステップ状態遷移(`style-post-runner.ts`)は実装済み。NG/未確認ワード等のブロック検知は未着手 |
+| 3-D | テンプレート管理の複数化＋個別適用・一括適用モーダル | 不要 | ✅ 完了(`POST /api/style/bulk-apply-template`。個別適用は`/style/new`のテンプレート選択で代替) |
+| 3-E | 実行履歴画面の汎用化（3状態表示、再実行ボタン） | 不要 | ✅ 完了(`automation.tsx`汎用化・`POST /api/style/:id/retry`追加) |
+| 3-F | 既存スタイル取り込み（`fetchExistingStyles`/`fetchStyleDetail`） | 要 | 🟡 コード実装完了(`salonboard-import.ts`)。一覧ページDOM構造が実HTML未確認のためベストエフォート実装。実サイトでの動作確認は未着手 |
+| 3-G | 投稿実行フローへの状態遷移組み込み・NG/未確認判定 | 要 | 🟡 `checkReflectBlockers()`実装済み(実HTML未確認のためキーワードベースの暫定実装)。実サイトでの動作確認は未着手 |
 | 3-H | 写真アップロードの実装検証（HANDOFF.md記載の最大の難所） | 要（最優先で実サイト確認） | ❌ 未着手(Browser Rendering実行環境が必要) |
 
 3-Bを前倒ししたことで、実装着手には**「スタイリスト一覧」「クーポン一覧」ページ
