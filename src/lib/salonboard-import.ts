@@ -32,6 +32,9 @@ import { SALONBOARD_BASE_URL, type AutomationLogger } from './salonboard-automat
 export type ExistingStyleSummary = {
   styleId: string // L+9桁形式
   title: string | null
+  sortNo: string | null // salonboard上の表示順(「No.」列, frmStyleListStyleInfoDtoList[N].sortNo)
+  imageUrl: string | null // 一覧のサムネイル画像(img[name="stylePhoto"])。imgbp.salonboard.com上の公開CDN URL
+  stylistName: string | null // 一覧2行目に表示されるスタイリスト名(プレーンテキスト、IDではない)
 }
 
 export type ExistingStyleDetail = {
@@ -83,8 +86,20 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
       // docs/salonboard-real-html-findings.md 2章で確定済み:
       // styleIdを最も安定して取得できるのは
       // hidden input `frmStyleListStyleInfoDtoList[N].styleId` のvalue。
+      // 1スタイル=4つの<tr>構成(先頭行がrowspan=4)で、以下も同じ先頭行/次行から
+      // 直接取得できることを実機確認済み:
+      //   - No.(表示順): 先頭行内の input[name*="sortNo"] の value
+      //   - サムネイル画像: 先頭行内の img[name="stylePhoto"] の src
+      //   - タイトル: 先頭行内の td[colspan="3"] のテキスト
+      //   - スタイリスト名: 次行(2行目)の2番目の<td>のテキスト(プレーンテキスト、ID不明)
       const idPattern = /L\d{9}/
-      const found: { styleId: string; title: string | null }[] = []
+      const found: {
+        styleId: string
+        title: string | null
+        sortNo: string | null
+        imageUrl: string | null
+        stylistName: string | null
+      }[] = []
       const seen = new Set<string>()
 
       const idInputs = Array.from(
@@ -96,22 +111,25 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
         if (!match || seen.has(match[0])) continue
         seen.add(match[0])
 
-        // 1スタイル=4つの<tr>構成(rowspan=4の先頭行から始まる)なので、
-        // 先頭行とそれに続く最大3行のテキストも合わせて拾い、タイトルを推測する。
-        let title: string | null = null
         const row = input.closest('tr')
-        if (row) {
-          const texts: string[] = [row.textContent?.trim() || '']
-          let sibling = row.nextElementSibling
-          let count = 0
-          while (sibling && sibling.tagName === 'TR' && count < 3) {
-            texts.push(sibling.textContent?.trim() || '')
-            sibling = sibling.nextElementSibling
-            count++
-          }
-          title = texts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 60) || null
+        const sortNo = (row?.querySelector('input[name*="sortNo"]') as HTMLInputElement | null)?.value || null
+        const imageUrl = (row?.querySelector('img[name="stylePhoto"]') as HTMLImageElement | null)?.src || null
+        const titleCell = row?.querySelector('td[colspan="3"]')
+        let title = titleCell?.textContent?.replace(/\s+/g, ' ').trim().slice(0, 60) || null
+
+        let stylistName: string | null = null
+        const nextRow = row?.nextElementSibling
+        if (nextRow && nextRow.tagName === 'TR') {
+          const cells = nextRow.querySelectorAll('td')
+          stylistName = cells[1]?.textContent?.replace(/\s+/g, ' ').trim() || null
         }
-        found.push({ styleId: match[0], title })
+
+        // フォールバック: td[colspan="3"]が見つからない場合、先頭行全体のテキストから推測
+        if (!title && row) {
+          title = row.textContent?.replace(/\s+/g, ' ').trim().slice(0, 60) || null
+        }
+
+        found.push({ styleId: match[0], title, sortNo, imageUrl, stylistName })
       }
 
       // フォールバック: hidden inputで見つからなかった場合、リンクのonclick等からも探す
@@ -125,7 +143,7 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
             seen.add(match[0])
             const row = el.closest('tr') || el.closest('li') || el.closest('div')
             const title = row?.textContent?.trim().slice(0, 60) || null
-            found.push({ styleId: match[0], title })
+            found.push({ styleId: match[0], title, sortNo: null, imageUrl: null, stylistName: null })
           }
         }
       }
@@ -225,9 +243,21 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       // docs/phase3-mvp-design.md 9章で確定済み: クーポンは隠しフィールド
       // frmStyleEditStyleDto.couponId にCP+14桁形式で入る
       couponSelectValue: val('input[name="frmStyleEditStyleDto.couponId"]'),
+      // クーポンが非掲載/削除済みの場合、frmStyleEditStyleDto.noPresentDeleteFlg
+      // (jsc_SB_modal_coupon_noPresentDeleteFlgクラス)が'1'になる。この状態の
+      // クーポンIDをそのまま取り込むと、以後の反映申請が「要確認」でブロックされ
+      // 続ける原因になるため、取り込み時点で検出できるようにする。
+      couponNoPresentDeleteFlg: val('input[name="frmStyleEditStyleDto.noPresentDeleteFlg"]'),
       imageUrl: img && !img.className.includes('img_new_no_photo') ? img.src : null
     }
   })
+
+  const couponIsOrphaned = detail.couponNoPresentDeleteFlg === '1'
+  if (couponIsOrphaned && detail.couponSelectValue) {
+    log(
+      `警告: ${styleId} のクーポン(${detail.couponSelectValue})は非掲載/削除済みのため、取り込み対象から除外しました`
+    )
+  }
 
   return {
     styleId,
@@ -240,7 +270,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
     hashtags: [], // ⚠️ ハッシュタグ欄のセレクタ未確認のため空配列固定
     modelAttributes: {}, // ⚠️ モデル属性欄のセレクタ未確認のため空オブジェクト固定
     stylistSelectValue: detail.stylistSelectValue,
-    couponSelectValue: detail.couponSelectValue || null,
+    couponSelectValue: couponIsOrphaned ? null : detail.couponSelectValue || null,
     imageUrl: detail.imageUrl
   }
 }

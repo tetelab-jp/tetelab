@@ -25,16 +25,47 @@ document.addEventListener('DOMContentLoaded', () => {
         data.styles.forEach((s) => {
           const li = document.createElement('li')
           li.className = 'flex items-center gap-3 py-2'
-          const label = document.createElement('label')
-          label.className = 'flex items-center gap-2 cursor-pointer flex-1'
+
           const cb = document.createElement('input')
           cb.type = 'checkbox'
-          cb.className = 'import-checkbox w-4 h-4 accent-pink-500'
+          cb.className = 'import-checkbox w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0'
           cb.value = s.styleId
-          const span = document.createElement('span')
-          span.textContent = (s.title || '（無題）') + ' (' + s.styleId + ')'
+
+          const noEl = document.createElement('span')
+          noEl.className = 'w-8 text-center text-xs font-semibold text-gray-400 flex-shrink-0'
+          noEl.textContent = s.sortNo || '-'
+
+          const thumbWrap = document.createElement('div')
+          thumbWrap.className = 'w-10 h-14 flex-shrink-0 bg-gray-50 rounded border border-gray-200 flex items-center justify-center overflow-hidden'
+          if (s.imageUrl) {
+            const img = document.createElement('img')
+            img.src = s.imageUrl
+            img.className = 'w-full h-full object-contain'
+            img.loading = 'lazy'
+            thumbWrap.appendChild(img)
+          } else {
+            const icon = document.createElement('i')
+            icon.className = 'fas fa-image text-gray-300 text-sm'
+            thumbWrap.appendChild(icon)
+          }
+
+          const label = document.createElement('label')
+          label.className = 'flex items-center gap-3 cursor-pointer flex-1 min-w-0'
+          const textWrap = document.createElement('div')
+          textWrap.className = 'min-w-0'
+          const nameEl = document.createElement('p')
+          nameEl.className = 'truncate font-medium text-gray-700'
+          nameEl.textContent = s.title || '（無題）'
+          const stylistEl = document.createElement('p')
+          stylistEl.className = 'text-xs text-gray-400'
+          stylistEl.textContent = s.stylistName || '担当未設定'
+          textWrap.appendChild(nameEl)
+          textWrap.appendChild(stylistEl)
           label.appendChild(cb)
-          label.appendChild(span)
+          label.appendChild(thumbWrap)
+          label.appendChild(textWrap)
+
+          li.appendChild(noEl)
           li.appendChild(label)
           listEl.appendChild(li)
         })

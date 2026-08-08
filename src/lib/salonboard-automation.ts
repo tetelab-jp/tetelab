@@ -432,53 +432,48 @@ export class ReflectionBlockedError extends Error {
  * 掲載管理TOPページを開いた状態で、反映申請がブロックされていないかを確認する
  * （docs/phase3-mvp-design.md 5-5 手順2）。
  *
- * docs/salonboard-real-html-findings.md（2026-08-09、Playwrightで実アカウントを
- * 調査した確定結果）に基づく実装:
- * - 反映申請ボタンは `<button type="button" id="reflectedButton" class="...
- *   common-CNBcommon__primaryBtn--disabled ...">`。**inline onclick属性は無い**
- *   （別JSファイルでid起点にaddEventListenerされている）。
- * - 画面上部の固定注意書きに「NG」「未確認」という文言が**常に**含まれているため、
- *   ページ本文のテキストをキーワード検索する方式（旧実装）は必ずこの注意書きに
- *   ヒットして誤検知(false positive)する。**この方式は使わない。**
- * - 実際にブロックされている時にライブで表示されるのは「要確認」という赤字リンク
- *   （サロン/スタイリスト/スタイル掲載情報の各項目に対して表示され、クリックで
- *   `showErrorPopup(storeId, styleId)` が呼ばれる）。「要確認」が残っている状態で
- *   `#reflectedButton` に `--disabled` 修飾クラスが付与されることを実機で確認済み。
- * - そのため、`#reflectedButton` の disabled状態を主判定条件とし、「要確認」リンクの
- *   有無を理由(reason)の補足情報として使う。
+ * ⚠️ 2026-08-09追記(訂正): 以前は「要確認」リンクの残数を主なブロック理由として
+ * 扱っていたが、これは誤りだった。実機調査の結果、スタイル一覧の**全16件すべて**
+ * (通常運用中のアカウント)に「要確認」リンクが恒常的に表示されており、
+ * 「要確認」は通常運用でもごく普通に出る表示であって、反映申請をブロックする
+ * ものではないことが判明した。**反映申請を実際にブロックするのは「NG」表示の
+ * 場合のみ**（画面上部の固定注意書き「※ 掲載チェックに「NG」がある場合、または
+ * 「未確認の掲載情報」がある場合、「反映申請」ボタンは押せません。」より）。
  *
- * ⚠️ 残る不確実性: `--disabled`は「要確認が残っている」以外に「新たに反映すべき
- * 変更が無い」場合にも付与される可能性がある（特集/クーポン用ボタンで観測）。
- * ただしこの関数は「直前にdraftRegisterStyle()でスタイルを新規登録した直後」
- * にのみ呼ばれる想定のため、その時点で#reflectedButtonが無効化されていれば
- * 「変更なし」ではなく実際のブロック要因である可能性が高いと判断する。
+ * ただし「NG」が実際にライブ表示された状態の実HTML構造(文言・クラス名・出現箇所)は
+ * まだ実機で確認できていない。判明するまでの暫定措置として、この関数は
+ * 「要確認」の存在を一切ブロック判定に使わず、参考情報としてログに出すのみとし、
+ * 常に blocked: false を返す(過剰ブロックによる誤検知を避けるため)。
+ * `#reflectedButton` の `--disabled` クラスについても、それが実際のNGによる
+ * ものか「反映すべき変更が無いだけ」かを区別できないため、現時点ではブロック
+ * 判定には使わない(参考ログとしてのみ出力)。
+ *
+ * TODO: 実機でNG表示のDOM構造を確認でき次第、そのNG検知を主判定条件として
+ * 実装し直すこと。
  */
 export async function checkReflectBlockers(page: Page): Promise<{ blocked: boolean; reason?: string }> {
   const result = await page.evaluate(() => {
     const btn = document.getElementById('reflectedButton')
-    if (!btn) return { buttonFound: false, disabled: false, needsCheckCount: 0 }
-
-    const disabled = btn.className.includes('--disabled')
-    const needsCheckLinks = Array.from(document.querySelectorAll('a')).filter(
+    const disabled = btn ? btn.className.includes('--disabled') : null
+    const needsCheckCount = Array.from(document.querySelectorAll('a')).filter(
       (a) => a.textContent?.trim() === '要確認'
-    )
-    return { buttonFound: true, disabled, needsCheckCount: needsCheckLinks.length }
+    ).length
+    return { buttonFound: !!btn, disabled, needsCheckCount }
   })
 
-  if (!result.buttonFound) {
-    // ボタン自体が見つからない = ページ構造が想定と異なる可能性が高いが、
-    // ここでブロック扱いにはせず、後続のクリック処理側でエラーにする。
-    return { blocked: false }
+  if (result.needsCheckCount > 0) {
+    console.log(
+      `[参考] 「要確認」項目が${result.needsCheckCount}件表示されています` +
+        `(通常運用でもよく見られる表示のため、ブロック要因としては扱いません)`
+    )
+  }
+  if (result.buttonFound) {
+    console.log(`[参考] #reflectedButtonのdisabled状態: ${result.disabled}`)
   }
 
-  if (result.disabled) {
-    const reason =
-      result.needsCheckCount > 0
-        ? `「要確認」項目が${result.needsCheckCount}件残っています`
-        : '反映申請ボタンが無効化されています(要確認以外の要因の可能性あり)'
-    return { blocked: true, reason }
-  }
-
+  // 暫定実装: NG検知ロジックが未実装のため、常にblocked: falseとする。
+  // 実際にサロンボード側でブロックされている場合は、この後のクリック処理や
+  // サロンボード自体の挙動(クリックしても反映されない等)に委ねる。
   return { blocked: false }
 }
 
@@ -502,7 +497,7 @@ export async function submitReflectApplication(page: Page, log: AutomationLogger
     log('警告: 反映申請ボタン(#reflectedButton)の検出に失敗しました。ページ構造の再確認が必要です。')
   })
 
-  log('ブロック要因(要確認項目の残り等)を確認中...')
+  log('ブロック要因(NG表示等)を確認中...')
   const blockCheck = await checkReflectBlockers(page)
   if (blockCheck.blocked) {
     throw new ReflectionBlockedError(
