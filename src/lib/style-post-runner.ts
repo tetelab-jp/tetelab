@@ -1,7 +1,7 @@
 // ============================================
 // style-post-runner.ts
 // 「auto_post_enabled_flag=1 かつ ready状態のスタイルを全件投稿する」
-// 1回分の実行ロジック。手動テスト実行（automation.tsx）と
+// 1回分の実行ロジック。手動実行（automation.tsx）と
 // 外部Cronトリガー（同route）の両方から呼ばれる。
 //
 // docs/phase3-mvp-design.md 5-5「投稿実行フロー」に対応。
@@ -260,6 +260,152 @@ export async function runStyleAutomationForUser(
       successCount,
       failureCount,
       blockedCount,
+      status: 'failed',
+      errorMessage: message
+    }
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
+}
+
+// 「7:00〜24:00の間に均等に分散して投稿する」ための時間窓(JST・分)。
+const DAILY_WINDOW_START_MINUTES = 7 * 60 // 07:00
+const DAILY_WINDOW_END_MINUTES = 24 * 60 // 24:00(=翌0:00)
+
+function jstMinutesOfDay(nowLabel: string): number {
+  const [hh, mm] = nowLabel.split(':').map(Number)
+  return hh * 60 + mm
+}
+
+/**
+ * 「7:00〜24:00の間に均等に分散して投稿する」ための判定。
+ * 残り時間と残り対象件数から理想の投稿間隔を毎回動的に算出し、
+ * 本日最後に投稿した時刻からその間隔以上経過していれば次の1件を
+ * 投稿してよいと判定する。固定スロットを持たないため、新規追加・
+ * 失敗による対象件数の増減にも自動で追従する。
+ */
+async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: string): Promise<boolean> {
+  const nowMinutes = jstMinutesOfDay(nowLabel)
+  if (nowMinutes < DAILY_WINDOW_START_MINUTES || nowMinutes >= DAILY_WINDOW_END_MINUTES) return false
+
+  const countRow = await env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM (
+       SELECT s.id FROM styles s
+       WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+         AND s.reflection_request_status IN ('not_started', 'failed')
+       ORDER BY s.sort_order ASC, s.id ASC
+       LIMIT ${DAILY_POST_LIMIT}
+     )`
+  )
+    .bind(userId)
+    .first<{ cnt: number }>()
+
+  const remainingCount = countRow?.cnt ?? 0
+  if (remainingCount === 0) return false
+
+  const remainingMinutes = DAILY_WINDOW_END_MINUTES - nowMinutes
+  if (remainingMinutes <= 0) return false
+
+  const idealIntervalMinutes = remainingMinutes / remainingCount
+
+  // 本日(JST)すでに投稿(登録/反映申請の試行)した最後の時刻
+  const lastRow = await env.DB.prepare(
+    `SELECT MAX(last_executed_at) as last_at FROM styles
+     WHERE user_id = ? AND last_executed_at IS NOT NULL
+       AND date(last_executed_at, '+9 hours') = date('now', '+9 hours')`
+  )
+    .bind(userId)
+    .first<{ last_at: string | null }>()
+
+  if (!lastRow?.last_at) return true // 本日まだ1件も投稿していなければ即投稿してよい
+
+  const lastAtMs = new Date(lastRow.last_at.replace(' ', 'T') + 'Z').getTime()
+  const minutesSinceLastPost = (Date.now() - lastAtMs) / 60000
+
+  return minutesSinceLastPost >= idealIntervalMinutes
+}
+
+/**
+ * 「7:00〜24:00の間に均等に分散して投稿する」方式で、1回の呼び出しにつき
+ * 最大1件のスタイルのみを処理する。外部Cronから数分間隔で呼ばれる想定
+ * (ユーザー要望により、固定時刻での一括投稿から変更)。
+ * 投稿すべきタイミングでない場合・対象が無い場合はnullを返す
+ * (呼び出し側はスキップ扱いとする)。
+ */
+export async function runNextStyleForUser(
+  env: Bindings,
+  userId: number,
+  scheduledTimeLabel: string
+): Promise<RunSummary | null> {
+  const shouldPost = await shouldPostNextStyle(env, userId, scheduledTimeLabel)
+  if (!shouldPost) return null
+
+  const cred = await env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(userId)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+
+  if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
+  if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
+
+  const row = await env.DB.prepare(
+    `${READY_STYLE_SELECT}
+     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+       AND s.reflection_request_status IN ('not_started', 'failed')
+     ORDER BY s.sort_order ASC, s.id ASC
+     LIMIT 1`
+  )
+    .bind(userId)
+    .first<ReadyStyleRow>()
+
+  if (!row) return null
+
+  const runInsert = await env.DB.prepare(
+    `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
+     VALUES (?, ?, 1, 'processing')`
+  )
+    .bind(userId, scheduledTimeLabel)
+    .run()
+  const runId = Number(runInsert.meta.last_row_id)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser(env)
+    const page = await browser.newPage()
+    await loginToSalonBoard(page, loginId, password, () => {})
+
+    const outcome = await processStyleRow(page, env, userId, row)
+    const finalStatus: 'done' | 'failed' = outcome === 'success' ? 'done' : 'failed'
+
+    await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(finalStatus, runId)
+      .run()
+
+    return {
+      runId,
+      totalImages: 1,
+      successCount: outcome === 'success' ? 1 : 0,
+      failureCount: outcome === 'failed' ? 1 : 0,
+      blockedCount: outcome === 'blocked' ? 1 : 0,
+      status: finalStatus
+    }
+  } catch (err: any) {
+    const message = String(err?.message || err).slice(0, 500)
+    await env.DB.prepare(
+      `UPDATE style_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(message, runId)
+      .run()
+    return {
+      runId,
+      totalImages: 1,
+      successCount: 0,
+      failureCount: 1,
+      blockedCount: 0,
       status: 'failed',
       errorMessage: message
     }

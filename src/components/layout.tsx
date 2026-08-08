@@ -19,7 +19,7 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: '投稿テンプレート設定', group: 'style' },
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿スケジュール', group: 'style' },
-  { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: 'テスト実行・実行履歴', group: 'style' },
+  { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: '手動実行・実行履歴', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' }
 ]

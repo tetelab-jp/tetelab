@@ -1128,8 +1128,9 @@ style.post('/style/library/delete/:id', async (c) => {
 
 // ---------- 自動投稿スケジュール設定 ----------
 
-// 毎朝この時刻(JST)から自動投稿を開始する固定時刻。src/routes/automation.tsxのDAILY_AUTO_POST_TIMEと一致させること。
-const DAILY_AUTO_POST_TIME_LABEL = '7:00'
+// 自動投稿の時間窓(JST)。src/lib/style-post-runner.tsのDAILY_WINDOW_START/END_MINUTESと一致させること。
+const DAILY_WINDOW_START_LABEL = '7:00'
+const DAILY_WINDOW_END_LABEL = '24:00'
 // TETE AOUT側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
 const DAILY_POST_LIMIT_LABEL = 100
 
@@ -1160,15 +1161,16 @@ style.get('/style/schedule', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿を有効にすると、毎朝<b>{DAILY_AUTO_POST_TIME_LABEL}</b>から、自動投稿対象（入力完了済み）の
-        スタイルを登録順に「登録＋反映申請」まで自動実行します（1日最大<b>{DAILY_POST_LIMIT_LABEL}件</b>まで）。
+        自動投稿を有効にすると、<b>{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}</b>の間に、自動投稿対象（入力完了済み）の
+        スタイルを登録順に、時間帯全体へ均等に分散させながら「登録＋反映申請」まで自動実行します
+        （1日最大<b>{DAILY_POST_LIMIT_LABEL}件</b>まで。短時間に集中投稿しないよう、対象件数に応じて投稿間隔を自動調整します）。
         現在<b>{selectedCount}件</b>が対象です。
       </div>
 
       <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-xl">
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
           <input type="checkbox" name="enabled" checked={enabled} class="w-4 h-4 accent-pink-500" />
-          自動投稿を有効にする（毎朝{DAILY_AUTO_POST_TIME_LABEL}〜、最大{DAILY_POST_LIMIT_LABEL}件/日）
+          自動投稿を有効にする（{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}に分散、最大{DAILY_POST_LIMIT_LABEL}件/日）
         </label>
 
         <button

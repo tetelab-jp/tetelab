@@ -1,16 +1,12 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
-import { runStyleAutomationForUser, retryStylePost, currentJstTimeLabel } from '../lib/style-post-runner'
+import { runStyleAutomationForUser, runNextStyleForUser, retryStylePost, currentJstTimeLabel } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-// 毎朝この時刻(JST)から、登録済み(ready)スタイルの自動投稿を開始する固定時刻。
-// docs/phase3-mvp-design.md参照。ユーザーが時刻を選ぶUIは廃止した。
-const DAILY_AUTO_POST_TIME = '07:00'
-
-// ---------- テスト実行・履歴画面 ----------
+// ---------- 手動実行・履歴画面 ----------
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
   register_style: '登録',
@@ -75,10 +71,10 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="テスト実行・実行履歴">
+    <PageLayout active="style-test-run" salonName={user.salon_name} title="手動実行・実行履歴">
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
         <i class="fas fa-triangle-exclamation mr-2"></i>
-        テスト実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
         サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
       </div>
 
@@ -87,7 +83,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
           id="test-run-btn"
           class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
         >
-          <i class="fas fa-flask mr-2"></i>テスト実行する
+          <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
       </div>
@@ -204,11 +200,11 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <script src="/static/test-run.js"></script>
     </PageLayout>,
-    { title: 'テスト実行・実行履歴' }
+    { title: '手動実行・実行履歴' }
   )
 })
 
-// ---------- テスト実行API（ログイン中ユーザー本人のみ） ----------
+// ---------- 手動実行API（ログイン中ユーザー本人のみ） ----------
 
 automation.post('/api/automation/test-run', requireAuth, async (c) => {
   const user = c.get('user')
@@ -254,13 +250,10 @@ automation.post('/api/cron/run-style-posts', async (c) => {
 
   const nowLabel = currentJstTimeLabel()
 
-  // 実行時刻はユーザーが選ぶのではなく、毎朝7:00固定で
-  // 登録済み(ready)スタイルを順次自動投稿する運用に変更(docs/phase3-mvp-design.md参照)。
-  // 外部Cronは1分間隔程度でこのエンドポイントを叩く想定のため、ここで時刻を絞り込む。
-  if (nowLabel !== DAILY_AUTO_POST_TIME) {
-    return c.json({ time: nowLabel, matchedUsers: 0, outcomes: [] })
-  }
-
+  // 「7:00〜24:00の間に均等に分散して投稿する」方式(ユーザー要望により、
+  // 固定時刻での一括投稿から変更)。外部Cronは数分間隔でこのエンドポイントを
+  // 叩く想定で、呼ばれるたびに各ユーザーごとに「今が投稿すべきタイミングか」
+  // をrunNextStyleForUser()内で判定し、タイミングであれば1件だけ処理する。
   const { results: schedules } = await c.env.DB.prepare(
     `SELECT user_id FROM style_post_schedules WHERE enabled = 1`
   ).all<{ user_id: number }>()
@@ -270,8 +263,12 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   const outcomes: any[] = []
   for (const t of targets) {
     try {
-      const summary = await runStyleAutomationForUser(c.env, t.user_id, nowLabel)
-      outcomes.push({ userId: t.user_id, ...summary })
+      const summary = await runNextStyleForUser(c.env, t.user_id, nowLabel)
+      if (summary) {
+        outcomes.push({ userId: t.user_id, ...summary })
+      } else {
+        outcomes.push({ userId: t.user_id, skipped: true })
+      }
     } catch (err: any) {
       outcomes.push({ userId: t.user_id, status: 'failed', error: String(err?.message || err) })
     }
