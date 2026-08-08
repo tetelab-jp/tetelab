@@ -182,23 +182,23 @@ function jsonForScriptTag(value: unknown): string {
 }
 
 function statusBadge(status: string, kind: 'internal' | 'register' | 'reflection') {
-  // 2026-08-09追記(ユーザー訂正): サロンボードへの登録→反映申請は自動で
-  // 連続実行されるため、「反映申請待ち」のような中間状態をユーザーに見せる
-  // 意味は薄く、むしろ「実際にはまだ登録すらされていないのに反映申請待ちと
-  // 表示される」という誤解を生んでいた。反映系ステータスは
-  // 「公開済み」(success)か「ブロック」(それ以外すべて)の2値のみで表示する。
+  // 2026-08-09追記: 「公開済み/ブロック」の2値表示だと、まだ一度も実行して
+  // いない(not_started)スタイルや、ブロックとは無関係の単純な失敗(failed)まで
+  // 「ブロック」表示になってしまい、「本当にブロックされているのか」が
+  // 分からなくなる問題があった(ユーザー指摘)。実際にサロンボード側の
+  // 「要確認」等でブロックされた場合(blocked)のみ「ブロック」とし、
+  // それ以外は状態ごとに分けて表示する。
   if (kind === 'reflection') {
-    const isPublished = status === 'success'
-    return (
-      <span
-        class={
-          'text-xs px-2 py-0.5 rounded font-semibold ' +
-          (isPublished ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600')
-        }
-      >
-        {isPublished ? '公開済み' : 'ブロック'}
-      </span>
-    )
+    if (status === 'success') {
+      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開済み</span>
+    }
+    if (status === 'blocked') {
+      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">ブロック</span>
+    }
+    if (status === 'failed') {
+      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-amber-50 text-amber-600">失敗</span>
+    }
+    return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-500">未実行</span>
   }
 
   const map: Record<string, string> = {

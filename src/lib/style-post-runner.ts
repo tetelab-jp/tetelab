@@ -191,10 +191,14 @@ export async function runStyleAutomationForUser(
   if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
   if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
 
+  // 2026-08-09追記: 従来'blocked'を対象から除外していたため、一度ブロック判定
+  // されたスタイルは専用の「再実行」ボタンからしか再試行できなかった。
+  // ブロック判定自体が誤検知だったケース(その5〜9で判明した「要確認」の
+  // 誤検知等)もあるため、通常の手動実行・自動投稿でも対象に含めるようにした。
   const { results } = await env.DB.prepare(
     `${READY_STYLE_SELECT}
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND s.reflection_request_status IN ('not_started', 'failed')
+       AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT ${DAILY_POST_LIMIT}`
   )
@@ -297,7 +301,7 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
     `SELECT COUNT(*) as cnt FROM (
        SELECT s.id FROM styles s
        WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-         AND s.reflection_request_status IN ('not_started', 'failed')
+         AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
        ORDER BY s.sort_order ASC, s.id ASC
        LIMIT ${DAILY_POST_LIMIT}
      )`
@@ -357,7 +361,7 @@ export async function runNextStyleForUser(
   const row = await env.DB.prepare(
     `${READY_STYLE_SELECT}
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND s.reflection_request_status IN ('not_started', 'failed')
+       AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT 1`
   )
