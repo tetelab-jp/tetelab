@@ -107,8 +107,19 @@ export async function launchBrowser(env: Bindings, maxRetries = 5): Promise<Brow
  * viewport等)を可能な範囲でごまかす。これでも弾かれる場合は、
  * さらに高度なフィンガープリンティング対策の追加検討が必要。
  */
-export async function newAutomationPage(browser: Browser): Promise<Page> {
+export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
+
+  // 2026-08-09追記: ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
+  // ハンドラが無かった。もしサロンボードが登録時等に確認ダイアログを出す仕様の場合、
+  // ハンドラが無いとPuppeteerはダイアログに応答できずそのまま固まり、
+  // waitForNavigation/waitForFunctionが静かにタイムアウトする(ダイアログはDOM外の
+  // ネイティブUIのため、document.body.innerTextには一切現れず、原因究明が困難だった)。
+  // 常に自動的に「OK」を押す(accept)ようにして、この可能性を排除する。
+  page.on('dialog', async (dialog: any) => {
+    log?.(`確認ダイアログを検知し自動的にOKを選択しました: 「${dialog.message()}」`)
+    await dialog.accept().catch(() => {})
+  })
 
   // 代表的なheadless検知ポイントを可能な範囲で偽装する
   await page.evaluateOnNewDocument(() => {
@@ -340,6 +351,28 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
       if (el) el.value = couponId
     }, input.couponSelectValue)
   }
+
+  // ---- 送信前セルフチェック ----
+  // 2026-08-09追記: 「送信しても実際にはサロンボード側で保存されない」という
+  // 事象が発生し、原因の切り分けに時間がかかったため、送信直前に各必須項目が
+  // 本当にセットされているかを自己点検してログに残すようにした
+  // (page.select()は指定値が存在しない場合など静かに失敗することがあるため)。
+  const preflight = await page.evaluate(() => {
+    const val = (id: string) => (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ?? '(要素なし)'
+    const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
+    return {
+      styleRegistFormat: (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)?.value ?? '(未選択)',
+      frontImgId: val('FRONT_IMG_ID'),
+      stylistCheckCd: val('stylistCheckCd'),
+      stylistCommentTxt: val('stylistCommentTxt'),
+      styleNameTxt: val('styleNameTxt'),
+      styleCategoryCd01: checked('styleCategoryCd01'),
+      styleCategoryCd02: checked('styleCategoryCd02'),
+      ladiesHairLengthCd: val('ladiesHairLengthCd'),
+      menuDetailTxt: val('menuDetailTxt')
+    }
+  })
+  log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
 
   // ---- 保存（doRegister） ----
   // 2026-08-09追記: 以前はpage.evaluate()内でのelement.click()(isTrusted=false
