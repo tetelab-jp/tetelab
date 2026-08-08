@@ -377,9 +377,36 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     .catch(() => false)
 
   if (!registeredStyleId) {
+    // 原因切り分け用に、失敗時点のURL・画面テキスト・想定エラー表示要素の有無を
+    // ログとエラー両方に残す(#styleIdという要素ID自体が実HTML未確認のままだった
+    // ため、検証方法自体が誤っている可能性も含めて切り分けられるようにする)。
+    const currentUrl = page.url()
+    const diag = await page
+      .evaluate(() => {
+        const bodyText = document.body?.innerText?.slice(0, 500) ?? ''
+        const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+        const errorEls = Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+          .map((el) => el.textContent?.trim())
+          .filter((t) => t)
+          .slice(0, 5)
+        return {
+          bodyText,
+          styleIdElExists: !!styleIdEl,
+          styleIdElValue: styleIdEl?.value ?? null,
+          errorTexts: errorEls
+        }
+      })
+      .catch(() => null)
+    const cleanedText = diag?.bodyText.replace(/\s+/g, ' ').trim() ?? '(画面テキスト取得失敗)'
+    log(`登録確認失敗時のURL: ${currentUrl}`)
+    log(`登録確認失敗時のページ冒頭: ${cleanedText}`)
+    log(`登録確認失敗時の#styleId要素: 存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'}`)
+    if (diag?.errorTexts && diag.errorTexts.length > 0) {
+      log(`登録確認失敗時のエラー表示候補: ${diag.errorTexts.join(' / ')}`)
+    }
     throw new Error(
       'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
-        'サーバー側で実際に登録されていない可能性があります。'
+        `サーバー側で実際に登録されていない可能性があります。 [診断情報] url=${currentUrl} pageText="${cleanedText}"`
     )
   }
 
