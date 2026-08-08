@@ -10,7 +10,7 @@
     "deploy": "npm run build && wrangler pages deploy",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings",
     "db:migrate:local": "wrangler d1 migrations apply hotpepper-automation-production --local",
-    "db:migrate:prod": "wrangler d1 migrations apply hotpepper-automation-production",
+    "db:migrate:prod": "wrangler d1 migrations apply hotpepper-automation-production --remote",
     "db:console:local": "wrangler d1 execute hotpepper-automation-production --local"
   },
   "dependencies": {

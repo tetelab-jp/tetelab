@@ -10,7 +10,7 @@
     {
       "binding": "DB",
       "database_name": "hotpepper-automation-production",
-      "database_id": "local-dev-placeholder"
+      "database_id": "8ba776a6-1915-4f66-b9d5-4713c7e1fe10"
     }
   ],
   "r2_buckets": [
