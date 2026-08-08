@@ -50,7 +50,7 @@ export type ExistingStyleDetail = {
  */
 export async function fetchExistingStyles(page: Page, log: AutomationLogger): Promise<ExistingStyleSummary[]> {
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded',
     timeout: 30000
   })
 
@@ -117,7 +117,7 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
     })
     if (!hasNext) break
 
-    await page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 15000 }).catch(() => null)
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null)
   }
 
   log(`スタイル一覧を${results.length}件取得しました`)
@@ -131,11 +131,11 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
 export async function fetchStyleDetail(page: Page, styleId: string, log: AutomationLogger): Promise<ExistingStyleDetail> {
   log(`スタイル詳細を取得中...(${styleId})`)
 
-  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'networkidle0', timeout: 30000 })
+  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
   // 既存スタイル編集画面を開く。HANDOFF.md 4-4のeditStyle(event, styleId)を想定。
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate((id: string) => {
       // @ts-ignore
       if (typeof (window as any).editStyle === 'function') {

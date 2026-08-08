@@ -67,7 +67,7 @@ export async function loginToSalonBoard(
   log: AutomationLogger
 ): Promise<void> {
   log('ログインページへ遷移中...')
-  await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'networkidle0', timeout: 30000 })
+  await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
   await page.waitForSelector('input[name="userId"]', { timeout: 15000 })
   await page.type('input[name="userId"]', loginId, { delay: 20 })
@@ -77,7 +77,7 @@ export async function loginToSalonBoard(
   // 通常のsubmitは無効化されているため、実際に使われているJS関数を直接呼ぶ。
   // (見た目のUI操作を再現するより、実際に発火する関数を叩く方が安定するため)
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
       // @ts-ignore - サロンボードのページ内で定義されているグローバル関数
       if (typeof (window as any).dologin === 'function') {
@@ -104,11 +104,11 @@ export async function loginToSalonBoard(
  */
 export async function draftRegisterStyle(page: Page, input: StylePostInput, log: AutomationLogger): Promise<void> {
   log('スタイル一覧ページへ遷移中...')
-  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'networkidle0', timeout: 30000 })
+  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
   log('新規スタイル作成フォームを開いています...')
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
       // @ts-ignore
       if (typeof (window as any).addStyle === 'function') {
@@ -180,7 +180,7 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   // ---- 保存（doRegister） ----
   log('スタイルを登録中...')
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
       const btn = document.querySelector('[onclick*="doRegister("]') as HTMLElement | null
       btn?.click()
@@ -319,9 +319,17 @@ export async function checkReflectBlockers(page: Page): Promise<{ blocked: boole
 export async function submitReflectApplication(page: Page, log: AutomationLogger): Promise<void> {
   log('掲載管理TOPへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/reflect/reflectTop/`, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded',
     timeout: 30000
   })
+
+  // domcontentloadedはDOM解析完了時点で発火するため、反映申請ボタンが
+  // JS側で描画されるまで少し待つ(実際の描画完了検知条件は未確認のため暫定)。
+  await page
+    .waitForSelector('[onclick*="reflected("]', { timeout: 15000 })
+    .catch(() => {
+      log('警告: 反映申請ボタンの検出がタイムアウトしました。処理は続行しますが要確認です。')
+    })
 
   log('NG/未確認ワード等のブロック要因を確認中...')
   const blockCheck = await checkReflectBlockers(page)
@@ -333,7 +341,7 @@ export async function submitReflectApplication(page: Page, log: AutomationLogger
 
   log('反映申請を実行中...')
   await Promise.all([
-    page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
       // "reflected(" で始まる関数呼び出しのみにマッチさせ、
       // reflectedSpecial(/reflectedCpn( を誤って拾わないようにする
