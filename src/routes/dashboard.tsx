@@ -20,12 +20,12 @@ dashboard.get('/dashboard', async (c) => {
     .bind(user.id)
     .first<{ cnt: number }>()
 
-  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM style_images WHERE user_id = ?')
+  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ?')
     .bind(user.id)
     .first<{ total: number }>()
 
   const styleSelectedRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) as selected FROM style_images WHERE user_id = ? AND is_selected = 1'
+    'SELECT COUNT(*) as selected FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1'
   )
     .bind(user.id)
     .first<{ selected: number }>()

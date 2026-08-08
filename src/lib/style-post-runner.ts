@@ -1,7 +1,12 @@
 // ============================================
 // style-post-runner.ts
-// 「チェック済みスタイル画像を全件投稿する」1回分の実行ロジック。
-// 手動テスト実行（automation.ts）と外部Cronトリガー（同route）の両方から呼ばれる。
+// 「auto_post_enabled_flag=1 かつ ready状態のスタイルを全件投稿する」
+// 1回分の実行ロジック。手動テスト実行（automation.tsx）と
+// 外部Cronトリガー（同route）の両方から呼ばれる。
+//
+// docs/phase3-mvp-design.md 5-5「投稿実行フロー」に対応。
+// 「登録」「反映申請」を別ステップとして扱い、それぞれの結果を
+// styles.salonboard_register_status / reflection_request_status に記録する。
 // ============================================
 
 import type { Bindings } from '../types'
@@ -9,7 +14,8 @@ import { decryptSecret } from './crypto'
 import {
   launchBrowser,
   loginToSalonBoard,
-  postStyleImageFull,
+  draftRegisterStyle,
+  submitReflectApplication,
   type StylePostInput
 } from './salonboard-automation'
 
@@ -22,20 +28,17 @@ export type RunSummary = {
   errorMessage?: string
 }
 
-type TemplateRow = {
-  stylist_select_value: string | null
-  stylist_comment: string | null
-  category_cd: string
-  hair_length_value: string | null
-  menu_contents_cd_list: string
-  menu_detail_text: string | null
-}
-
-type StyleImageRow = {
+type ReadyStyleRow = {
   id: number
-  r2_key: string
-  file_name: string | null
   title: string | null
+  comment: string | null
+  category_value: string | null
+  length_value: string | null
+  menu_values_json: string
+  menu_detail_text: string | null
+  stylist_select_value: string | null
+  front_r2_key: string | null
+  front_file_name: string | null
 }
 
 export async function runStyleAutomationForUser(
@@ -43,7 +46,7 @@ export async function runStyleAutomationForUser(
   userId: number,
   scheduledTimeLabel: string
 ): Promise<RunSummary> {
-  // ---- 事前チェック: 連携情報・テンプレート・対象画像 ----
+  // ---- 事前チェック: 連携情報・対象スタイル ----
   const cred = await env.DB.prepare(
     'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
   )
@@ -53,26 +56,23 @@ export async function runStyleAutomationForUser(
   if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
   if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
 
-  const template = await env.DB.prepare(
-    `SELECT stylist_select_value, stylist_comment, category_cd, hair_length_value, menu_contents_cd_list, menu_detail_text
-     FROM style_post_templates WHERE user_id = ?`
-  )
-    .bind(userId)
-    .first<TemplateRow>()
-
-  if (!template || !template.stylist_comment || !template.menu_detail_text) {
-    throw new Error('投稿テンプレート（/style/template）が未設定、または必須項目が未入力です')
-  }
-
   const { results } = await env.DB.prepare(
-    'SELECT id, r2_key, file_name, title FROM style_images WHERE user_id = ? AND is_selected = 1'
+    `SELECT
+       s.id, s.title, s.comment, s.category_value, s.length_value,
+       s.menu_values_json, s.menu_detail_text,
+       st.salonboard_stylist_key AS stylist_select_value,
+       si.r2_key AS front_r2_key, si.file_name AS front_file_name
+     FROM styles s
+     LEFT JOIN stylists st ON st.id = s.stylist_id
+     LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
+     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'`
   )
     .bind(userId)
-    .all<StyleImageRow>()
+    .all<ReadyStyleRow>()
 
-  const images = results || []
-  if (images.length === 0) {
-    throw new Error('投稿対象としてチェックされている画像がありません')
+  const targets = results || []
+  if (targets.length === 0) {
+    throw new Error('投稿対象（自動投稿ON・入力完了済み）のスタイルがありません')
   }
 
   // ---- 実行履歴レコードを作成 ----
@@ -80,7 +80,7 @@ export async function runStyleAutomationForUser(
     `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
      VALUES (?, ?, ?, 'processing')`
   )
-    .bind(userId, scheduledTimeLabel, images.length)
+    .bind(userId, scheduledTimeLabel, targets.length)
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
@@ -98,59 +98,113 @@ export async function runStyleAutomationForUser(
     // ログはpasswordを絶対に含めない
     await loginToSalonBoard(page, loginId, password, () => {})
 
-    for (const img of images) {
+    for (const row of targets) {
       try {
-        const object = await env.STYLE_IMAGES.get(img.r2_key)
-        if (!object) throw new Error(`R2から画像が見つかりません（key: ${img.r2_key}）`)
+        if (!row.front_r2_key) throw new Error('FRONT画像が未登録です')
+
+        const object = await env.STYLE_IMAGES.get(row.front_r2_key)
+        if (!object) throw new Error(`R2から画像が見つかりません（key: ${row.front_r2_key}）`)
         const imageBuffer = await object.arrayBuffer()
 
         const input: StylePostInput = {
-          styleImageId: img.id,
+          styleImageId: row.id,
           imageBuffer,
-          imageFileName: img.file_name || `style-${img.id}.jpg`,
-          styleName: (img.title || img.file_name || `スタイル${img.id}`).slice(0, 60),
-          stylistSelectValue: template.stylist_select_value || '',
-          stylistComment: template.stylist_comment || '',
-          categoryCd: (template.category_cd as 'SG01' | 'SG02') || 'SG01',
-          hairLengthValue: template.hair_length_value || '',
-          menuContentsCdList: JSON.parse(template.menu_contents_cd_list || '[]'),
-          menuDetailText: template.menu_detail_text || ''
+          imageFileName: row.front_file_name || `style-${row.id}.jpg`,
+          styleName: (row.title || `スタイル${row.id}`).slice(0, 60),
+          stylistSelectValue: row.stylist_select_value || '',
+          stylistComment: row.comment || '',
+          categoryCd: (row.category_value as 'SG01' | 'SG02') || 'SG01',
+          hairLengthValue: row.length_value || '',
+          menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
+          menuDetailText: row.menu_detail_text || ''
         }
 
-        await postStyleImageFull(page, input, () => {})
+        // ---- 登録(下書き保存) ----
+        try {
+          await draftRegisterStyle(page, input, () => {})
+          await env.DB.prepare(
+            `UPDATE styles SET salonboard_register_status = 'success', reflection_request_status = 'pending', last_error = NULL WHERE id = ?`
+          )
+            .bind(row.id)
+            .run()
+          await env.DB.prepare(
+            `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+             VALUES (NULL, ?, ?, 'register_style', 'success', ?)`
+          )
+            .bind(userId, row.id, `スタイル登録成功: ${input.styleName}`)
+            .run()
+        } catch (registerErr: any) {
+          const message = String(registerErr?.message || registerErr).slice(0, 500)
+          await env.DB.prepare(
+            `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+          )
+            .bind(message, row.id)
+            .run()
+          await env.DB.prepare(
+            `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+             VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+          )
+            .bind(userId, row.id, `スタイル登録失敗: ${message}`)
+            .run()
+          failureCount++
+          continue
+        }
 
-        await env.DB.prepare(
-          `UPDATE style_images SET post_count = post_count + 1, last_posted_at = CURRENT_TIMESTAMP WHERE id = ?`
-        )
-          .bind(img.id)
-          .run()
-
-        await env.DB.prepare(
-          `INSERT INTO execution_logs (post_id, user_id, status, message) VALUES (NULL, ?, 'success', ?)`
-        )
-          .bind(userId, `スタイル投稿成功: 画像ID ${img.id}（${input.styleName}）`)
-          .run()
-
-        successCount++
+        // ---- 反映申請(公開) ----
+        try {
+          await submitReflectApplication(page, () => {})
+          await env.DB.prepare(
+            `UPDATE styles SET reflection_request_status = 'success', last_executed_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`
+          )
+            .bind(row.id)
+            .run()
+          await env.DB.prepare(
+            `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+             VALUES (NULL, ?, ?, 'request_reflection', 'success', ?)`
+          )
+            .bind(userId, row.id, `反映申請成功: ${input.styleName}`)
+            .run()
+          successCount++
+        } catch (reflectErr: any) {
+          const message = String(reflectErr?.message || reflectErr).slice(0, 500)
+          await env.DB.prepare(
+            `UPDATE styles SET reflection_request_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+          )
+            .bind(message, row.id)
+            .run()
+          await env.DB.prepare(
+            `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+             VALUES (NULL, ?, ?, 'request_reflection', 'failure', ?)`
+          )
+            .bind(userId, row.id, `反映申請失敗: ${message}`)
+            .run()
+          failureCount++
+        }
       } catch (imgErr: any) {
         failureCount++
+        const message = String(imgErr?.message || imgErr).slice(0, 500)
         await env.DB.prepare(
-          `INSERT INTO execution_logs (post_id, user_id, status, message) VALUES (NULL, ?, 'failure', ?)`
+          `UPDATE styles SET salonboard_register_status = 'failed', last_error = ? WHERE id = ?`
         )
-          .bind(userId, `スタイル投稿失敗: 画像ID ${img.id} - ${String(imgErr?.message || imgErr).slice(0, 500)}`)
+          .bind(message, row.id)
+          .run()
+        await env.DB.prepare(
+          `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+           VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+        )
+          .bind(userId, row.id, `スタイル投稿失敗: ${message}`)
           .run()
       }
     }
 
-    const finalStatus: 'done' | 'failed' = failureCount === 0 ? 'done' : failureCount === images.length ? 'failed' : 'done'
+    const finalStatus: 'done' | 'failed' =
+      failureCount === 0 ? 'done' : failureCount === targets.length ? 'failed' : 'done'
 
-    await env.DB.prepare(
-      `UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
+    await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .bind(finalStatus, runId)
       .run()
 
-    return { runId, totalImages: images.length, successCount, failureCount, status: finalStatus }
+    return { runId, totalImages: targets.length, successCount, failureCount, status: finalStatus }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
     await env.DB.prepare(
@@ -164,7 +218,7 @@ export async function runStyleAutomationForUser(
       .bind(userId, `実行全体が失敗: ${message}`)
       .run()
 
-    return { runId, totalImages: images.length, successCount, failureCount, status: 'failed', errorMessage: message }
+    return { runId, totalImages: targets.length, successCount, failureCount, status: 'failed', errorMessage: message }
   } finally {
     if (browser) await browser.close().catch(() => {})
   }
