@@ -14,9 +14,12 @@ dashboard.use('*', requireAuth)
 
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
-  const cred = await c.env.DB.prepare('SELECT id, consent_given, updated_at FROM salon_credentials WHERE user_id = ?')
+  const cred = await c.env.DB.prepare(
+    'SELECT id, consent_given, updated_at, connection_status FROM salon_credentials WHERE user_id = ?'
+  )
     .bind(user.id)
-    .first<{ id: number; consent_given: number; updated_at: string }>()
+    .first<{ id: number; consent_given: number; updated_at: string; connection_status: string }>()
+  const isConnected = cred?.connection_status === 'success'
 
   const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
     .bind(user.id)
@@ -37,8 +40,14 @@ dashboard.get('/dashboard', async (c) => {
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="bg-white rounded-xl border border-gray-100 p-5">
           <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-          <p class={'text-lg font-bold ' + (cred ? 'text-green-600' : 'text-gray-400')}>
-            {cred ? <><i class="fas fa-circle-check mr-1"></i>連携済み</> : <><i class="fas fa-circle-xmark mr-1"></i>未設定</>}
+          <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+            {isConnected ? (
+              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+            ) : cred ? (
+              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+            ) : (
+              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+            )}
           </p>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
@@ -57,13 +66,17 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      {!cred && (
+      {!isConnected && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
           <i class="fas fa-triangle-exclamation text-amber-500 mt-0.5"></i>
           <div>
-            <p class="font-semibold text-amber-800">サロンボードとの連携が未設定です</p>
+            <p class="font-semibold text-amber-800">
+              {cred ? 'サロンボードとの連携がまだ確認できていません' : 'サロンボードとの連携が未設定です'}
+            </p>
             <p class="text-sm text-amber-700 mt-1">
-              自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。
+              {cred
+                ? 'ログインID/パスワードは登録済みですが、実際にサロンボードへログインできたことがまだ確認されていません。連携設定ページで「サロンボードと同期する」を実行して確認してください。'
+                : '自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。'}
             </p>
             <a
               href="/settings/salonboard"
@@ -123,7 +136,7 @@ dashboard.get('/settings/salonboard', async (c) => {
   const error = c.req.query('error')
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, consent_given, updated_at, last_stylist_synced_at, last_coupon_synced_at FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, consent_given, updated_at, last_stylist_synced_at, last_coupon_synced_at, connection_status, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
     .first<{
@@ -132,6 +145,8 @@ dashboard.get('/settings/salonboard', async (c) => {
       updated_at: string
       last_stylist_synced_at: string | null
       last_coupon_synced_at: string | null
+      connection_status: string
+      last_error: string | null
     }>()
 
   let maskedLoginId = ''
@@ -184,6 +199,28 @@ dashboard.get('/settings/salonboard', async (c) => {
             <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
             <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
             <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
+            <div class="mt-3 pt-3 border-t border-gray-100">
+              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
+              {cred.connection_status === 'success' ? (
+                <p class="text-sm font-semibold text-green-600">
+                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
+                </p>
+              ) : cred.connection_status === 'failed' ? (
+                <div>
+                  <p class="text-sm font-semibold text-red-600">
+                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+                  </p>
+                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
+                </div>
+              ) : (
+                <p class="text-sm font-semibold text-gray-500">
+                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                </p>
+              )}
+              <p class="text-xs text-gray-400 mt-1">
+                下の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
+              </p>
+            </div>
           </div>
         )}
 
@@ -329,7 +366,7 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
 
     browser = await launchBrowser(c.env)
     const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
 
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
     const couponCount = await syncCoupons(page, c.env, user.id, () => {})

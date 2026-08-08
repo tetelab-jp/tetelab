@@ -228,7 +228,7 @@ export async function runStyleAutomationForUser(
     const page = await newAutomationPage(browser)
 
     // ログはpasswordを絶対に含めない
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
 
     for (const row of targets) {
       const outcome = await processStyleRow(page, env, userId, row)
@@ -381,7 +381,7 @@ export async function runNextStyleForUser(
 
     browser = await launchBrowser(env)
     const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
 
     const outcome = await processStyleRow(page, env, userId, row)
     const finalStatus: 'done' | 'failed' = outcome === 'success' ? 'done' : 'failed'
@@ -452,7 +452,7 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
 
     browser = await launchBrowser(env)
     const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
 
     const outcome = await processStyleRow(page, env, userId, row)
     return { outcome }

@@ -108,6 +108,26 @@ export async function newAutomationPage(browser: Browser): Promise<Page> {
 }
 
 /**
+ * salon_credentials.connection_status / last_error を実際のログイン試行結果で
+ * 更新する。ダッシュボードの「サロンボード連携」表示が、ID/パスワードを
+ * 保存しただけで実際には未検証の状態を「連携済み」と誤表示していた問題への
+ * 対応(HANDOFF.md参照)。loginToSalonBoard()のログイン試行のたびに呼ばれる。
+ */
+async function recordConnectionStatus(
+  env: Bindings,
+  userId: number,
+  status: 'success' | 'failed',
+  errorMessage: string | null
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE salon_credentials SET connection_status = ?, last_error = ? WHERE user_id = ?`
+  )
+    .bind(status, errorMessage, userId)
+    .run()
+    .catch(() => {})
+}
+
+/**
  * サロンボードにログインする。
  * フォームの見た目のactionはおとりで、実際は以下の<a>タグのonclickに紐づく
  * JS関数 dologin(event) 経由で /CNC/login/doLogin/ にPOSTされる:
@@ -119,12 +139,17 @@ export async function newAutomationPage(browser: Browser): Promise<Page> {
  * 引数無しで呼び出すと内部でevent参照時にエラーになる可能性がある。
  * そのため実際の<a>要素をelement.click()して本物のクリックイベントを
  * 発火させる方式にしている。
+ *
+ * env/userIdを渡すと、ログイン試行の成否をsalon_credentials.connection_status
+ * に記録する(ダッシュボードの連携ステータス表示に使われる)。
  */
 export async function loginToSalonBoard(
   page: Page,
   loginId: string,
   password: string,
-  log: AutomationLogger
+  log: AutomationLogger,
+  env?: Bindings,
+  userId?: number
 ): Promise<void> {
   log('ログインページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
@@ -150,27 +175,39 @@ export async function loginToSalonBoard(
         })
   ])
 
-  // ログイン成功確認: ログインページのまま（エラー）でないかをURLで簡易判定。
-  // 「クリックが反応せずナビゲーションが起きなかった」場合と「ID/パスワードが
-  // 実際に誤っている」場合を区別するため、ページ本文にエラーらしき文言が
-  // 出ているかも合わせて確認し、ログに詳細を残す(⚠️実際のエラー文言は未確認)。
-  const currentUrl = page.url()
-  if (currentUrl.includes('/login/') || currentUrl.includes('idPasswordInput')) {
+  // dologin()のPOST先は `/CNC/login/doLogin/` であり、このURL自体に
+  // "/login/" という文字列を含む(findings.md 1章)。そのため単純な
+  // URL部分一致では、正常にログインが通った直後でも誤って失敗判定に
+  // なってしまう。また、doLogin到達後さらにもう一段階の遷移を経て
+  // ダッシュボード画面がレンダリングされることがあるため、doLoginの
+  // URLに留まっている場合は追加でナビゲーションを待つ。
+  if (page.url().includes('/login/doLogin/')) {
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null)
+  }
+
+  // 成功判定はURLではなく、ログインフォームの入力欄が画面上に残って
+  // いるかどうかで行う(サーバー側フォワード等でURLが/login/系のまま
+  // 変わらないケースにも対応するため)。
+  const stillOnLoginForm = await page.$('input[name="userId"]').catch(() => null)
+  if (stillOnLoginForm) {
     // 原因切り分け用に、失敗時点の画面テキストを診断情報としてログとエラー両方に残す。
     // (実際のバリデーションエラー文言／Akamai等のボット対策ブロック画面／
     //  単に元のログイン画面が再描画されただけ、を判別するため)
+    const currentUrl = page.url()
     const pageText = await page
       .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
       .catch(() => '(画面テキスト取得失敗)')
     const cleanedText = pageText.replace(/\s+/g, ' ').trim()
     log(`ログイン失敗時のURL: ${currentUrl}`)
     log(`ログイン失敗時のページ冒頭: ${cleanedText}`)
-    throw new Error(
+    const errorMessage =
       `ログインに失敗しました（ID/パスワードが正しくない可能性、またはクリックがブロックされた可能性があります）` +
-        ` [診断情報] url=${currentUrl} pageText="${cleanedText}"`
-    )
+      ` [診断情報] url=${currentUrl} pageText="${cleanedText}"`
+    if (env && userId) await recordConnectionStatus(env, userId, 'failed', errorMessage)
+    throw new Error(errorMessage)
   }
   log('ログイン成功')
+  if (env && userId) await recordConnectionStatus(env, userId, 'success', null)
 }
 
 /**

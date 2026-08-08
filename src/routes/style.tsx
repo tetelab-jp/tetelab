@@ -487,7 +487,7 @@ style.post('/api/style/import/fetch-list', async (c) => {
 
     browser = await launchBrowser(c.env)
     const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
 
     const list = await fetchExistingStyles(page, () => {})
     return c.json({ success: true, styles: list })
@@ -522,7 +522,7 @@ style.post('/api/style/import/execute', async (c) => {
 
     browser = await launchBrowser(c.env)
     const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {})
+    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
 
     const result = await importSelectedStyles(page, c.env, user.id, styleIds, () => {})
     return c.json({ success: true, ...result })
