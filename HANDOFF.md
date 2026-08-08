@@ -325,3 +325,58 @@ GitHub上に移設した（PR #1）。gitの元コミット履歴（Genspark由�
 3. **`/style/template`の実際の値の入力**（未着手）: 実サロンボードのHTML確認が必要。
 4. **外部Cronトリガーの構築**: ✅ コード実装完了（`cron-trigger-worker/`）。実際のデプロイ・`TARGET_URL`/`CRON_SECRET`設定は未実施。
 5. **ブログ投稿の自動化**（未着手）: ブログ一覧・編集画面の生HTMLダンプが必要。
+
+## 追記（2026-08-08, Phase 3 MVP再設計）
+
+ユーザー提供の競合3サイト分析・詳細MVP仕様書・実サロンボードHTML（スタイル一覧/編集、
+スタイリスト一覧、クーポン一覧）をもとに、店舗全体でスタイルを一元管理する新データモデルへ
+全面移行した。詳細設計は `docs/phase3-mvp-design.md` を参照。要点は以下の通り。
+
+### データモデルの再設計（マイグレーション0004・0005）
+- `blog_authors` → `stylists`、`blog_coupons` → `coupons` に統合・改名し、
+  スタイル投稿とブログ投稿の両方で共有する共通マスタとした（`salonboard_stylist_key`/
+  `salonboard_coupon_key` でサロンボード側の内部IDと紐付け）。
+- 旧`style_images`（1行=1画像）を廃止し、`styles`（1行=1スタイル投稿の内容）+
+  `style_images`（`image_role`付きの子テーブル、FRONT画像など）に分割。
+- `styles`に3段階の状態管理カラムを追加: `internal_save_status`(draft/ready/disabled)、
+  `salonboard_register_status`(not_started/success/failed)、
+  `reflection_request_status`(not_started/pending/success/failed/blocked)。
+  「自動投稿完了」はサロンボードの**反映申請(公開)が成功したこと**で定義する
+  （ユーザー確定仕様、内部保存だけでは完了扱いにしない）。
+- 旧`style_post_templates`を廃止し、複数テンプレートを使い回せる`templates`テーブルを新設。
+- 0005で`templates.menu_detail_text`カラム追加漏れを修正（ローカルE2E確認中に発覚）。
+
+### スタイリスト/クーポンの自動取得
+- `src/lib/salonboard-sync.ts`: サロンボードの「スタイリスト一覧」「クーポン一覧」ページを
+  Puppeteerでスクレイピングし、`stylists`/`coupons`テーブルへupsertする関数群を実装済み。
+  セレクタは実HTML（`/CNB/draft/stylistList/`, `/CNB/draft/couponList/`）から確認済みだが、
+  **実行はBrowser Rendering環境が必要なため、このセッション内では未実行**。
+  `/settings/salonboard`画面への同期ボタン設置はまだ未実施（次にやるべきこと）。
+
+### 新スキーマに合わせたルート全面書き直し
+マイグレーション適用により壊れた以下4ファイルを新スキーマに合わせて再実装済み
+（`npx tsc --noEmit`・`npm run build`・`wrangler pages dev --local`でのE2E動作確認済み:
+サインアップ→スタイリスト/クーポン登録→スタイル新規作成（画像あり/なし）→編集→
+自動投稿トグルAPI→テンプレート作成/編集まで一通り確認）。
+
+- `src/routes/dashboard.tsx`: 集計クエリを`styles`/`auto_post_enabled_flag`ベースに変更。
+- `src/routes/blog.tsx`: `blog_authors`/`blog_coupons`への参照を`stylists`/`coupons`に変更。
+- `src/lib/style-post-runner.ts`: 「登録（下書き保存）」と「反映申請（公開）」を別ステップとして
+  実行し、それぞれの成否を`styles.salonboard_register_status`/`reflection_request_status`に
+  個別記録するよう変更（旧`postStyleImageFull`の一括呼び出しから分離）。
+- `src/routes/style.tsx`: スタイル一覧（`/style/library`）・作成/編集フォーム
+  （`/style/new`, `/style/:id/edit`）・自動投稿スケジュール（`/style/schedule`）・
+  テンプレート管理（`/style/template`系）を新スキーマで全面書き直し。
+  カテゴリ（レディース/メンズ）に応じた長さセレクトの表示切替用に
+  `public/static/style-form.js`を新規作成。
+
+### 次にやるべきこと（優先順位順・更新2）
+1. **`/settings/salonboard`にスタイリスト/クーポン同期ボタンを設置**し、
+   `salonboard-sync.ts`の`syncStylists()`/`syncCoupons()`を実際に呼び出せるようにする。
+2. **本番/リモート環境でのE2Eテスト**（未着手・変わらず）: Cloudflareへの実デプロイまたは
+   `wrangler dev`のリモートモードが前提。写真アップロード（モーダル操作）の実装検証も含む。
+3. **既存スタイルのインポート機能**（`docs/phase3-mvp-design.md` Phase 3-F、未着手）:
+   サロンボードに既に登録済みのスタイルを`styles`テーブルへ取り込む機能。
+4. **NG/未確認ワード等によるブロック検知**（Phase 3-G、未着手）: 反映申請前に
+   サロンボード側のブロック要因をチェックし`reflection_request_status='blocked'`にする処理。
+5. **ブログ投稿の自動化**（未着手・変わらず）: ブログ一覧・編集画面の生HTMLダンプが必要。
