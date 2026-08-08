@@ -3,18 +3,23 @@
 // SALON BOARDに既に登録済みのスタイルを、TETE AOUT側の
 // styles/style_imagesテーブルへ取り込む(docs/phase3-mvp-design.md 5-2)。
 //
-// ⚠️ 未確定事項（実HTML未確認。実運用前に必ずDevToolsで確認・調整すること）:
-//   1. fetchExistingStyles(): スタイル一覧ページの行DOM構造は未確認。
-//      HANDOFF.md 4-4で確認済みのstyleId形式(L+9桁)を手がかりに、
-//      ページ内のhidden input/リンク等からベストエフォートで抽出する
-//      実装になっている。実際の一覧HTMLを確認後、確実なセレクタに
-//      置き換えること。
-//   2. fetchStyleDetail(): 既存スタイル編集画面を開くにはHANDOFF.md 4-4記載の
-//      editStyle(event, styleId)をpage.evaluate内で呼ぶ想定。実際に
-//      正しいイベント引数無しで動作するか未確認。
-//   3. フォーム項目自体（スタイル名・コメント等）のセレクタは
-//      draftRegisterStyle()で書き込みに使っているものと同一の
-//      #styleEditForm内フィールドを読み取る想定(こちらは実HTML確認済み)。
+// docs/salonboard-real-html-findings.md（2026-08-09、Playwrightで実アカウントを
+// 調査した確定結果）で以下が確定済み:
+//   - スタイル一覧は「1スタイル=4つの<tr>」構造。styleIdは
+//     hidden input `frmStyleListStyleInfoDtoList[N].styleId`(value=L+9桁)が
+//     最も安定して取得できる。
+//   - 詳細行のクリックリンクは `<a onclick="editStyle(event, 'L244286488'); return false;">`
+//     という実要素として存在する。window.editStyle()を偽のevent引数付きで
+//     直接呼ぶより、この実要素をclick()する方が安全（実際のイベントオブジェクトが
+//     渡るため）。
+//   - editStyle実行後もURLは変化せず、同一ページ内でDOMがまるごと編集フォームに
+//     差し替わる（フルページ相当の再レンダリング）。
+//   - ページネーション用グローバル関数(doSelectFirst/doSelectPrevious/
+//     doSelectLink/doSelectNext/doSelectLast等)の実在は確認済みだが、
+//     複数ページが存在するアカウントでの実際のonclick文字列は未検証。
+//
+// ⚠️ まだ未確定の事項:
+//   - ハッシュタグ・モデル属性欄の実セレクタ（未調査、空配列/空オブジェクト固定）
 // ============================================
 
 /// <reference lib="dom" />
@@ -63,33 +68,56 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
     log(`スタイル一覧を取得中...(${pageIndex + 1}ページ目)`)
 
     const pageResults = await page.evaluate(() => {
-      // styleId形式(L+9桁)をhidden input・リンクのhref/onclick等から探すベストエフォート実装。
+      // docs/salonboard-real-html-findings.md 2章で確定済み:
+      // styleIdを最も安定して取得できるのは
+      // hidden input `frmStyleListStyleInfoDtoList[N].styleId` のvalue。
       const idPattern = /L\d{9}/
       const found: { styleId: string; title: string | null }[] = []
       const seen = new Set<string>()
 
-      const candidates = Array.from(
-        document.querySelectorAll('input[type="hidden"], a[href], a[onclick], [onclick]')
-      )
-      for (const el of candidates) {
-        const attrs = [
-          (el as HTMLInputElement).value,
-          el.getAttribute('href'),
-          el.getAttribute('onclick'),
-          el.id
-        ]
-        for (const attr of attrs) {
+      const idInputs = Array.from(
+        document.querySelectorAll('input[type="hidden"][name*="styleId"]')
+      ) as HTMLInputElement[]
+
+      for (const input of idInputs) {
+        const match = input.value.match(idPattern)
+        if (!match || seen.has(match[0])) continue
+        seen.add(match[0])
+
+        // 1スタイル=4つの<tr>構成(rowspan=4の先頭行から始まる)なので、
+        // 先頭行とそれに続く最大3行のテキストも合わせて拾い、タイトルを推測する。
+        let title: string | null = null
+        const row = input.closest('tr')
+        if (row) {
+          const texts: string[] = [row.textContent?.trim() || '']
+          let sibling = row.nextElementSibling
+          let count = 0
+          while (sibling && sibling.tagName === 'TR' && count < 3) {
+            texts.push(sibling.textContent?.trim() || '')
+            sibling = sibling.nextElementSibling
+            count++
+          }
+          title = texts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 60) || null
+        }
+        found.push({ styleId: match[0], title })
+      }
+
+      // フォールバック: hidden inputで見つからなかった場合、リンクのonclick等からも探す
+      if (found.length === 0) {
+        const candidates = Array.from(document.querySelectorAll('a[onclick], [onclick]'))
+        for (const el of candidates) {
+          const attr = el.getAttribute('onclick')
           if (!attr) continue
           const match = attr.match(idPattern)
           if (match && !seen.has(match[0])) {
             seen.add(match[0])
-            // 同じ行内のテキストからタイトルらしきものを推測する(不確実)
             const row = el.closest('tr') || el.closest('li') || el.closest('div')
             const title = row?.textContent?.trim().slice(0, 60) || null
             found.push({ styleId: match[0], title })
           }
         }
       }
+
       return found
     })
 
@@ -134,17 +162,24 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
 
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
-  // 既存スタイル編集画面を開く。HANDOFF.md 4-4のeditStyle(event, styleId)を想定。
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    page.evaluate((id: string) => {
-      // @ts-ignore
-      if (typeof (window as any).editStyle === 'function') {
-        // @ts-ignore - 実際のイベント引数無しで動作するかは未確認
-        ;(window as any).editStyle({ preventDefault: () => {} }, id)
-      }
-    }, styleId)
-  ])
+  // 既存スタイル編集画面を開く。docs/salonboard-real-html-findings.md 2章で確定済み:
+  // 詳細行のリンクは <a onclick="editStyle(event, 'L244286488'); return false;">。
+  // window.editStyle()を偽のevent引数で直接呼ぶより、実際の<a>要素をclick()して
+  // 本物のクリックイベントを発火させる方が安全。
+  // またクリック後もURLは変化せず（同一ページ内でDOMがまるごと差し替わる）、
+  // 遷移そのものは発生しないためwaitForNavigationは使わない。
+  const linkClicked = await page.evaluate((id: string) => {
+    const link = document.querySelector(`a[onclick*="editStyle(event, '${id}')"]`) as HTMLElement | null
+    if (link) {
+      link.click()
+      return true
+    }
+    return false
+  }, styleId)
+
+  if (!linkClicked) {
+    throw new Error(`スタイル編集画面へのリンクが見つかりませんでした（styleId: ${styleId}）`)
+  }
 
   await page.waitForSelector('#styleEditForm', { timeout: 15000 })
 

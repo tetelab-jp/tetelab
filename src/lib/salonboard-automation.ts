@@ -71,8 +71,16 @@ export async function launchBrowser(env: Bindings): Promise<Browser> {
 
 /**
  * サロンボードにログインする。
- * フォームの見た目のactionはおとりで、実際は<a>のonclickに紐づくJS関数
- * dologin() 経由で /CNC/login/doLogin/ にPOSTされる（HANDOFF.md 3-1参照）。
+ * フォームの見た目のactionはおとりで、実際は以下の<a>タグのonclickに紐づく
+ * JS関数 dologin(event) 経由で /CNC/login/doLogin/ にPOSTされる:
+ *   <a href="javascript:void(0);" class="common-CNCcommon__primaryBtn loginBtnSize"
+ *      onclick="dologin(event); return false;">ログイン</a>
+ * (docs/salonboard-real-html-findings.md 1章で実機確認済み)
+ *
+ * dologin()はevent引数を取るため、window.dologin()をJS関数として直接
+ * 引数無しで呼び出すと内部でevent参照時にエラーになる可能性がある。
+ * そのため実際の<a>要素をelement.click()して本物のクリックイベントを
+ * 発火させる方式にしている。
  */
 export async function loginToSalonBoard(
   page: Page,
@@ -88,16 +96,14 @@ export async function loginToSalonBoard(
   await page.type('input[name="password"]', password, { delay: 20 })
 
   log('ログイン実行中...')
-  // 通常のsubmitは無効化されているため、実際に使われているJS関数を直接呼ぶ。
-  // (見た目のUI操作を再現するより、実際に発火する関数を叩く方が安定するため)
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
-      // @ts-ignore - サロンボードのページ内で定義されているグローバル関数
-      if (typeof (window as any).dologin === 'function') {
-        ;(window as any).dologin()
+      const loginBtn = document.querySelector('a.loginBtnSize, a[onclick*="dologin"]') as HTMLElement | null
+      if (loginBtn) {
+        loginBtn.click()
       } else {
-        // フォールバック: JS関数が見つからない場合はフォームを直接submit
+        // フォールバック: ボタン要素が見つからない場合はフォームを直接submit
         const form = document.getElementById('idPasswordInputForm') as HTMLFormElement | null
         form?.submit()
       }
@@ -121,12 +127,19 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
   log('新規スタイル作成フォームを開いています...')
+  // ⚠️ 「新規作成」ボタンの実onclick HTML(要素セレクタ)は未確認。
+  // login/editStyleの実測結果から、このサイトのボタンは軒並みevent引数を
+  // 取る規約と推測されるため、window.addStyle()を直接呼ぶ際も念のため
+  // 簡易的なEventオブジェクトを渡す(element.click()できるセレクタが
+  // 判明次第、login/editStyleと同様の方式に置き換えること)。
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
       // @ts-ignore
       if (typeof (window as any).addStyle === 'function') {
-        ;(window as any).addStyle()
+        const fakeEvent = { preventDefault: () => {}, stopPropagation: () => {}, target: null, currentTarget: null }
+        // @ts-ignore
+        ;(window as any).addStyle(fakeEvent)
       } else {
         const form = document.getElementById('addStyleForm') as HTMLFormElement | null
         form?.submit()
@@ -323,51 +336,67 @@ export class ReflectionBlockedError extends Error {
   }
 }
 
-// 掲載管理TOPページ上でブロック要因を示すキーワード。
-// HANDOFF.md 4-3で確定済み: 「要確認」ステータスは通常運用でよくあるもので
-// 反映申請をブロックしない。ブロックされるのは「NG」判定または「未確認」が
-// 残っている場合のみ。→ 「未確認」は「要確認」の部分文字列ではないため、
-// 以下の正規表現は「要確認」には誤反応しない(意図的)。
-// ⚠️ ただし「NG」「未確認」が実際どのDOM要素・文言で表示されるかまでは
-// 未確認のため、ページ全体のテキストからのキーワード検索という
-// ベストエフォート実装のまま。確認でき次第、セレクタベースの確実な
-// 判定に置き換えること。
-const REFLECT_BLOCKER_PATTERNS: RegExp[] = [
-  /NGワード/,
-  /NG判定/,
-  /「NG」/,
-  /未確認/,
-  /確認できません/,
-  /掲載できません/,
-  /差し戻/
-]
-
 /**
- * 掲載管理TOPページを開いた状態で、NG/未確認等のブロック要因が
- * 表示されていないかを確認する（docs/phase3-mvp-design.md 5-5 手順2）。
- * ⚠️ 実HTML未確認のため、ページ全体のテキストからキーワードを探す
- * ベストエフォート実装。誤検知/検知漏れの可能性がある。
+ * 掲載管理TOPページを開いた状態で、反映申請がブロックされていないかを確認する
+ * （docs/phase3-mvp-design.md 5-5 手順2）。
+ *
+ * docs/salonboard-real-html-findings.md（2026-08-09、Playwrightで実アカウントを
+ * 調査した確定結果）に基づく実装:
+ * - 反映申請ボタンは `<button type="button" id="reflectedButton" class="...
+ *   common-CNBcommon__primaryBtn--disabled ...">`。**inline onclick属性は無い**
+ *   （別JSファイルでid起点にaddEventListenerされている）。
+ * - 画面上部の固定注意書きに「NG」「未確認」という文言が**常に**含まれているため、
+ *   ページ本文のテキストをキーワード検索する方式（旧実装）は必ずこの注意書きに
+ *   ヒットして誤検知(false positive)する。**この方式は使わない。**
+ * - 実際にブロックされている時にライブで表示されるのは「要確認」という赤字リンク
+ *   （サロン/スタイリスト/スタイル掲載情報の各項目に対して表示され、クリックで
+ *   `showErrorPopup(storeId, styleId)` が呼ばれる）。「要確認」が残っている状態で
+ *   `#reflectedButton` に `--disabled` 修飾クラスが付与されることを実機で確認済み。
+ * - そのため、`#reflectedButton` の disabled状態を主判定条件とし、「要確認」リンクの
+ *   有無を理由(reason)の補足情報として使う。
+ *
+ * ⚠️ 残る不確実性: `--disabled`は「要確認が残っている」以外に「新たに反映すべき
+ * 変更が無い」場合にも付与される可能性がある（特集/クーポン用ボタンで観測）。
+ * ただしこの関数は「直前にdraftRegisterStyle()でスタイルを新規登録した直後」
+ * にのみ呼ばれる想定のため、その時点で#reflectedButtonが無効化されていれば
+ * 「変更なし」ではなく実際のブロック要因である可能性が高いと判断する。
  */
 export async function checkReflectBlockers(page: Page): Promise<{ blocked: boolean; reason?: string }> {
-  const bodyText = await page.evaluate(() => document.body.innerText || '')
-  for (const pattern of REFLECT_BLOCKER_PATTERNS) {
-    const match = bodyText.match(pattern)
-    if (match) {
-      const idx = match.index ?? 0
-      const snippet = bodyText.slice(Math.max(0, idx - 20), idx + 40).replace(/\s+/g, ' ').trim()
-      return { blocked: true, reason: snippet || match[0] }
-    }
+  const result = await page.evaluate(() => {
+    const btn = document.getElementById('reflectedButton')
+    if (!btn) return { buttonFound: false, disabled: false, needsCheckCount: 0 }
+
+    const disabled = btn.className.includes('--disabled')
+    const needsCheckLinks = Array.from(document.querySelectorAll('a')).filter(
+      (a) => a.textContent?.trim() === '要確認'
+    )
+    return { buttonFound: true, disabled, needsCheckCount: needsCheckLinks.length }
+  })
+
+  if (!result.buttonFound) {
+    // ボタン自体が見つからない = ページ構造が想定と異なる可能性が高いが、
+    // ここでブロック扱いにはせず、後続のクリック処理側でエラーにする。
+    return { blocked: false }
   }
+
+  if (result.disabled) {
+    const reason =
+      result.needsCheckCount > 0
+        ? `「要確認」項目が${result.needsCheckCount}件残っています`
+        : '反映申請ボタンが無効化されています(要確認以外の要因の可能性あり)'
+    return { blocked: true, reason }
+  }
+
   return { blocked: false }
 }
 
 /**
  * 掲載管理TOPから反映申請（公開）を行う。
  * サロン/スタイリスト/スタイル/メニュー/こだわりをまとめて反映する
- * 通常の反映申請ボタン（reflected()）のみを対象とする。
- * 特集・クーポンの反映申請（reflectedSpecial/reflectedCpn）は対象外。
+ * 通常の反映申請ボタン（`#reflectedButton`）のみを対象とする。
+ * 特集・クーポンの反映申請ボタン（`#reflectedButtonSpecial`/`#reflectedButtonCpn`）は対象外。
  *
- * 実行前にcheckReflectBlockers()でNG/未確認要因を確認し、
+ * 実行前にcheckReflectBlockers()でブロック要因を確認し、
  * 検知した場合はReflectionBlockedErrorをthrowして反映申請自体は行わない。
  */
 export async function submitReflectApplication(page: Page, log: AutomationLogger): Promise<void> {
@@ -377,15 +406,11 @@ export async function submitReflectApplication(page: Page, log: AutomationLogger
     timeout: 30000
   })
 
-  // domcontentloadedはDOM解析完了時点で発火するため、反映申請ボタンが
-  // JS側で描画されるまで少し待つ(実際の描画完了検知条件は未確認のため暫定)。
-  await page
-    .waitForSelector('[onclick*="reflected("]', { timeout: 15000 })
-    .catch(() => {
-      log('警告: 反映申請ボタンの検出がタイムアウトしました。処理は続行しますが要確認です。')
-    })
+  await page.waitForSelector('#reflectedButton', { timeout: 15000 }).catch(() => {
+    log('警告: 反映申請ボタン(#reflectedButton)の検出に失敗しました。ページ構造の再確認が必要です。')
+  })
 
-  log('NG/未確認ワード等のブロック要因を確認中...')
+  log('ブロック要因(要確認項目の残り等)を確認中...')
   const blockCheck = await checkReflectBlockers(page)
   if (blockCheck.blocked) {
     throw new ReflectionBlockedError(
@@ -397,10 +422,11 @@ export async function submitReflectApplication(page: Page, log: AutomationLogger
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {
-      // "reflected(" で始まる関数呼び出しのみにマッチさせ、
-      // reflectedSpecial(/reflectedCpn( を誤って拾わないようにする
-      const el = document.querySelector('[onclick*="reflected("]') as HTMLElement | null
-      el?.click()
+      // #reflectedButtonにはinline onclickが無く、別JSでaddEventListenerされている
+      // ため、element.click()で本物のクリックイベントを発火させる
+      // (window上の関数を直接呼ぶ方式ではハンドラに届かない)。
+      const btn = document.getElementById('reflectedButton') as HTMLButtonElement | null
+      btn?.click()
     })
   ])
 
