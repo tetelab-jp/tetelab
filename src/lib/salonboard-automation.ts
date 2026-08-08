@@ -70,6 +70,37 @@ export async function launchBrowser(env: Bindings): Promise<Browser> {
 }
 
 /**
+ * ボット対策(Akamai系)への対応を施した上でPageを新規作成する。
+ *
+ * ローカル調査（docs/salonboard-real-html-findings.md調査時のログ）で、
+ * SALON BOARDはAkamai系のボット対策を導入しており、headlessブラウザ
+ * (curl・デフォルト設定のheadless Chromium)からのアクセスは弾かれ、
+ * 非headless(実ブラウザウィンドウ)では正常に動作したことが確認されている。
+ * Cloudflare Browser Renderingは常にheadlessで動作するため、代わりに
+ * 典型的なheadless検知ポイント(navigator.webdriver・User-Agent・
+ * viewport等)を可能な範囲でごまかす。これでも弾かれる場合は、
+ * さらに高度なフィンガープリンティング対策の追加検討が必要。
+ */
+export async function newAutomationPage(browser: Browser): Promise<Page> {
+  const page = await browser.newPage()
+
+  // navigator.webdriver フラグは代表的なheadless検知ポイントの1つ
+  await page.evaluateOnNewDocument(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+  })
+
+  // デフォルトのheadless Chrome User-Agentではなく、通常のデスクトップChromeを名乗る
+  await page.setUserAgent(
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+  )
+
+  // headless実行では省略されがちな一般的なデスクトップ解像度のviewportを明示的に設定
+  await page.setViewport({ width: 1920, height: 1080 })
+
+  return page
+}
+
+/**
  * サロンボードにログインする。
  * フォームの見た目のactionはおとりで、実際は以下の<a>タグのonclickに紐づく
  * JS関数 dologin(event) 経由で /CNC/login/doLogin/ にPOSTされる:

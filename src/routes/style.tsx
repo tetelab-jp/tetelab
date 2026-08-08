@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
-import { launchBrowser, loginToSalonBoard } from '../lib/salonboard-automation'
+import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
 import type { Bindings, AppUser } from '../types'
 
@@ -486,7 +486,7 @@ style.post('/api/style/import/fetch-list', async (c) => {
     const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
 
     browser = await launchBrowser(c.env)
-    const page = await browser.newPage()
+    const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {})
 
     const list = await fetchExistingStyles(page, () => {})
@@ -521,7 +521,7 @@ style.post('/api/style/import/execute', async (c) => {
     const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
 
     browser = await launchBrowser(c.env)
-    const page = await browser.newPage()
+    const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {})
 
     const result = await importSelectedStyles(page, c.env, user.id, styleIds, () => {})

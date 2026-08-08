@@ -14,6 +14,7 @@ import type { Bindings } from '../types'
 import { decryptSecret } from './crypto'
 import {
   launchBrowser,
+  newAutomationPage,
   loginToSalonBoard,
   draftRegisterStyle,
   submitReflectApplication,
@@ -224,7 +225,7 @@ export async function runStyleAutomationForUser(
     const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
 
     browser = await launchBrowser(env)
-    const page = await browser.newPage()
+    const page = await newAutomationPage(browser)
 
     // ログはpasswordを絶対に含めない
     await loginToSalonBoard(page, loginId, password, () => {})
@@ -379,7 +380,7 @@ export async function runNextStyleForUser(
     const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
 
     browser = await launchBrowser(env)
-    const page = await browser.newPage()
+    const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {})
 
     const outcome = await processStyleRow(page, env, userId, row)
@@ -450,7 +451,7 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
     const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
 
     browser = await launchBrowser(env)
-    const page = await browser.newPage()
+    const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {})
 
     const outcome = await processStyleRow(page, env, userId, row)
