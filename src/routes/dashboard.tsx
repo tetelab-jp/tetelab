@@ -4,6 +4,7 @@ import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
+import { formatJstDateTime } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -198,7 +199,7 @@ dashboard.get('/settings/salonboard', async (c) => {
           <div class="bg-white rounded-xl border border-gray-100 p-6">
             <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
             <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
-            <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
+            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
             <div class="mt-3 pt-3 border-t border-gray-100">
               <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
               {cred.connection_status === 'success' ? (
@@ -237,12 +238,12 @@ dashboard.get('/settings/salonboard', async (c) => {
               <div class="bg-gray-50 rounded-lg p-3">
                 <p class="text-xs text-gray-400">スタイリスト</p>
                 <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
-                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at || '未実施'}</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at ? formatJstDateTime(cred.last_stylist_synced_at) : '未実施'}</p>
               </div>
               <div class="bg-gray-50 rounded-lg p-3">
                 <p class="text-xs text-gray-400">クーポン</p>
                 <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
-                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at || '未実施'}</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at ? formatJstDateTime(cred.last_coupon_synced_at) : '未実施'}</p>
               </div>
             </div>
             <button

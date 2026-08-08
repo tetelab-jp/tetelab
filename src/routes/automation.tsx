@@ -2,6 +2,7 @@ import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { runStyleAutomationForUser, runNextStyleForUser, retryStylePost, currentJstTimeLabel } from '../lib/style-post-runner'
+import { formatJstDateTime } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -158,7 +159,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                     </span>
                   </td>
                   <td class="py-2 text-xs text-gray-400 max-w-xs truncate">{r.error_message || '-'}</td>
-                  <td class="py-2 text-xs text-gray-400">{r.executed_at || r.created_at}</td>
+                  <td class="py-2 text-xs text-gray-400">{formatJstDateTime(r.executed_at || r.created_at)}</td>
                 </tr>
               ))}
             </tbody>
@@ -190,7 +191,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                     {l.style_id ? ' — ' : ''}
                     {l.message}
                   </p>
-                  <p class="text-xs text-gray-400">{l.created_at}</p>
+                  <p class="text-xs text-gray-400">{formatJstDateTime(l.created_at)}</p>
                 </div>
               </li>
             ))}
