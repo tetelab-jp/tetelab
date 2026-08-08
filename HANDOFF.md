@@ -583,3 +583,54 @@ salonboard-import.tsを触る際は必ずこのファイルを先に読むこと
 3. スタイル一覧のページネーション（複数ページ時の「次へ」リンクの実onclick文字列）
    は未検証のまま（`docs/salonboard-real-html-findings.md`「未検証」参照）。
 4. 反映申請ボタンが有効化された状態の実HTML/クラス差分は未確認のまま。
+
+## 追記（2026-08-09 その2、isTrustedクリック対策とスタイリスト/クーポン同期ボタンの追加）
+
+### クリックイベントのisTrusted対策（ユーザーローカルのClaude Codeと並行して対応・マージ済み）
+
+上記6のstealth対策後も「ログインに失敗しました」エラーが発生。
+`page.evaluate(() => element.click())`で発火するクリックイベントは
+`event.isTrusted = false`の合成イベントになる点に着目し、Akamai等の
+ボット対策JSがこれを判定材料にしている可能性を疑って対策した。
+
+- ログインボタン・`editStyle`リンク・`#reflectedButton`のクリックを、
+  すべて`page.evaluate(() => element.click())`からPuppeteerネイティブの
+  `page.click(selector)`（実際のCDPレベルmouseイベント、`isTrusted: true`）
+  に変更済み。
+- `newAutomationPage()`のstealth対策を強化（`navigator.plugins`・
+  `navigator.languages`・`window.chrome`オブジェクトの偽装を追加）。
+- ログイン失敗時の診断情報（失敗時URL・画面文言先頭500文字）を
+  `execution_logs`とエラーメッセージの両方に出力するようにした。
+- 本番デプロイ後、この対策で実際にログインが通るかは未確認のまま
+  （次にやるべきこと1・2を参照）。
+
+### スタイリスト/コンテンツ「サロンボードと同期する」ボタンを追加（根本原因対応）
+
+ユーザーから「画像ライブラリからスタイルの新規作成でスタイリストが
+表示されない」という報告を受け調査したところ、`syncStylists()`/
+`syncCoupons()`（`src/lib/salonboard-sync.ts`）は実装済みだったが、
+これを呼び出すUIボタンが一度も設置されていなかったことが判明
+（=DBのstylists/couponsテーブルが常に空だった）。これがスタイル作成
+フォームのスタイリスト欄が常に空になる直接の原因。
+
+- `/settings/salonboard`ページに「スタイリスト・クーポンの同期」
+  セクションを追加。現在の同期件数・最終同期日時を表示し、
+  「サロンボードと同期する」ボタンで手動同期できるようにした。
+- 新規APIルート`POST /api/settings/sync-stylists-coupons`
+  （`src/routes/dashboard.tsx`）を追加。既存のimportルートと同じ
+  `launchBrowser` → `newAutomationPage` → `loginToSalonBoard` →
+  （今回は）`syncStylists`/`syncCoupons`のパターンで実装。
+- `salonboard-sync.ts`側の`page.goto()`も他ファイルと同様
+  `networkidle0`→`domcontentloaded`＋`waitForSelector`に修正
+  （このファイルだけ旧方式のまま残っていて、他箇所と同じタイムアウト
+  リスクを抱えていたため）。
+- フロントJSは`public/static/salonboard-sync.js`を新規作成
+  （`style-import.js`と同じ構成）。
+
+### 次にやるべきこと（更新）
+5. 本番デプロイ後、`/settings/salonboard`で「サロンボードと同期する」を
+   実行し、スタイリスト・クーポンが正しく取得できるか確認する
+   （ここが通れば、上記のisTrusted対策・Akamai対策が実際に効いている
+   ことの検証にもなる）。
+6. 同期が成功したら、スタイル新規作成フォームのスタイリスト欄に
+   選択肢が表示されることを確認する。

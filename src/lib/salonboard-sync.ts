@@ -30,9 +30,10 @@ export type SyncedCoupon = {
  */
 export async function fetchStylistsFromSalonBoard(page: Page): Promise<SyncedStylist[]> {
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/stylistList/`, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded',
     timeout: 30000
   })
+  await page.waitForSelector('tr[name="stylist_info"]', { timeout: 15000 }).catch(() => {})
 
   return page.evaluate(() => {
     const rows = Array.from(document.querySelectorAll('tr[name="stylist_info"]'))
@@ -56,9 +57,10 @@ export async function fetchStylistsFromSalonBoard(page: Page): Promise<SyncedSty
  */
 export async function fetchCouponsFromSalonBoard(page: Page): Promise<SyncedCoupon[]> {
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/couponList/`, {
-    waitUntil: 'networkidle0',
+    waitUntil: 'domcontentloaded',
     timeout: 30000
   })
+  await page.waitForSelector('input[name$=".couponId"]', { timeout: 15000 }).catch(() => {})
 
   return page.evaluate(() => {
     const rows = Array.from(document.querySelectorAll('input[name$=".couponId"]'))

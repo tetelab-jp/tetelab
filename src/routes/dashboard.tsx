@@ -2,6 +2,8 @@ import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
+import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
+import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -121,10 +123,16 @@ dashboard.get('/settings/salonboard', async (c) => {
   const error = c.req.query('error')
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, consent_given, updated_at FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, consent_given, updated_at, last_stylist_synced_at, last_coupon_synced_at FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ salonboard_login_id_enc: string; consent_given: number; updated_at: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      consent_given: number
+      updated_at: string
+      last_stylist_synced_at: string | null
+      last_coupon_synced_at: string | null
+    }>()
 
   let maskedLoginId = ''
   if (cred) {
@@ -138,6 +146,13 @@ dashboard.get('/settings/salonboard', async (c) => {
       }
     }
   }
+
+  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
+  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
 
   return c.render(
     <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
@@ -169,6 +184,38 @@ dashboard.get('/settings/salonboard', async (c) => {
             <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
             <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
             <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
+          </div>
+        )}
+
+        {cred && (
+          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+            <p class="font-semibold">
+              <i class="fas fa-rotate mr-2 text-pink-500"></i>スタイリスト・クーポンの同期
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed">
+              サロンボードに登録されているスタイリスト・クーポンの一覧を取得し、このアプリのスタイル投稿フォームで選べるようにします。
+              スタイリストやクーポンを追加・変更した場合は再度同期してください。
+            </p>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+              <div class="bg-gray-50 rounded-lg p-3">
+                <p class="text-xs text-gray-400">スタイリスト</p>
+                <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at || '未実施'}</p>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3">
+                <p class="text-xs text-gray-400">クーポン</p>
+                <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at || '未実施'}</p>
+              </div>
+            </div>
+            <button
+              id="sync-stylists-coupons-btn"
+              type="button"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i class="fas fa-rotate mr-1"></i>サロンボードと同期する
+            </button>
+            <p id="sync-stylists-coupons-status" class="text-sm"></p>
           </div>
         )}
 
@@ -207,6 +254,8 @@ dashboard.get('/settings/salonboard', async (c) => {
           </button>
         </form>
       </div>
+
+      {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
     { title: 'サロンボード連携設定' }
   )
@@ -258,6 +307,39 @@ dashboard.post('/settings/salonboard', async (c) => {
   }
 
   return c.redirect('/settings/salonboard?saved=1')
+})
+
+// ---------- スタイリスト・クーポン同期 ----------
+
+dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
+  const user = c.get('user')
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+
+  if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
+  if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser(c.env)
+    const page = await newAutomationPage(browser)
+    await loginToSalonBoard(page, loginId, password, () => {})
+
+    const stylistCount = await syncStylists(page, c.env, user.id, () => {})
+    const couponCount = await syncCoupons(page, c.env, user.id, () => {})
+
+    return c.json({ success: true, stylistCount, couponCount })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
 })
 
 function maskLoginId(loginId: string): string {
