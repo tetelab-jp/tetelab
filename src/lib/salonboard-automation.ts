@@ -156,13 +156,18 @@ export async function loginToSalonBoard(
   // 出ているかも合わせて確認し、ログに詳細を残す(⚠️実際のエラー文言は未確認)。
   const currentUrl = page.url()
   if (currentUrl.includes('/login/') || currentUrl.includes('idPasswordInput')) {
+    // 原因切り分け用に、失敗時点の画面テキストを診断情報としてログとエラー両方に残す。
+    // (実際のバリデーションエラー文言／Akamai等のボット対策ブロック画面／
+    //  単に元のログイン画面が再描画されただけ、を判別するため)
     const pageText = await page
-      .evaluate(() => document.body.innerText.slice(0, 300))
-      .catch(() => '(本文取得失敗)')
+      .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
+      .catch(() => '(画面テキスト取得失敗)')
+    const cleanedText = pageText.replace(/\s+/g, ' ').trim()
     log(`ログイン失敗時のURL: ${currentUrl}`)
-    log(`ログイン失敗時のページ冒頭: ${pageText.replace(/\s+/g, ' ')}`)
+    log(`ログイン失敗時のページ冒頭: ${cleanedText}`)
     throw new Error(
-      'ログインに失敗しました（ID/パスワードが正しくない可能性、またはクリックがブロックされた可能性があります）'
+      `ログインに失敗しました（ID/パスワードが正しくない可能性、またはクリックがブロックされた可能性があります）` +
+        ` [診断情報] url=${currentUrl} pageText="${cleanedText}"`
     )
   }
   log('ログイン成功')
