@@ -10,7 +10,7 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // docs/phase3-mvp-design.md参照。ユーザーが時刻を選ぶUIは廃止した。
 const DAILY_AUTO_POST_TIME = '07:00'
 
-// ---------- テスト実行・履歴画面 ----------
+// ---------- 手動実行・履歴画面 ----------
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
   register_style: '登録',
@@ -75,10 +75,10 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="テスト実行・実行履歴">
+    <PageLayout active="style-test-run" salonName={user.salon_name} title="手動実行・実行履歴">
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
         <i class="fas fa-triangle-exclamation mr-2"></i>
-        テスト実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
         サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
       </div>
 
@@ -87,7 +87,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
           id="test-run-btn"
           class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
         >
-          <i class="fas fa-flask mr-2"></i>テスト実行する
+          <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
       </div>
@@ -204,11 +204,11 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <script src="/static/test-run.js"></script>
     </PageLayout>,
-    { title: 'テスト実行・実行履歴' }
+    { title: '手動実行・実行履歴' }
   )
 })
 
-// ---------- テスト実行API（ログイン中ユーザー本人のみ） ----------
+// ---------- 手動実行API（ログイン中ユーザー本人のみ） ----------
 
 automation.post('/api/automation/test-run', requireAuth, async (c) => {
   const user = c.get('user')

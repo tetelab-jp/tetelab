@@ -1,7 +1,7 @@
 // ============================================
 // style-post-runner.ts
 // 「auto_post_enabled_flag=1 かつ ready状態のスタイルを全件投稿する」
-// 1回分の実行ロジック。手動テスト実行（automation.tsx）と
+// 1回分の実行ロジック。手動実行（automation.tsx）と
 // 外部Cronトリガー（同route）の両方から呼ばれる。
 //
 // docs/phase3-mvp-design.md 5-5「投稿実行フロー」に対応。
