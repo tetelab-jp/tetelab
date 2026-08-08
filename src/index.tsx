@@ -24,10 +24,20 @@ app.get('/', async (c) => {
   return c.redirect('/login')
 })
 
+// automationはdashboard/style/blogより先にマウントする。
+// dashboard/style/blogは各々 .use('*', requireAuth) でその配下の全パスを
+// セッション認証必須にしているが、Honoは app.route('/', subApp) をこの順で
+// 試した際、subApp内で該当パスにルートが無くても '*' ミドルウェアが先に
+// 401/redirectを返してしまい、後続のsubAppへフォールスルーしない。
+// automation.tsxの /api/cron/run-style-posts は外部Cronサービスから
+// CRON_SECRET(Bearerトークン)のみで呼ばれる想定のため、セッションCookieが
+// 無くても到達できる必要がある。dashboard/style/blogより先にマウントすることで、
+// automation自身が明示的にrequireAuthを付けているルート(/style/test-run等)は
+// 従来通り認証必須のまま、cron用ルートだけは認証不要で到達できるようにする。
 app.route('/', auth)
+app.route('/', automation)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
-app.route('/', automation)
 
 export default app

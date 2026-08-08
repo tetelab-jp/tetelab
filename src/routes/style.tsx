@@ -38,6 +38,146 @@ const MENU_OPTIONS: [string, string][] = [
   ['MC04', 'ブリーチ']
 ]
 
+// モデル属性(docs/phase3-mvp-design.md 4-6参照。frmStyleEditStyleModelDto.*)。
+// 髪量/髪質/太さ/クセの1〜3の具体的な表示文言はSALON BOARD実HTML上では
+// コード値(1〜3)のみ確認済みで、正式なラベル文言は未確認のため暫定表記。
+const MODEL_SCALE_OPTIONS: Record<string, [string, string][]> = {
+  hairVolume: [
+    ['99', '設定しない'],
+    ['1', '少なめ'],
+    ['2', '普通'],
+    ['3', '多め']
+  ],
+  hairQuality: [
+    ['99', '設定しない'],
+    ['1', '柔らかめ'],
+    ['2', '普通'],
+    ['3', '硬め']
+  ],
+  hairThickness: [
+    ['99', '設定しない'],
+    ['1', '細め'],
+    ['2', '普通'],
+    ['3', '太め']
+  ],
+  curl: [
+    ['99', '設定しない'],
+    ['1', '少なめ'],
+    ['2', '普通'],
+    ['3', '強め']
+  ]
+}
+
+const MODEL_FACE_TYPE_OPTIONS: [string, string][] = [
+  ['99', '設定しない'],
+  ['4', '逆三角'],
+  ['1', '丸型'],
+  ['5', 'ベース'],
+  ['2', '卵型'],
+  ['6', '面長'],
+  ['3', '四角']
+]
+
+const MODEL_AGE_OPTIONS: [string, string][] = [
+  ['99', '設定しない'],
+  ['0', 'キッズ'],
+  ['1', '10代'],
+  ['2', '20代'],
+  ['3', '30代'],
+  ['4', '40代'],
+  ['5', '50代'],
+  ['6', '60代以上']
+]
+
+type ModelAttributes = {
+  hairVolume?: string
+  hairQuality?: string
+  hairThickness?: string
+  curl?: string
+  faceType?: string
+  age?: string
+}
+
+function ModelAttributeFields({ model }: { model: ModelAttributes }) {
+  return (
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-1">モデル情報(任意)</label>
+      <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">髪量</label>
+          <select name="model_hair_volume" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_SCALE_OPTIONS.hairVolume.map(([v, label]) => (
+              <option value={v} selected={(model.hairVolume || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">髪質</label>
+          <select name="model_hair_quality" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_SCALE_OPTIONS.hairQuality.map(([v, label]) => (
+              <option value={v} selected={(model.hairQuality || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">太さ</label>
+          <select name="model_hair_thickness" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_SCALE_OPTIONS.hairThickness.map(([v, label]) => (
+              <option value={v} selected={(model.hairThickness || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">クセ</label>
+          <select name="model_curl" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_SCALE_OPTIONS.curl.map(([v, label]) => (
+              <option value={v} selected={(model.curl || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">顔型</label>
+          <select name="model_face_type" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_FACE_TYPE_OPTIONS.map(([v, label]) => (
+              <option value={v} selected={(model.faceType || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-gray-500 mb-1">年代</label>
+          <select name="model_age" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm">
+            {MODEL_AGE_OPTIONS.map(([v, label]) => (
+              <option value={v} selected={(model.age || '99') === v}>{label}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function parseModelAttributesForm(body: Record<string, any>): ModelAttributes {
+  const pick = (key: string) => {
+    const v = String(body[key] || '99')
+    return v && v !== '99' ? v : undefined
+  }
+  const model: ModelAttributes = {
+    hairVolume: pick('model_hair_volume'),
+    hairQuality: pick('model_hair_quality'),
+    hairThickness: pick('model_hair_thickness'),
+    curl: pick('model_curl'),
+    faceType: pick('model_face_type'),
+    age: pick('model_age')
+  }
+  return model
+}
+
+// <script type="application/json">に埋め込むためのJSON文字列化。
+// テンプレート名等のユーザー入力に"</script"が含まれていてもタグを閉じさせないよう'<'をエスケープする。
+function jsonForScriptTag(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, '\\u003c')
+}
+
 function statusBadge(status: string, kind: 'internal' | 'register' | 'reflection') {
   const map: Record<string, string> = {
     draft: 'bg-gray-100 text-gray-500',
@@ -157,42 +297,54 @@ style.get('/style/library', async (c) => {
             まだスタイルが登録されていません。「新規作成」から追加してください。
           </p>
         ) : (
-          <div id="image-grid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div id="style-list" class="divide-y divide-gray-100">
             {styles.map((s) => (
-              <div class="relative border border-gray-200 rounded-lg overflow-hidden group" data-image-id={s.id}>
-                <label class="block cursor-pointer">
+              <div class="flex items-center gap-4 py-3" data-image-id={s.id}>
+                <input
+                  type="checkbox"
+                  class="style-checkbox w-5 h-5 accent-pink-500 cursor-pointer flex-shrink-0"
+                  checked={s.auto_post_enabled_flag === 1}
+                  data-image-id={s.id}
+                />
+                <a href={`/style/${s.id}/edit`} class="flex-shrink-0">
                   {s.front_style_image_id ? (
-                    <img src={`/style/image/${s.front_style_image_id}`} class="w-full h-32 object-cover" loading="lazy" />
+                    <img
+                      src={`/style/image/${s.front_style_image_id}`}
+                      class="w-20 h-28 object-contain bg-gray-50 rounded-lg border border-gray-200"
+                      loading="lazy"
+                    />
                   ) : (
-                    <div class="w-full h-32 bg-gray-50 flex items-center justify-center text-gray-300">
-                      <i class="fas fa-image text-2xl"></i>
+                    <div class="w-20 h-28 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300">
+                      <i class="fas fa-image text-xl"></i>
                     </div>
                   )}
-                  <input
-                    type="checkbox"
-                    class="style-checkbox absolute top-2 left-2 w-5 h-5 accent-pink-500 cursor-pointer"
-                    checked={s.auto_post_enabled_flag === 1}
-                    data-image-id={s.id}
-                  />
-                </label>
-                <div class="p-2 text-xs text-gray-500 space-y-1">
+                </a>
+                <div class="flex-1 min-w-0">
                   <a href={`/style/${s.id}/edit`} class="block truncate font-medium text-gray-700 hover:text-pink-600">
                     {s.title || '（無題）'}
                   </a>
-                  <p class="text-[10px] text-gray-400">{s.stylist_name || '担当未設定'}</p>
-                  <div class="flex flex-wrap gap-1">
+                  <p class="text-xs text-gray-400 mt-0.5">{s.stylist_name || '担当未設定'}</p>
+                  <div class="flex flex-wrap gap-1 mt-1">
                     {statusBadge(s.internal_save_status, 'internal')}
                     {statusBadge(s.reflection_request_status, 'reflection')}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  class="delete-btn absolute top-2 right-2 bg-white/90 hover:bg-red-50 text-red-500 rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition"
-                  data-image-id={s.id}
-                  title="削除"
-                >
-                  <i class="fas fa-xmark"></i>
-                </button>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <a
+                    href={`/style/${s.id}/edit`}
+                    class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
+                  >
+                    <i class="fas fa-pen mr-1"></i>編集
+                  </a>
+                  <button
+                    type="button"
+                    class="delete-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5"
+                    data-image-id={s.id}
+                    title="削除"
+                  >
+                    <i class="fas fa-xmark mr-1"></i>削除
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -245,6 +397,31 @@ async function loadFormMasters(c: AppContext, user: AppUser) {
   return { stylists: stylists.results || [], coupons: coupons.results || [] }
 }
 
+type TemplateForAutofill = {
+  id: number
+  template_name: string
+  title_template: string | null
+  comment_template: string | null
+  category_value: string | null
+  length_value: string | null
+  menu_values_json: string
+  menu_detail_text: string | null
+  coupon_id: number | null
+  hashtags_json: string
+  model_attributes_json: string | null
+}
+
+async function loadActiveTemplates(c: AppContext, user: AppUser) {
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, template_name, title_template, comment_template, category_value, length_value,
+            menu_values_json, menu_detail_text, coupon_id, hashtags_json, model_attributes_json
+     FROM templates WHERE user_id = ? AND active_flag = 1 ORDER BY id DESC`
+  )
+    .bind(user.id)
+    .all<TemplateForAutofill>()
+  return results || []
+}
+
 type StyleDetailRow = {
   id: number
   stylist_id: number | null
@@ -256,6 +433,7 @@ type StyleDetailRow = {
   menu_values_json: string
   menu_detail_text: string | null
   hashtags_json: string
+  model_attributes_json: string | null
   auto_post_enabled_flag: number
   front_style_image_id: number | null
 }
@@ -264,20 +442,43 @@ function StyleForm({
   mode,
   detail,
   stylists,
-  coupons
+  coupons,
+  templates
 }: {
   mode: 'new' | 'edit'
   detail: StyleDetailRow | null
   stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
+  templates: TemplateForAutofill[]
 }) {
   const category = detail?.category_value || 'SG01'
   const menuCodes: string[] = detail ? JSON.parse(detail.menu_values_json || '[]') : []
   const hashtags: string[] = detail ? JSON.parse(detail.hashtags_json || '[]') : []
+  const model: ModelAttributes = detail?.model_attributes_json ? JSON.parse(detail.model_attributes_json) : {}
   const action = mode === 'new' ? '/style/new' : `/style/${detail?.id}/edit`
 
   return (
     <form method="post" action={action} enctype="multipart/form-data" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl">
+      {mode === 'new' && templates.length > 0 && (
+        <div class="bg-pink-50 border border-pink-100 rounded-lg p-3">
+          <label class="block text-sm font-medium text-gray-700 mb-1">テンプレートから作成（任意）</label>
+          <select id="template-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm bg-white">
+            <option value="">テンプレートを選択せず入力する</option>
+            {templates.map((t) => (
+              <option value={t.id}>{t.template_name}</option>
+            ))}
+          </select>
+          <p class="text-xs text-gray-500 mt-1">
+            テンプレートを選ぶと、画像以外の項目が自動的に入力されます。画像だけ選んで登録してください。
+          </p>
+          <script
+            id="template-data"
+            type="application/json"
+            dangerouslySetInnerHTML={{ __html: jsonForScriptTag(templates) }}
+          ></script>
+        </div>
+      )}
+
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">スタイル画像（FRONT）</label>
         {detail?.front_style_image_id && (
@@ -394,6 +595,8 @@ function StyleForm({
         />
       </div>
 
+      <ModelAttributeFields model={model} />
+
       <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
         <input type="checkbox" name="auto_post_enabled" checked={detail ? detail.auto_post_enabled_flag === 1 : true} class="w-4 h-4 accent-pink-500" />
         自動投稿対象にする
@@ -420,10 +623,13 @@ function StyleForm({
 
 style.get('/style/new', async (c) => {
   const user = c.get('user')
-  const { stylists, coupons } = await loadFormMasters(c, user)
+  const [{ stylists, coupons }, templates] = await Promise.all([
+    loadFormMasters(c, user),
+    loadActiveTemplates(c, user)
+  ])
   return c.render(
     <PageLayout active="style-library" salonName={user.salon_name} title="スタイル新規作成">
-      <StyleForm mode="new" detail={null} stylists={stylists} coupons={coupons} />
+      <StyleForm mode="new" detail={null} stylists={stylists} coupons={coupons} templates={templates} />
     </PageLayout>,
     { title: 'スタイル新規作成' }
   )
@@ -448,6 +654,7 @@ function parseStyleForm(body: Record<string, any>) {
     menuValues,
     menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 100),
     hashtags,
+    modelAttributes: parseModelAttributesForm(body),
     stylistId: body.stylist_id ? Number(body.stylist_id) : null,
     couponId: body.coupon_id ? Number(body.coupon_id) : null,
     autoPostEnabled: body.auto_post_enabled === 'on' || body.auto_post_enabled === 'true'
@@ -508,8 +715,8 @@ style.post('/style/new', async (c) => {
   const insert = await c.env.DB.prepare(
     `INSERT INTO styles (
        user_id, stylist_id, coupon_id, source_type, title, comment, category_value, length_value,
-       menu_values_json, menu_detail_text, hashtags_json, auto_post_enabled_flag, internal_save_status
-     ) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       menu_values_json, menu_detail_text, hashtags_json, model_attributes_json, auto_post_enabled_flag, internal_save_status
+     ) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
@@ -522,6 +729,7 @@ style.post('/style/new', async (c) => {
       JSON.stringify(parsed.menuValues),
       parsed.menuDetailText,
       JSON.stringify(parsed.hashtags),
+      JSON.stringify(parsed.modelAttributes),
       parsed.autoPostEnabled ? 1 : 0,
       internalStatus
     )
@@ -539,7 +747,7 @@ style.get('/style/:id/edit', async (c) => {
 
   const detail = await c.env.DB.prepare(
     `SELECT s.id, s.stylist_id, s.coupon_id, s.title, s.comment, s.category_value, s.length_value,
-            s.menu_values_json, s.menu_detail_text, s.hashtags_json, s.auto_post_enabled_flag,
+            s.menu_values_json, s.menu_detail_text, s.hashtags_json, s.model_attributes_json, s.auto_post_enabled_flag,
             si.id AS front_style_image_id
      FROM styles s
      LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
@@ -554,7 +762,7 @@ style.get('/style/:id/edit', async (c) => {
 
   return c.render(
     <PageLayout active="style-library" salonName={user.salon_name} title="スタイル編集">
-      <StyleForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} />
+      <StyleForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} templates={[]} />
     </PageLayout>,
     { title: 'スタイル編集' }
   )
@@ -584,8 +792,8 @@ style.post('/style/:id/edit', async (c) => {
   await c.env.DB.prepare(
     `UPDATE styles SET
        stylist_id = ?, coupon_id = ?, title = ?, comment = ?, category_value = ?, length_value = ?,
-       menu_values_json = ?, menu_detail_text = ?, hashtags_json = ?, auto_post_enabled_flag = ?,
-       internal_save_status = ?, updated_at = CURRENT_TIMESTAMP
+       menu_values_json = ?, menu_detail_text = ?, hashtags_json = ?, model_attributes_json = ?,
+       auto_post_enabled_flag = ?, internal_save_status = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND user_id = ?`
   )
     .bind(
@@ -598,6 +806,7 @@ style.post('/style/:id/edit', async (c) => {
       JSON.stringify(parsed.menuValues),
       parsed.menuDetailText,
       JSON.stringify(parsed.hashtags),
+      JSON.stringify(parsed.modelAttributes),
       parsed.autoPostEnabled ? 1 : 0,
       internalStatus,
       id,
@@ -673,17 +882,19 @@ style.post('/style/library/delete/:id', async (c) => {
 
 // ---------- 自動投稿スケジュール設定 ----------
 
+// 毎朝この時刻(JST)から自動投稿を開始する固定時刻。src/routes/automation.tsxのDAILY_AUTO_POST_TIMEと一致させること。
+const DAILY_AUTO_POST_TIME_LABEL = '7:00'
+// TETE AOUT側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
+const DAILY_POST_LIMIT_LABEL = 100
+
 style.get('/style/schedule', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
 
-  const schedule = await c.env.DB.prepare(
-    'SELECT enabled, times_per_day, run_times FROM style_post_schedules WHERE user_id = ?'
-  )
+  const schedule = await c.env.DB.prepare('SELECT enabled FROM style_post_schedules WHERE user_id = ?')
     .bind(user.id)
-    .first<{ enabled: number; times_per_day: number; run_times: string }>()
+    .first<{ enabled: number }>()
 
-  const runTimes: string[] = schedule ? JSON.parse(schedule.run_times) : ['10:00']
   const enabled = schedule?.enabled === 1
 
   const selectedRow = await c.env.DB.prepare(
@@ -703,39 +914,16 @@ style.get('/style/schedule', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        現在<b>{selectedCount}件</b>のスタイルが自動投稿対象（入力完了済み）です。設定した実行時刻ごとに、この
-        <b>{selectedCount}件すべて</b>の「登録＋反映申請」が自動実行されます。
+        自動投稿を有効にすると、毎朝<b>{DAILY_AUTO_POST_TIME_LABEL}</b>から、自動投稿対象（入力完了済み）の
+        スタイルを登録順に「登録＋反映申請」まで自動実行します（1日最大<b>{DAILY_POST_LIMIT_LABEL}件</b>まで）。
+        現在<b>{selectedCount}件</b>が対象です。
       </div>
 
       <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-xl">
         <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
           <input type="checkbox" name="enabled" checked={enabled} class="w-4 h-4 accent-pink-500" />
-          自動投稿を有効にする
+          自動投稿を有効にする（毎朝{DAILY_AUTO_POST_TIME_LABEL}〜、最大{DAILY_POST_LIMIT_LABEL}件/日）
         </label>
-
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">1日の投稿回数</label>
-          <select name="times_per_day" id="times-per-day-select" class="rounded-lg border border-gray-300 px-3 py-2 text-sm">
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option value={n} selected={runTimes.length === n}>
-                {n}回
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div id="run-times-container" class="space-y-2">
-          <label class="block text-sm font-medium text-gray-700 mb-1">実行時刻</label>
-          {[0, 1, 2, 3, 4].map((i) => (
-            <input
-              type="time"
-              name="run_time_slot"
-              value={runTimes[i] || ''}
-              class={'run-time-input rounded-lg border border-gray-300 px-3 py-2 text-sm mr-2 ' + (i < runTimes.length ? '' : 'hidden')}
-              data-index={i}
-            />
-          ))}
-        </div>
 
         <button
           type="submit"
@@ -744,8 +932,6 @@ style.get('/style/schedule', async (c) => {
           保存する
         </button>
       </form>
-
-      <script src="/static/style-schedule.js"></script>
     </PageLayout>,
     { title: 'スタイル自動投稿スケジュール' }
   )
@@ -753,16 +939,9 @@ style.get('/style/schedule', async (c) => {
 
 style.post('/style/schedule', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody({ all: true })
+  const body = await c.req.parseBody()
 
   const enabled = body.enabled === 'on' || body.enabled === 'true'
-  const timesPerDay = Number(body.times_per_day) || 1
-
-  const rawSlots = body.run_time_slot
-  const slotArray: string[] = Array.isArray(rawSlots) ? (rawSlots as string[]) : rawSlots ? [rawSlots as string] : []
-  const runTimes = slotArray.filter((t) => t && t.trim() !== '').slice(0, timesPerDay)
-
-  const finalRunTimes = runTimes.length > 0 ? runTimes : ['10:00']
 
   const existing = await c.env.DB.prepare('SELECT id FROM style_post_schedules WHERE user_id = ?')
     .bind(user.id)
@@ -770,15 +949,13 @@ style.post('/style/schedule', async (c) => {
 
   if (existing) {
     await c.env.DB.prepare(
-      `UPDATE style_post_schedules SET enabled = ?, times_per_day = ?, run_times = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
     )
-      .bind(enabled ? 1 : 0, finalRunTimes.length, JSON.stringify(finalRunTimes), user.id)
+      .bind(enabled ? 1 : 0, user.id)
       .run()
   } else {
-    await c.env.DB.prepare(
-      `INSERT INTO style_post_schedules (user_id, enabled, times_per_day, run_times) VALUES (?, ?, ?, ?)`
-    )
-      .bind(user.id, enabled ? 1 : 0, finalRunTimes.length, JSON.stringify(finalRunTimes))
+    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled) VALUES (?, ?)`)
+      .bind(user.id, enabled ? 1 : 0)
       .run()
   }
 
@@ -866,6 +1043,7 @@ style.get('/style/template', async (c) => {
 type TemplateDetailRow = {
   id: number
   template_name: string
+  title_template: string | null
   comment_template: string | null
   category_value: string | null
   length_value: string | null
@@ -873,6 +1051,7 @@ type TemplateDetailRow = {
   menu_detail_text: string | null
   coupon_id: number | null
   hashtags_json: string
+  model_attributes_json: string | null
   active_flag: number
 }
 
@@ -888,17 +1067,29 @@ function TemplateForm({
   const category = detail?.category_value || 'SG01'
   const menuCodes: string[] = detail ? JSON.parse(detail.menu_values_json || '[]') : []
   const hashtags: string[] = detail ? JSON.parse(detail.hashtags_json || '[]') : []
+  const model: ModelAttributes = detail?.model_attributes_json ? JSON.parse(detail.model_attributes_json) : {}
   const action = mode === 'new' ? '/style/template/new' : `/style/template/${detail?.id}/edit`
 
   return (
     <form method="post" action={action} class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl">
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">テンプレート名</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">テンプレート名（管理用・投稿には使われません）</label>
         <input
           type="text"
           name="template_name"
           required
           value={detail?.template_name || ''}
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大60文字）</label>
+        <input
+          type="text"
+          name="title_template"
+          maxlength={60}
+          value={detail?.title_template || ''}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
       </div>
@@ -981,6 +1172,8 @@ function TemplateForm({
         />
       </div>
 
+      <ModelAttributeFields model={model} />
+
       <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
         <input type="checkbox" name="active" checked={detail ? detail.active_flag === 1 : true} class="w-4 h-4 accent-pink-500" />
         有効にする
@@ -1018,12 +1211,14 @@ function parseTemplateForm(body: Record<string, any>) {
 
   return {
     templateName: String(body.template_name || '').trim(),
+    titleTemplate: String(body.title_template || '').trim().slice(0, 60),
     commentTemplate: String(body.comment_template || '').trim().slice(0, 240),
     categoryValue: category,
     lengthValue,
     menuValues,
     menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 100),
     hashtags,
+    modelAttributes: parseModelAttributesForm(body),
     couponId: body.coupon_id ? Number(body.coupon_id) : null,
     active: body.active === 'on' || body.active === 'true'
   }
@@ -1051,13 +1246,14 @@ style.post('/style/template/new', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO templates (
-       user_id, template_name, comment_template, category_value, length_value,
-       menu_values_json, menu_detail_text, coupon_id, hashtags_json, active_flag
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       user_id, template_name, title_template, comment_template, category_value, length_value,
+       menu_values_json, menu_detail_text, coupon_id, hashtags_json, model_attributes_json, active_flag
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
       parsed.templateName,
+      parsed.titleTemplate,
       parsed.commentTemplate,
       parsed.categoryValue,
       parsed.lengthValue,
@@ -1065,6 +1261,7 @@ style.post('/style/template/new', async (c) => {
       parsed.menuDetailText,
       parsed.couponId,
       JSON.stringify(parsed.hashtags),
+      JSON.stringify(parsed.modelAttributes),
       parsed.active ? 1 : 0
     )
     .run()
@@ -1077,8 +1274,8 @@ style.get('/style/template/:id/edit', async (c) => {
   const id = Number(c.req.param('id'))
 
   const detail = await c.env.DB.prepare(
-    `SELECT id, template_name, comment_template, category_value, length_value, menu_values_json,
-            menu_detail_text, coupon_id, hashtags_json, active_flag
+    `SELECT id, template_name, title_template, comment_template, category_value, length_value, menu_values_json,
+            menu_detail_text, coupon_id, hashtags_json, model_attributes_json, active_flag
      FROM templates WHERE id = ? AND user_id = ?`
   )
     .bind(id, user.id)
@@ -1108,13 +1305,14 @@ style.post('/style/template/:id/edit', async (c) => {
 
   await c.env.DB.prepare(
     `UPDATE templates SET
-       template_name = ?, comment_template = ?, category_value = ?, length_value = ?,
-       menu_values_json = ?, menu_detail_text = ?, coupon_id = ?, hashtags_json = ?, active_flag = ?,
-       updated_at = CURRENT_TIMESTAMP
+       template_name = ?, title_template = ?, comment_template = ?, category_value = ?, length_value = ?,
+       menu_values_json = ?, menu_detail_text = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
+       active_flag = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND user_id = ?`
   )
     .bind(
       parsed.templateName,
+      parsed.titleTemplate,
       parsed.commentTemplate,
       parsed.categoryValue,
       parsed.lengthValue,
@@ -1122,6 +1320,7 @@ style.post('/style/template/:id/edit', async (c) => {
       parsed.menuDetailText,
       parsed.couponId,
       JSON.stringify(parsed.hashtags),
+      JSON.stringify(parsed.modelAttributes),
       parsed.active ? 1 : 0,
       id,
       user.id

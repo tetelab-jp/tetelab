@@ -19,6 +19,10 @@ import {
   type StylePostInput
 } from './salonboard-automation'
 
+// TETE AOUT側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない。
+// docs/phase3-mvp-design.md 4-7参照。毎朝7:00からこの件数まで順次投稿する）
+const DAILY_POST_LIMIT = 100
+
 export type RunSummary = {
   runId: number
   totalImages: number
@@ -65,7 +69,10 @@ export async function runStyleAutomationForUser(
      FROM styles s
      LEFT JOIN stylists st ON st.id = s.stylist_id
      LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
-     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'`
+     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+       AND s.reflection_request_status IN ('not_started', 'failed')
+     ORDER BY s.sort_order ASC, s.id ASC
+     LIMIT ${DAILY_POST_LIMIT}`
   )
     .bind(userId)
     .all<ReadyStyleRow>()

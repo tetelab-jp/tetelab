@@ -6,6 +6,10 @@ import type { Bindings, AppUser } from '../types'
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
+// 毎朝この時刻(JST)から、登録済み(ready)スタイルの自動投稿を開始する固定時刻。
+// docs/phase3-mvp-design.md参照。ユーザーが時刻を選ぶUIは廃止した。
+const DAILY_AUTO_POST_TIME = '07:00'
+
 // ---------- テスト実行・履歴画面 ----------
 
 automation.get('/style/test-run', requireAuth, async (c) => {
@@ -154,18 +158,18 @@ automation.post('/api/cron/run-style-posts', async (c) => {
 
   const nowLabel = currentJstTimeLabel()
 
-  const { results: schedules } = await c.env.DB.prepare(
-    `SELECT user_id, run_times FROM style_post_schedules WHERE enabled = 1`
-  ).all<{ user_id: number; run_times: string }>()
+  // 実行時刻はユーザーが選ぶのではなく、毎朝7:00固定で
+  // 登録済み(ready)スタイルを順次自動投稿する運用に変更(docs/phase3-mvp-design.md参照)。
+  // 外部Cronは1分間隔程度でこのエンドポイントを叩く想定のため、ここで時刻を絞り込む。
+  if (nowLabel !== DAILY_AUTO_POST_TIME) {
+    return c.json({ time: nowLabel, matchedUsers: 0, outcomes: [] })
+  }
 
-  const targets = (schedules || []).filter((s) => {
-    try {
-      const times: string[] = JSON.parse(s.run_times)
-      return times.includes(nowLabel)
-    } catch {
-      return false
-    }
-  })
+  const { results: schedules } = await c.env.DB.prepare(
+    `SELECT user_id FROM style_post_schedules WHERE enabled = 1`
+  ).all<{ user_id: number }>()
+
+  const targets = schedules || []
 
   const outcomes: any[] = []
   for (const t of targets) {
