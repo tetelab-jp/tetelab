@@ -164,22 +164,18 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
 
   // 既存スタイル編集画面を開く。docs/salonboard-real-html-findings.md 2章で確定済み:
   // 詳細行のリンクは <a onclick="editStyle(event, 'L244286488'); return false;">。
-  // window.editStyle()を偽のevent引数で直接呼ぶより、実際の<a>要素をclick()して
-  // 本物のクリックイベントを発火させる方が安全。
-  // またクリック後もURLは変化せず（同一ページ内でDOMがまるごと差し替わる）、
-  // 遷移そのものは発生しないためwaitForNavigationは使わない。
-  const linkClicked = await page.evaluate((id: string) => {
-    const link = document.querySelector(`a[onclick*="editStyle(event, '${id}')"]`) as HTMLElement | null
-    if (link) {
-      link.click()
-      return true
-    }
-    return false
-  }, styleId)
-
-  if (!linkClicked) {
+  // window.editStyle()を偽のevent引数で直接呼ぶ、あるいはpage.evaluate内で
+  // element.click()すると isTrusted=false の合成イベントになり、ボット対策等に
+  // 無視される可能性があるため、Puppeteerネイティブのpage.click()
+  // (CDP経由の本物のマウスイベント、isTrusted=true)を使う。
+  // クリック後もURLは変化せず（同一ページ内でDOMがまるごと差し替わる）ため、
+  // 遷移そのものは発生せずwaitForNavigationは使わない。
+  const editLinkSelector = `a[onclick*="editStyle(event, '${styleId}')"]`
+  const editLinkHandle = await page.$(editLinkSelector)
+  if (!editLinkHandle) {
     throw new Error(`スタイル編集画面へのリンクが見つかりませんでした（styleId: ${styleId}）`)
   }
+  await page.click(editLinkSelector)
 
   await page.waitForSelector('#styleEditForm', { timeout: 15000 })
 

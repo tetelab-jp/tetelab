@@ -84,9 +84,16 @@ export async function launchBrowser(env: Bindings): Promise<Browser> {
 export async function newAutomationPage(browser: Browser): Promise<Page> {
   const page = await browser.newPage()
 
-  // navigator.webdriver フラグは代表的なheadless検知ポイントの1つ
+  // 代表的なheadless検知ポイントを可能な範囲で偽装する
   await page.evaluateOnNewDocument(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
+    // headless Chromeはnavigator.pluginsが空配列になりがちなので、それらしい値を入れる
+    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] })
+    Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja', 'en-US', 'en'] })
+    // headless Chromeにはwindow.chromeオブジェクトが存在しないことが多い
+    if (!(window as any).chrome) {
+      ;(window as any).chrome = { runtime: {} }
+    }
   })
 
   // デフォルトのheadless Chrome User-Agentではなく、通常のデスクトップChromeを名乗る
@@ -127,24 +134,36 @@ export async function loginToSalonBoard(
   await page.type('input[name="password"]', password, { delay: 20 })
 
   log('ログイン実行中...')
+  // page.evaluate内でelement.click()するとevent.isTrusted=falseの合成イベントに
+  // なり、ボット対策JSがこれを見て正規の処理をスキップしている可能性があるため、
+  // Puppeteerネイティブのpage.click()(CDP経由の本物のマウスイベント、
+  // isTrusted=true)を使う。
+  const loginBtnHandle = await page.$('a.loginBtnSize, a[onclick*="dologin"]')
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    page.evaluate(() => {
-      const loginBtn = document.querySelector('a.loginBtnSize, a[onclick*="dologin"]') as HTMLElement | null
-      if (loginBtn) {
-        loginBtn.click()
-      } else {
-        // フォールバック: ボタン要素が見つからない場合はフォームを直接submit
-        const form = document.getElementById('idPasswordInputForm') as HTMLFormElement | null
-        form?.submit()
-      }
-    })
+    loginBtnHandle
+      ? page.click('a.loginBtnSize, a[onclick*="dologin"]')
+      : page.evaluate(() => {
+          // フォールバック: ボタン要素が見つからない場合はフォームを直接submit
+          const form = document.getElementById('idPasswordInputForm') as HTMLFormElement | null
+          form?.submit()
+        })
   ])
 
-  // ログイン成功確認: ログインページのまま（エラー）でないかをURLで簡易判定
+  // ログイン成功確認: ログインページのまま（エラー）でないかをURLで簡易判定。
+  // 「クリックが反応せずナビゲーションが起きなかった」場合と「ID/パスワードが
+  // 実際に誤っている」場合を区別するため、ページ本文にエラーらしき文言が
+  // 出ているかも合わせて確認し、ログに詳細を残す(⚠️実際のエラー文言は未確認)。
   const currentUrl = page.url()
   if (currentUrl.includes('/login/') || currentUrl.includes('idPasswordInput')) {
-    throw new Error('ログインに失敗しました（ID/パスワードが正しくない可能性があります）')
+    const pageText = await page
+      .evaluate(() => document.body.innerText.slice(0, 300))
+      .catch(() => '(本文取得失敗)')
+    log(`ログイン失敗時のURL: ${currentUrl}`)
+    log(`ログイン失敗時のページ冒頭: ${pageText.replace(/\s+/g, ' ')}`)
+    throw new Error(
+      'ログインに失敗しました（ID/パスワードが正しくない可能性、またはクリックがブロックされた可能性があります）'
+    )
   }
   log('ログイン成功')
 }
@@ -450,15 +469,13 @@ export async function submitReflectApplication(page: Page, log: AutomationLogger
   }
 
   log('反映申請を実行中...')
+  // #reflectedButtonにはinline onclickが無く、別JSでaddEventListenerされている。
+  // page.evaluate内のelement.click()はisTrusted=falseの合成イベントになり
+  // ボット対策等で無視される可能性があるため、Puppeteerネイティブのpage.click()
+  // (CDP経由の本物のマウスイベント、isTrusted=true)を使う。
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    page.evaluate(() => {
-      // #reflectedButtonにはinline onclickが無く、別JSでaddEventListenerされている
-      // ため、element.click()で本物のクリックイベントを発火させる
-      // (window上の関数を直接呼ぶ方式ではハンドラに届かない)。
-      const btn = document.getElementById('reflectedButton') as HTMLButtonElement | null
-      btn?.click()
-    })
+    page.click('#reflectedButton')
   ])
 
   log('反映申請が完了しました（実際の公開まで約20分かかります）')
