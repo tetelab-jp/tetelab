@@ -144,7 +144,16 @@ export async function loginToSalonBoard(
   // ログイン成功確認: ログインページのまま（エラー）でないかをURLで簡易判定
   const currentUrl = page.url()
   if (currentUrl.includes('/login/') || currentUrl.includes('idPasswordInput')) {
-    throw new Error('ログインに失敗しました（ID/パスワードが正しくない可能性があります）')
+    // 原因切り分け用に、失敗時点の画面テキストを診断情報としてエラーに含める。
+    // (実際のバリデーションエラー文言／Akamai等のボット対策ブロック画面／
+    //  単に元のログイン画面が再描画されただけ、を判別するため)
+    const pageText = await page
+      .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
+      .catch(() => '(画面テキスト取得失敗)')
+    throw new Error(
+      `ログインに失敗しました（ID/パスワードが正しくない可能性があります）` +
+        ` [診断情報] url=${currentUrl} pageText="${pageText.replace(/\s+/g, ' ').trim()}"`
+    )
   }
   log('ログイン成功')
 }
