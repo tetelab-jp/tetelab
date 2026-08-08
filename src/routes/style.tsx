@@ -182,6 +182,25 @@ function jsonForScriptTag(value: unknown): string {
 }
 
 function statusBadge(status: string, kind: 'internal' | 'register' | 'reflection') {
+  // 2026-08-09追記(ユーザー訂正): サロンボードへの登録→反映申請は自動で
+  // 連続実行されるため、「反映申請待ち」のような中間状態をユーザーに見せる
+  // 意味は薄く、むしろ「実際にはまだ登録すらされていないのに反映申請待ちと
+  // 表示される」という誤解を生んでいた。反映系ステータスは
+  // 「公開済み」(success)か「ブロック」(それ以外すべて)の2値のみで表示する。
+  if (kind === 'reflection') {
+    const isPublished = status === 'success'
+    return (
+      <span
+        class={
+          'text-xs px-2 py-0.5 rounded font-semibold ' +
+          (isPublished ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600')
+        }
+      >
+        {isPublished ? '公開済み' : 'ブロック'}
+      </span>
+    )
+  }
+
   const map: Record<string, string> = {
     draft: 'bg-gray-100 text-gray-500',
     ready: 'bg-blue-50 text-blue-600',
@@ -197,7 +216,7 @@ function statusBadge(status: string, kind: 'internal' | 'register' | 'reflection
     ready: '準備完了',
     disabled: '停止中',
     not_started: '未実行',
-    success: kind === 'reflection' ? '公開済み' : '成功',
+    success: '成功',
     failed: '失敗',
     pending: '反映申請待ち',
     blocked: 'ブロック'

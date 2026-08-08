@@ -239,24 +239,24 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
   log('新規スタイル作成フォームを開いています...')
-  // ⚠️ 「新規作成」ボタンの実onclick HTML(要素セレクタ)は未確認。
-  // login/editStyleの実測結果から、このサイトのボタンは軒並みevent引数を
-  // 取る規約と推測されるため、window.addStyle()を直接呼ぶ際も念のため
-  // 簡易的なEventオブジェクトを渡す(element.click()できるセレクタが
-  // 判明次第、login/editStyleと同様の方式に置き換えること)。
+  // login/editStyle/doSelectNextと同様、onclick="addStyle(event)"を持つ実要素を
+  // ネイティブクリック(isTrusted=true)する。見つからない場合のみ、フォームの
+  // 直接submitにフォールバックする。
+  const addStyleHandle = await page.evaluateHandle(() => {
+    const el = Array.from(document.querySelectorAll('a, button')).find((e) =>
+      /addStyle/.test(e.getAttribute('onclick') || '')
+    )
+    return el || null
+  })
+  const addStyleEl = addStyleHandle.asElement()
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    page.evaluate(() => {
-      // @ts-ignore
-      if (typeof (window as any).addStyle === 'function') {
-        const fakeEvent = { preventDefault: () => {}, stopPropagation: () => {}, target: null, currentTarget: null }
-        // @ts-ignore
-        ;(window as any).addStyle(fakeEvent)
-      } else {
-        const form = document.getElementById('addStyleForm') as HTMLFormElement | null
-        form?.submit()
-      }
-    })
+    addStyleEl
+      ? addStyleEl.click()
+      : page.evaluate(() => {
+          const form = document.getElementById('addStyleForm') as HTMLFormElement | null
+          form?.submit()
+        })
   ])
 
   await page.waitForSelector('#styleEditForm', { timeout: 15000 })
@@ -330,16 +330,48 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   }
 
   // ---- 保存（doRegister） ----
+  // 2026-08-09追記: 以前はpage.evaluate()内でのelement.click()(isTrusted=false
+  // の合成イベント)を使っており、かつクリック後の検証が一切無かった
+  // (waitForNavigationがタイムアウトしても.catch(() => null)で握りつぶし、
+  // 無条件に「登録完了」と判定していた)。これにより、実際にはサロンボード
+  // サーバー側で保存されていない(=スタイル一覧に表示されない)にもかかわらず
+  // 「成功」として扱われる可能性があった。login/editStyle/doSelectNextと
+  // 同様にネイティブクリックへ変更した上で、保存が実際にサーバー側で成功した
+  // ことを検証する。
   log('スタイルを登録中...')
+  const doRegisterHandle = await page.$('[onclick*="doRegister("]')
+  if (!doRegisterHandle) {
+    throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
+  }
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    page.evaluate(() => {
-      const btn = document.querySelector('[onclick*="doRegister("]') as HTMLElement | null
-      btn?.click()
-    })
+    doRegisterHandle.click()
   ])
 
-  log('スタイル登録が完了しました')
+  // 登録成功の検証: 新規スタイルの場合、サーバーが実styleId(L+9桁)を発行し、
+  // 同一フォーム内の#styleId隠しフィールドにセットした状態で再描画される
+  // (editStyle実行後と同様、同一ページ内でフルページ相当の再レンダリングが
+  // 起きる仕様のため)。これが確認できない場合はサーバー側で実際に保存された
+  // 保証が無いため、エラーとして扱う(無条件の「成功」報告はしない)。
+  const registeredStyleId = await page
+    .waitForFunction(
+      () => {
+        const el = document.getElementById('styleId') as HTMLInputElement | null
+        return el && /^L\d{9}$/.test(el.value) ? el.value : false
+      },
+      { timeout: 20000 }
+    )
+    .then((handle) => handle.jsonValue() as Promise<string | false>)
+    .catch(() => false)
+
+  if (!registeredStyleId) {
+    throw new Error(
+      'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
+        'サーバー側で実際に登録されていない可能性があります。'
+    )
+  }
+
+  log(`スタイル登録が完了しました（styleId: ${registeredStyleId}）`)
 }
 
 /**
