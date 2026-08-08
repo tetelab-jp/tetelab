@@ -83,4 +83,45 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     })
   })
+
+  // テンプレート一括適用
+  const bulkApplyBtn = document.getElementById('bulk-apply-btn')
+  if (bulkApplyBtn) {
+    bulkApplyBtn.addEventListener('click', async () => {
+      const select = document.getElementById('bulk-apply-template-select')
+      const templateId = Number(select.value)
+      if (!templateId) {
+        alert('テンプレートを選択してください')
+        return
+      }
+
+      const styleIds = Array.from(document.querySelectorAll('.style-checkbox:checked')).map((cb) =>
+        Number(cb.getAttribute('data-image-id'))
+      )
+      if (styleIds.length === 0) {
+        alert('適用先のスタイルにチェックを入れてください')
+        return
+      }
+      if (!confirm(`チェック中の${styleIds.length}件のスタイルにテンプレートを適用します。よろしいですか？`)) return
+
+      bulkApplyBtn.disabled = true
+      try {
+        const res = await fetch('/api/style/bulk-apply-template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId, styleIds })
+        })
+        const data = await res.json()
+        if (data.success) {
+          alert(`適用しました（${data.appliedCount} / ${data.totalCount}件）`)
+        } else {
+          alert('一部またはすべて失敗しました: ' + (data.errors || []).join(', '))
+        }
+        location.reload()
+      } catch (err) {
+        alert('通信エラーが発生しました')
+        bulkApplyBtn.disabled = false
+      }
+    })
+  }
 })

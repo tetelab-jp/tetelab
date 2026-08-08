@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
-import { runStyleAutomationForUser, currentJstTimeLabel } from '../lib/style-post-runner'
+import { runStyleAutomationForUser, retryStylePost, currentJstTimeLabel } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -11,6 +11,17 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 const DAILY_AUTO_POST_TIME = '07:00'
 
 // ---------- テスト実行・履歴画面 ----------
+
+const EXECUTION_TYPE_LABEL: Record<string, string> = {
+  register_style: '登録',
+  request_reflection: '反映申請'
+}
+
+const LOG_STATUS_DOT: Record<string, string> = {
+  success: 'bg-green-500',
+  blocked: 'bg-amber-500',
+  failure: 'bg-red-500'
+}
 
 automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
@@ -31,17 +42,44 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   const { results: logs } = await c.env.DB.prepare(
-    `SELECT id, status, message, created_at FROM execution_logs WHERE user_id = ? ORDER BY id DESC LIMIT 20`
+    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.created_at, s.title AS style_title
+     FROM execution_logs l
+     LEFT JOIN styles s ON s.id = l.style_id
+     WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 30`
   )
     .bind(user.id)
-    .all<{ id: number; status: string; message: string; created_at: string }>()
+    .all<{
+      id: number
+      status: string
+      message: string
+      execution_type: string | null
+      style_id: number | null
+      created_at: string
+      style_title: string | null
+    }>()
+
+  // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
+  const { results: retryTargets } = await c.env.DB.prepare(
+    `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
+     FROM styles
+     WHERE user_id = ? AND (salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked'))
+     ORDER BY updated_at DESC LIMIT 20`
+  )
+    .bind(user.id)
+    .all<{
+      id: number
+      title: string | null
+      salonboard_register_status: string
+      reflection_request_status: string
+      last_error: string | null
+    }>()
 
   return c.render(
     <PageLayout active="style-test-run" salonName={user.salon_name} title="テスト実行・実行履歴">
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
         <i class="fas fa-triangle-exclamation mr-2"></i>
-        テスト実行ボタンを押すと、現在チェックされている画像すべてに対して実際にサロンボードへの
-        <b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
+        テスト実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
       </div>
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -53,6 +91,41 @@ automation.get('/style/test-run', requireAuth, async (c) => {
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
       </div>
+
+      {retryTargets && retryTargets.length > 0 && (
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-rotate-right mr-2 text-pink-500"></i>失敗・ブロック中のスタイル（再実行できます）
+          </p>
+          <ul class="text-sm divide-y divide-gray-50">
+            {retryTargets.map((t) => {
+              const isBlocked = t.reflection_request_status === 'blocked'
+              return (
+                <li class="flex items-center justify-between gap-3 py-2">
+                  <div class="min-w-0">
+                    <a href={`/style/${t.id}/edit`} class="font-medium text-gray-700 hover:text-pink-600 truncate block">
+                      {t.title || `スタイル${t.id}`}
+                    </a>
+                    <p class="text-xs text-gray-400 truncate">
+                      <span class={'px-1.5 py-0.5 rounded font-semibold mr-1 ' + (isBlocked ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600')}>
+                        {isBlocked ? 'ブロック' : '失敗'}
+                      </span>
+                      {t.last_error || ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    class="retry-btn flex-shrink-0 text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
+                    data-style-id={t.id}
+                  >
+                    <i class="fas fa-rotate-right mr-1"></i>再実行
+                  </button>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>実行履歴</p>
@@ -98,20 +171,29 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       </div>
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近20件）</p>
+        <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
         {!logs || logs.length === 0 ? (
           <p class="text-sm text-gray-400">まだログがありません</p>
         ) : (
           <ul class="text-sm space-y-2">
             {logs.map((l) => (
               <li class="flex items-start gap-2">
-                <span
-                  class={
-                    'mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ' + (l.status === 'success' ? 'bg-green-500' : 'bg-red-500')
-                  }
-                ></span>
-                <div>
-                  <p class="text-gray-700">{l.message}</p>
+                <span class={'mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ' + (LOG_STATUS_DOT[l.status] || 'bg-gray-400')}></span>
+                <div class="min-w-0">
+                  <p class="text-gray-700">
+                    {l.execution_type && (
+                      <span class="text-xs font-semibold text-gray-400 mr-1">
+                        [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+                      </span>
+                    )}
+                    {l.style_id ? (
+                      <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+                        {l.style_title || `スタイル${l.style_id}`}
+                      </a>
+                    ) : null}
+                    {l.style_id ? ' — ' : ''}
+                    {l.message}
+                  </p>
                   <p class="text-xs text-gray-400">{l.created_at}</p>
                 </div>
               </li>
@@ -133,11 +215,25 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
   try {
     const summary = await runStyleAutomationForUser(c.env, user.id, 'manual-test')
     return c.json({
-      success: summary.status !== 'failed' || summary.successCount > 0,
+      success: summary.successCount > 0,
       successCount: summary.successCount,
       failureCount: summary.failureCount,
+      blockedCount: summary.blockedCount,
       status: summary.status
     })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  }
+})
+
+// ---------- 個別スタイルの再実行API(docs/phase3-mvp-design.md 5-6) ----------
+
+automation.post('/api/style/:id/retry', requireAuth, async (c) => {
+  const user = c.get('user')
+  const styleId = Number(c.req.param('id'))
+  try {
+    const result = await retryStylePost(c.env, user.id, styleId)
+    return c.json({ success: result.outcome === 'success', outcome: result.outcome })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
   }

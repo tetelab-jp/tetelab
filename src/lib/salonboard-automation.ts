@@ -21,6 +21,7 @@ import type { Bindings } from '../types'
 // puppeteer本体はCloudflare Workers専用パッケージ。型のみ利用。
 // @ts-ignore - ローカル型解決の都合上、実行時はWorkers環境でのみ動作する
 import puppeteer, { type Browser, type Page } from '@cloudflare/puppeteer'
+export type { Browser, Page }
 
 export const SALONBOARD_BASE_URL = 'https://salonboard.com' // ⚠️ 要確認
 
@@ -270,18 +271,67 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 }
 
 /**
+ * 反映申請がNG/未確認ワード等でブロックされていることを表すエラー。
+ * style-post-runner.ts側でこれを捕捉した場合、通常の失敗(failed)ではなく
+ * reflection_request_status='blocked' として区別して記録する。
+ */
+export class ReflectionBlockedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ReflectionBlockedError'
+  }
+}
+
+// 掲載管理TOPページ上でブロック要因を示すと思われるキーワード。
+// ⚠️ 実際のSALON BOARD画面のHTML/文言は未確認のため、暫定的な推測に基づく
+// プレースホルダー実装。実サイトで「NG」「未確認」がどのDOM要素・文言で
+// 表示されるか確認でき次第、セレクタベースの確実な判定に置き換えること。
+const REFLECT_BLOCKER_PATTERNS: RegExp[] = [/NGワード/, /未確認/, /確認できません/, /掲載できません/, /差し戻/]
+
+/**
+ * 掲載管理TOPページを開いた状態で、NG/未確認等のブロック要因が
+ * 表示されていないかを確認する（docs/phase3-mvp-design.md 5-5 手順2）。
+ * ⚠️ 実HTML未確認のため、ページ全体のテキストからキーワードを探す
+ * ベストエフォート実装。誤検知/検知漏れの可能性がある。
+ */
+export async function checkReflectBlockers(page: Page): Promise<{ blocked: boolean; reason?: string }> {
+  const bodyText = await page.evaluate(() => document.body.innerText || '')
+  for (const pattern of REFLECT_BLOCKER_PATTERNS) {
+    const match = bodyText.match(pattern)
+    if (match) {
+      const idx = match.index ?? 0
+      const snippet = bodyText.slice(Math.max(0, idx - 20), idx + 40).replace(/\s+/g, ' ').trim()
+      return { blocked: true, reason: snippet || match[0] }
+    }
+  }
+  return { blocked: false }
+}
+
+/**
  * 掲載管理TOPから反映申請（公開）を行う。
  * サロン/スタイリスト/スタイル/メニュー/こだわりをまとめて反映する
  * 通常の反映申請ボタン（reflected()）のみを対象とする。
  * 特集・クーポンの反映申請（reflectedSpecial/reflectedCpn）は対象外。
+ *
+ * 実行前にcheckReflectBlockers()でNG/未確認要因を確認し、
+ * 検知した場合はReflectionBlockedErrorをthrowして反映申請自体は行わない。
  */
 export async function submitReflectApplication(page: Page, log: AutomationLogger): Promise<void> {
-  log('掲載管理TOPへ遷移し、反映申請を実行中...')
+  log('掲載管理TOPへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/reflect/reflectTop/`, {
     waitUntil: 'networkidle0',
     timeout: 30000
   })
 
+  log('NG/未確認ワード等のブロック要因を確認中...')
+  const blockCheck = await checkReflectBlockers(page)
+  if (blockCheck.blocked) {
+    throw new ReflectionBlockedError(
+      `反映申請がブロックされている可能性があります: ${blockCheck.reason || '詳細不明'}`
+    )
+  }
+
+  log('反映申請を実行中...')
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'networkidle0', timeout: 30000 }).catch(() => null),
     page.evaluate(() => {

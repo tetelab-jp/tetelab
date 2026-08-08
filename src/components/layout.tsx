@@ -5,6 +5,7 @@ export type NavKey =
   | 'dashboard'
   | 'settings'
   | 'style-library'
+  | 'style-import'
   | 'style-schedule'
   | 'style-template'
   | 'style-test-run'
@@ -15,6 +16,7 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '画像ライブラリ', group: 'style' },
+  { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: '投稿テンプレート設定', group: 'style' },
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿スケジュール', group: 'style' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: 'テスト実行・実行履歴', group: 'style' },

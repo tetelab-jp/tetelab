@@ -1,6 +1,9 @@
 import { Hono, type Context } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
+import { decryptSecret } from '../lib/crypto'
+import { launchBrowser, loginToSalonBoard } from '../lib/salonboard-automation'
+import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
@@ -224,20 +227,23 @@ type StyleListRow = {
 style.get('/style/library', async (c) => {
   const user = c.get('user')
 
-  const { results } = await c.env.DB.prepare(
-    `SELECT
-       s.id, s.title, s.category_value, s.length_value, s.auto_post_enabled_flag,
-       s.internal_save_status, s.salonboard_register_status, s.reflection_request_status,
-       st.name AS stylist_name,
-       si.id AS front_style_image_id
-     FROM styles s
-     LEFT JOIN stylists st ON st.id = s.stylist_id
-     LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
-     WHERE s.user_id = ?
-     ORDER BY s.sort_order ASC, s.id DESC`
-  )
-    .bind(user.id)
-    .all<StyleListRow>()
+  const [{ results }, templates] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT
+         s.id, s.title, s.category_value, s.length_value, s.auto_post_enabled_flag,
+         s.internal_save_status, s.salonboard_register_status, s.reflection_request_status,
+         st.name AS stylist_name,
+         si.id AS front_style_image_id
+       FROM styles s
+       LEFT JOIN stylists st ON st.id = s.stylist_id
+       LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
+       WHERE s.user_id = ?
+       ORDER BY s.sort_order ASC, s.id DESC`
+    )
+      .bind(user.id)
+      .all<StyleListRow>(),
+    loadActiveTemplates(c, user)
+  ])
 
   const styles = results || []
   const totalCount = styles.length
@@ -290,6 +296,30 @@ style.get('/style/library', async (c) => {
           </a>
         </div>
       </div>
+
+      {templates.length > 0 && styles.length > 0 && (
+        <div class="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
+          <span class="text-sm font-semibold text-gray-600 flex-shrink-0">
+            <i class="fas fa-sliders mr-1 text-pink-500"></i>テンプレート一括適用
+          </span>
+          <select id="bulk-apply-template-select" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm flex-1 min-w-[10rem]">
+            <option value="">テンプレートを選択</option>
+            {templates.map((t) => (
+              <option value={t.id}>{t.template_name}</option>
+            ))}
+          </select>
+          <button
+            id="bulk-apply-btn"
+            type="button"
+            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+          >
+            チェック中のスタイルに適用
+          </button>
+          <p class="text-xs text-gray-400 w-full">
+            下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名・担当スタイリストを除く）を一括で反映します。
+          </p>
+        </div>
+      )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         {styles.length === 0 ? (
@@ -381,6 +411,126 @@ style.get('/style/image/:id', async (c) => {
       'Cache-Control': 'private, max-age=86400'
     }
   })
+})
+
+// ---------- 既存スタイル取り込み(docs/phase3-mvp-design.md 5-2) ----------
+// ⚠️ salonboard-import.tsの各関数は実HTML未確認のベストエフォート実装。
+// Cloudflare Browser Renderingが必要なため、本番/リモート環境でのみ動作確認可能。
+
+style.get('/style/import', async (c) => {
+  const user = c.get('user')
+  const cred = await c.env.DB.prepare('SELECT id FROM salon_credentials WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ id: number }>()
+
+  return c.render(
+    <PageLayout active="style-import" salonName={user.salon_name} title="既存スタイルの取り込み">
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
+        <i class="fas fa-circle-info mr-2"></i>
+        サロンボードに既に登録されているスタイルを一覧取得し、選択したものをTETE AOUT側の
+        スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
+        自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
+      </div>
+
+      {!cred && (
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+          <i class="fas fa-triangle-exclamation mr-2"></i>
+          先に<a href="/settings/salonboard" class="underline font-semibold">サロンボード連携設定</a>を行ってください。
+        </div>
+      )}
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <button
+          id="fetch-list-btn"
+          disabled={!cred}
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+        >
+          <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードから一覧取得
+        </button>
+        <p id="import-status" class="text-sm text-gray-500 mt-3"></p>
+      </div>
+
+      <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
+        <div class="flex items-center justify-between mb-3">
+          <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
+          <button
+            id="import-execute-btn"
+            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+          >
+            選択したスタイルを取り込む
+          </button>
+        </div>
+        <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
+      </div>
+
+      <script src="/static/style-import.js"></script>
+    </PageLayout>,
+    { title: '既存スタイルの取り込み' }
+  )
+})
+
+style.post('/api/style/import/fetch-list', async (c) => {
+  const user = c.get('user')
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+
+  if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
+  if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser(c.env)
+    const page = await browser.newPage()
+    await loginToSalonBoard(page, loginId, password, () => {})
+
+    const list = await fetchExistingStyles(page, () => {})
+    return c.json({ success: true, styles: list })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
+})
+
+style.post('/api/style/import/execute', async (c) => {
+  const user = c.get('user')
+  const { styleIds } = await c.req.json<{ styleIds: string[] }>()
+
+  if (!Array.isArray(styleIds) || styleIds.length === 0) {
+    return c.json({ success: false, error: '取り込むスタイルを選択してください' }, 400)
+  }
+
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+
+  if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
+  if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser(c.env)
+    const page = await browser.newPage()
+    await loginToSalonBoard(page, loginId, password, () => {})
+
+    const result = await importSelectedStyles(page, c.env, user.id, styleIds, () => {})
+    return c.json({ success: true, ...result })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
 })
 
 // ---------- スタイル作成/編集フォーム ----------
@@ -860,6 +1010,102 @@ style.post('/api/style/bulk-select', async (c) => {
     .first<{ cnt: number }>()
 
   return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
+})
+
+// テンプレート一括適用(docs/phase3-mvp-design.md 5-4)。
+// 画像・担当スタイリストは変更せず、テンプレート項目(タイトルを除く)のみ反映する。
+// タイトルは各スタイル固有のものとして扱い、一括適用では上書きしない。
+const BULK_APPLY_MAX_STYLES = 100
+
+style.post('/api/style/bulk-apply-template', async (c) => {
+  const user = c.get('user')
+  const { templateId, styleIds } = await c.req.json<{ templateId: number; styleIds: number[] }>()
+
+  if (!templateId || !Array.isArray(styleIds) || styleIds.length === 0) {
+    return c.json({ success: false, error: 'テンプレートと対象スタイルを選択してください' }, 400)
+  }
+  if (styleIds.length > BULK_APPLY_MAX_STYLES) {
+    return c.json({ success: false, error: `一度に適用できるのは${BULK_APPLY_MAX_STYLES}件までです` }, 400)
+  }
+
+  const template = await c.env.DB.prepare(
+    `SELECT id, comment_template, category_value, length_value, menu_values_json,
+            menu_detail_text, coupon_id, hashtags_json, model_attributes_json
+     FROM templates WHERE id = ? AND user_id = ?`
+  )
+    .bind(templateId, user.id)
+    .first<TemplateForAutofill>()
+
+  if (!template) return c.json({ success: false, error: 'テンプレートが見つかりません' }, 404)
+
+  let appliedCount = 0
+  const errors: string[] = []
+
+  for (const styleId of styleIds) {
+    try {
+      const owned = await c.env.DB.prepare('SELECT id, title, stylist_id FROM styles WHERE id = ? AND user_id = ?')
+        .bind(styleId, user.id)
+        .first<{ id: number; title: string | null; stylist_id: number | null }>()
+      if (!owned) {
+        errors.push(`ID ${styleId}: 見つかりません`)
+        continue
+      }
+
+      await c.env.DB.prepare(
+        `UPDATE styles SET
+           comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
+           menu_detail_text = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
+           updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND user_id = ?`
+      )
+        .bind(
+          template.comment_template,
+          template.category_value,
+          template.length_value,
+          template.menu_values_json,
+          template.menu_detail_text,
+          template.coupon_id,
+          template.hashtags_json,
+          template.model_attributes_json,
+          styleId,
+          user.id
+        )
+        .run()
+
+      const hasImage = await c.env.DB.prepare(
+        `SELECT id FROM style_images WHERE style_id = ? AND image_role = 'FRONT'`
+      )
+        .bind(styleId)
+        .first<{ id: number }>()
+
+      const isReady =
+        !!hasImage &&
+        !!owned.title &&
+        !!template.comment_template &&
+        !!template.length_value &&
+        !!template.menu_detail_text &&
+        !!owned.stylist_id
+
+      await c.env.DB.prepare('UPDATE styles SET internal_save_status = ? WHERE id = ?')
+        .bind(isReady ? 'ready' : 'draft', styleId)
+        .run()
+
+      appliedCount++
+    } catch (err: any) {
+      errors.push(`ID ${styleId}: ${String(err?.message || err).slice(0, 200)}`)
+    }
+  }
+
+  const resultStatus = errors.length === 0 ? 'success' : appliedCount > 0 ? 'partial' : 'failed'
+
+  await c.env.DB.prepare(
+    `INSERT INTO batch_template_apply_logs (user_id, template_id, applied_count, target_style_ids_json, result_status, error_message)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  )
+    .bind(user.id, templateId, appliedCount, JSON.stringify(styleIds), resultStatus, errors.length > 0 ? errors.join(' / ').slice(0, 1000) : null)
+    .run()
+
+  return c.json({ success: resultStatus !== 'failed', appliedCount, totalCount: styleIds.length, errors })
 })
 
 style.post('/style/library/delete/:id', async (c) => {
