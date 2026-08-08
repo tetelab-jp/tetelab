@@ -534,3 +534,52 @@ Browser Renderingが必要な部分（ブラウザ起動より先）は、この
 「テスト実行」表記をすべて「手動実行」に変更した（URLパス
 `/style/test-run`・`/api/automation/test-run`・ファイル名`test-run.js`は
 内部実装のため変更していない）。
+
+## 追記（2026-08-09、実機テスト＋実HTML調査に基づく重大バグ修正）
+
+Cloudflareへの実デプロイ後、ユーザーが実際にサロンボード連携をテストし、
+「既存スタイル取り込みでNavigation timeout of 30000 ms exceeded」が発生。
+原因調査のため、ユーザーのローカルPCでPlaywright(非headless)を使い
+実アカウントに実際にログインしてDOM調査を実施。結果は
+`docs/salonboard-real-html-findings.md`に記録済み。**今後salonboard-automation.ts/
+salonboard-import.tsを触る際は必ずこのファイルを先に読むこと。**
+
+### 判明した重大な事実
+
+1. **反映申請ボタン(`#reflectedButton`)にinline onclick属性が無い**。旧実装の
+   `[onclick*="reflected("]`セレクタは常にヒットせず、反映申請のクリックが
+   実質何もしていなかった。→ IDセレクタ+`element.click()`に修正済み。
+2. **NG/未確認のキーワード検索は必ずfalse positiveになる**。「NG」「未確認」は
+   画面上部の固定注意書き文の中にのみ出現し、実際のライブステータスとしては
+   出ない。ページ全文検索方式は常にこの注意書きにヒットしてブロック扱いになる
+   欠陥があった。→ `#reflectedButton`の`--disabled`クラス＋「要確認」リンクの
+   有無で判定する方式に修正済み。
+3. **旧HANDOFF.md 4-3の「要確認はブロックしない」という記述は誤りだった**。
+   実測で「要確認が残っているためreflectedButtonが無効化されている」ことを確認。
+   要確認もブロック要因として扱うべき。
+4. **dologin(event)・editStyle(event, styleId)は実際にevent引数を取る**。
+   window上の関数を偽のevent引数(または引数無し)で直接呼ぶ旧実装はリスクが
+   あった。→ 実際の`<a>`要素を`element.click()`する方式に修正済み。
+5. **クーポンが自動投稿時に一切SALON BOARDへ送信されていなかった**
+   （設計書で確定済みの隠しフィールド`frmStyleEditStyleDto.couponId`への
+   セットが未実装だった）。→ 修正済み。
+6. **SALON BOARDにはAkamai系のボット対策があり、headlessブラウザからの
+   アクセスが弾かれる**（curlも通常設定のheadless Chromiumも弾かれ、非headless
+   (実ブラウザウィンドウ)でのみ正常動作したことをローカル調査で確認）。
+   Cloudflare Browser Renderingは常にheadlessで動作するため、これが
+   「既存スタイル取り込みのタイムアウトが直らない」の根本原因である可能性が高い。
+   → `salonboard-automation.ts`に`newAutomationPage()`を追加し、
+   `navigator.webdriver`の隠蔽・User-Agent偽装・viewport設定などの
+   基本的なheadless検知回避策を追加済み（全ての`browser.newPage()`呼び出しを
+   これに置き換え済み）。**これでも弾かれる場合、より高度な
+   フィンガープリンティング対策(Canvas/WebGL偽装等)の追加が必要になる。**
+
+### 次にやるべきこと
+1. 上記6の対策を本番デプロイ後、実際に「既存スタイル取り込み」等を再実行し、
+   Akamai対策を突破できているか確認する（ユーザーへの確認待ち）。
+2. 突破できていない場合、より高度なstealth対策（`puppeteer-extra-plugin-stealth`
+   相当の対策をCloudflare Workers環境で実現する方法の調査、または
+   Cloudflare Browser Renderingの設定オプションの見直し）を検討する。
+3. スタイル一覧のページネーション（複数ページ時の「次へ」リンクの実onclick文字列）
+   は未検証のまま（`docs/salonboard-real-html-findings.md`「未検証」参照）。
+4. 反映申請ボタンが有効化された状態の実HTML/クラス差分は未確認のまま。
