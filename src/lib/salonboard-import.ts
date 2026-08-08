@@ -224,11 +224,8 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
     const val = (selector: string) => (document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | null)?.value || ''
 
     const category = (document.getElementById('styleCategoryCd02') as HTMLInputElement | null)?.checked ? 'SG02' : 'SG01'
-    // 長さはラジオボタン群(同一classを複数のinputが共有)なので、
-    // チェック済みのものをvalで読む必要がある(:checkedを付けないと先頭要素の
-    // valueを誤って読んでしまう)。
-    const lengthClass = category === 'SG01' ? 'ladiesHairLengthCd' : 'mensHairLengthCd'
-    const lengthSelector = `input.${lengthClass}:checked`
+    // 長さは<select id="ladiesHairLengthCd">(実HTML確認済み)。
+    const lengthSelector = category === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
 
     const menuValues = Array.from(document.querySelectorAll('input.menuContentsCdList:checked')).map(
       (el) => (el as HTMLInputElement).value

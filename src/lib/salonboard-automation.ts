@@ -301,17 +301,17 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   // (新しいバージョンのpuppeteerではpage.waitForTimeoutが廃止されているため自前で待機)
   await sleep(300)
 
-  // ---- ヘアレングス（レディース/メンズでクラス名が異なるラジオボタン群） ----
-  // 2026-08-09追記: ユーザーへの確認により、長さ選択はプルダウン(<select>)ではなく
-  // ラジオボタンであることが判明(旧実装のpage.select()はここで必ず失敗していた)。
-  // 同じclassを持つ複数のinput[type=radio]から、value一致するものをネイティブクリックする。
-  const lengthClass = input.categoryCd === 'SG01' ? 'ladiesHairLengthCd' : 'mensHairLengthCd'
-  const lengthRadioSelector = `input.${lengthClass}[value="${input.hairLengthValue}"]`
-  const lengthHandle = await page.$(lengthRadioSelector)
+  // ---- ヘアレングス（レディース/メンズでidが異なる<select>） ----
+  // 2026-08-09追記: ユーザーが実HTMLを直接貼ってくれたことで確定。
+  // <select name="frmStyleEditStyleDto.ladiesHairLengthCd" id="ladiesHairLengthCd" class="h20">
+  // 旧実装が使っていた`.ladiesHairLengthCd`というクラスは存在しない(実際のclassは"h20")。
+  // 正しくはid指定。
+  const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
+  const lengthHandle = await page.$(lengthSelectId)
   if (lengthHandle) {
-    await page.click(lengthRadioSelector)
+    await page.select(lengthSelectId, input.hairLengthValue)
   } else {
-    log(`警告: 長さ「${input.hairLengthValue}」に対応するラジオボタンが見つかりませんでした`)
+    log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
   }
 
   // ---- メニュー内容チェックボックス（任意） ----

@@ -1016,3 +1016,32 @@ DevToolsで直接確認すれば調査可能であることが分かった（今
   現状は未実装のまま(将来的な拡張候補)。
 
 `npm run build`で確認済み。本番デプロイ・実機確認はまだ。
+
+## 追記（2026-08-09 その9、「長さ」の実HTML確定・最終修正）
+
+上記その8で「ラジオボタン」と判断したが、その後ユーザーから送られた
+スクリーンショットの見た目が`<select>`のドロップダウンに見えたため、
+実行時にタグ名を見て両対応する暫定コードに一度変更。最終的に
+ユーザーが実HTMLをそのまま貼ってくれたことで確定した。
+
+```html
+<select name="frmStyleEditStyleDto.ladiesHairLengthCd" id="ladiesHairLengthCd" class="h20">
+  <option value="HL05">ベリーショート</option>
+  <option value="HL04">ショート</option>
+  <option value="HL03">ミディアム</option>
+  <option value="HL02">セミロング</option>
+  <option value="HL01">ロング</option>
+  <option value="HL08">ヘアセット</option>
+  <option value="HL07">ミセス</option>
+</select>
+```
+
+**`<select>`で確定。ただしclassは"h20"であり、旧実装が使っていた
+`.ladiesHairLengthCd`というクラスセレクタは実在しなかった。** 正しくは
+`id="ladiesHairLengthCd"`（メンズ側は同じ命名規則から`#mensHairLengthCd`
+と推測、要確認）。`draftRegisterStyle()`・`fetchStyleDetail()`双方を
+`#ladiesHairLengthCd`/`#mensHairLengthCd`のid指定による`page.select()`/
+`.value`読み取りのシンプルな実装に戻した（タグ名自動判定の暫定コードは
+撤去）。
+
+`npm run build`で確認済み。本番デプロイ・実機確認はまだ。
