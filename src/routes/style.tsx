@@ -327,9 +327,18 @@ style.get('/style/library', async (c) => {
             まだスタイルが登録されていません。「新規作成」から追加してください。
           </p>
         ) : (
-          <div id="style-list" class="divide-y divide-gray-100">
-            {styles.map((s) => (
+          <>
+            <div class="flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
+              <span class="w-8 flex-shrink-0 text-center">No</span>
+              <span class="w-5 flex-shrink-0"></span>
+              <span class="w-20 flex-shrink-0">画像</span>
+              <span class="flex-1 min-w-0">スタイル名 / スタイリスト</span>
+              <span class="flex-shrink-0">操作</span>
+            </div>
+            <div id="style-list" class="divide-y divide-gray-100">
+            {styles.map((s, idx) => (
               <div class="flex items-center gap-4 py-3" data-image-id={s.id}>
+                <span class="w-8 flex-shrink-0 text-center text-xs text-gray-400">{idx + 1}</span>
                 <input
                   type="checkbox"
                   class="style-checkbox w-5 h-5 accent-pink-500 cursor-pointer flex-shrink-0"
@@ -377,7 +386,8 @@ style.get('/style/library', async (c) => {
                 </div>
               </div>
             ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
