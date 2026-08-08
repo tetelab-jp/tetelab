@@ -100,8 +100,12 @@ async function processStyleRow(
   }
 
   // ---- 登録(下書き保存) ----
+  // 2026-08-09追記: draftRegisterStyle()内部には送信前セルフチェック等の
+  // 有用な診断ログがあるが、以前はlogコールバックを空関数にしていたため
+  // 全て握りつぶされていた。収集してfailure時のメッセージに含める。
+  const registerLogLines: string[] = []
   try {
-    await draftRegisterStyle(page, input, () => {})
+    await draftRegisterStyle(page, input, (msg) => registerLogLines.push(msg))
     await env.DB.prepare(
       `UPDATE styles SET salonboard_register_status = 'success', reflection_request_status = 'pending', last_error = NULL WHERE id = ?`
     )
@@ -114,7 +118,9 @@ async function processStyleRow(
       .bind(userId, row.id, `スタイル登録成功: ${input.styleName}`)
       .run()
   } catch (registerErr: any) {
-    const message = String(registerErr?.message || registerErr).slice(0, 500)
+    const errorMessage = String(registerErr?.message || registerErr)
+    const diagnostics = registerLogLines.length > 0 ? ` / 診断ログ: ${registerLogLines.join(' | ')}` : ''
+    const message = (errorMessage + diagnostics).slice(0, 1500)
     await env.DB.prepare(
       `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
