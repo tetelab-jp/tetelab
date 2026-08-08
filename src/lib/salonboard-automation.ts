@@ -70,8 +70,14 @@ export type StylePostResult = {
  * が実機で発生することを確認済み(Cloudflare Browser Rendering自体の同時起動数
  * 上限)。salonboard.com側の問題ではないため、指数バックオフ付きリトライで
  * 吸収する。
+ *
+ * 2026-08-09再追記: 最大3回・合計約7秒のリトライでは不十分で、429が
+ * 再発することを確認。1回の自動化フロー自体が(ページ遷移の複数待機を
+ * 経て)数十秒かかることがあり、先行実行中のブラウザセッションが解放
+ * されるまで7秒では足りないケースがあるため、リトライ回数・待機時間を
+ * 大幅に延長した(最大5回・合計最大約90秒)。
  */
-export async function launchBrowser(env: Bindings, maxRetries = 3): Promise<Browser> {
+export async function launchBrowser(env: Bindings, maxRetries = 5): Promise<Browser> {
   let lastErr: unknown
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
@@ -81,7 +87,7 @@ export async function launchBrowser(env: Bindings, maxRetries = 3): Promise<Brow
       const message = String(err?.message || err)
       const isRateLimited = /429|rate limit/i.test(message)
       if (!isRateLimited || attempt === maxRetries) throw err
-      const delayMs = 1000 * 2 ** attempt // 1s, 2s, 4s, ...
+      const delayMs = 3000 * 2 ** attempt // 3s, 6s, 12s, 24s, 48s
       await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
   }
