@@ -929,3 +929,50 @@ salonboard-sync.ts)の実装・検証は、以降ローカルのClaude Codeが�
     十分なスタイル数（150件超）が登録された時点で再検証する。
 13. `uploadFrontImage()`にStylePostの知見を踏まえた「アクセス集中による
     失敗」への対応（リトライ処理）の追加を検討する。
+
+## 追記（2026-08-09 その6、画像アップロードモーダルの実HTML確定・修正）
+
+**ユーザー本人がサロンボードの実画面でDevTools(Elements)のスクリーンショットを
+撮影し提供してくれたことで、画像アップロードモーダルの実HTML構造が確定した。**
+salonboard.comへの直接アクセスが不安定な状況でも、実機で操作できる人間が
+DevToolsで直接確認すれば調査可能であることが分かった（今後、自動アクセスが
+不安定な場合の代替手段として有効）。
+
+### 確定したHTML構造
+
+```html
+<div class="imageUploaderModalInner">
+  <div class="imageUploaderModalDropArea jscImageUploaderModalDropArea is-Active">
+    <label class="imageUploaderModalInput">
+      ファイルを選択
+      <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
+    </label>
+  </div>
+  <div class="imageUploaderModalThumbnailArea jscImageUploaderModalThumbnailArea">...</div>
+  <p class="imageUploaderModalCopyrightText">...</p>
+  <div class="imageUploaderModalBottomButton">
+    <!-- 「閉じる」「登録する」ボタン。「登録する」はファイル未選択時グレーアウト -->
+  </div>
+</div>
+```
+
+**`#imageUploaderModalBody`という要素は実際には存在しなかった**（旧実装の
+推測が誤り）。正しいセレクタは`#formFile`（直接ID指定）。
+
+### 修正内容（`src/lib/salonboard-automation.ts` `uploadFrontImage()`）
+
+1. ファイル入力のセレクタを`#imageUploaderModalBody input[type="file"]`から
+   `#formFile`に修正。
+2. モーダル下部の「登録する」ボタンをテキスト一致で探索し、ファイル選択後に
+   活性化されるのを待ってからクリックする処理を追加。
+   **⚠️ このボタンの正確なid/class・活性化の実装詳細はスクリーンショットの
+   範囲外で未確認**。テキスト一致(`.imageUploaderModalBottomButton`配下で
+   textContent === '登録する')による推測実装であり、見つからない/クリック
+   できない場合はエラーにせず警告ログに留める安全策を入れている。次回、
+   このボタンの実HTML(可能なら`imageUploaderModalBottomButton`をExpandした
+   スクリーンショット)が確認できれば、より確実な実装に置き換えること。
+
+`npm run build`で確認済み（クラウド側セッションで直接修正・commit・push、
+コミット予定）。**本番デプロイ・実機での動作確認はまだ行っていない**ので、
+次回`npm run deploy`後に「画像ライブラリ→新規作成→手動実行する」で
+実際に画像アップロードが成功するか確認すること。

@@ -384,9 +384,14 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
  * - アップロード完了コールバック`setUploadImage(...)`が隠しフィールド`#FRONT_IMG_ID`に
  *   画像ID(B+9桁形式)をセットする → これを完了検知の主条件として使う
  *
- * ⚠️ 未確認のまま残っている点: モーダル内部の実際の`<input type=file>`のセレクタ・
- * アップロードAJAXのリクエスト形式は、モーダルがJSで動的挿入されるため静的HTMLからは
- * 分からず、実際にクリックして開いた状態のDOMを確認する必要がある(未着手)。
+ * 2026-08-09追記: ユーザーが実際にモーダルを開いた状態のDevTools画面を確認し、
+ * 実際の`<input type=file>`セレクタを確定した。
+ *   <label class="imageUploaderModalInput">
+ *     ファイルを選択
+ *     <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
+ *   </label>
+ * `#imageUploaderModalBody`という要素は実際には存在せず(旧実装の推測が誤りだった)、
+ * 直接`#formFile`(またはinput[name="formFile"])を使う。
  */
 async function uploadFrontImage(
   page: Page,
@@ -402,16 +407,16 @@ async function uploadFrontImage(
   // DataTransferでinputに注入する方式にフォールバックする。
 
   await page.click('#FRONT_IMG_ID_IMG')
-  await page.waitForSelector('#imageUploaderModalBody', { timeout: 10000 }).catch(() => {
+  await page.waitForSelector('#formFile', { timeout: 10000 }).catch(() => {
     log('警告: 画像アップロードモーダルの検出に失敗しました。セレクタの再確認が必要です。')
   })
 
-  const fileInputSelector = '#imageUploaderModalBody input[type="file"]'
+  const fileInputSelector = '#formFile'
   const fileInput = await page.$(fileInputSelector)
 
   if (!fileInput) {
     throw new Error(
-      '画像アップロード用のinput[type=file]が見つかりませんでした。モーダルDOM構造の再調査が必要です。'
+      '画像アップロード用のinput[type=file](#formFile)が見つかりませんでした。モーダルDOM構造の再調査が必要です。'
     )
   }
 
@@ -434,6 +439,32 @@ async function uploadFrontImage(
     base64,
     fileName
   )
+
+  // モーダル下部に「登録する」ボタンがあり(スクリーンショットで確認済み、
+  // クラス名`imageUploaderModalBottomButton`配下)、ファイル未選択時はグレー
+  // アウトしている。ファイル選択(change イベント発火)後に活性化されると
+  // 推測されるため、活性化を待ってから明示的にクリックする。
+  // ⚠️ ボタン自体の正確なid/class・活性化の実装詳細は未確認のため、
+  // テキスト一致(「登録する」)による探索とし、見つからない場合は
+  // 警告ログに留めてエラーにはしない(推測が外れていた場合の安全策)。
+  const registerBtnHandle = await page.waitForFunction(
+    () => {
+      const buttons = Array.from(document.querySelectorAll('.imageUploaderModalBottomButton button, .imageUploaderModalBottomButton a'))
+      const btn = buttons.find((b) => b.textContent?.trim() === '登録する') as HTMLButtonElement | undefined
+      return btn && !btn.disabled && !btn.className.includes('disabled') ? btn : null
+    },
+    { timeout: 10000 }
+  ).catch(() => null)
+
+  if (registerBtnHandle) {
+    const registerBtnElement = registerBtnHandle.asElement()
+    if (registerBtnElement) {
+      // @ts-ignore - asElement()の戻り値型がPuppeteerのバージョン間で微妙に異なるため
+      await registerBtnElement.click()
+    }
+  } else {
+    log('警告: 画像アップロードモーダルの「登録する」ボタンが見つからないか、活性化しませんでした。')
+  }
 
   // アップロード完了・setUploadImage()コールバック発火を待つ。
   // 主条件: 隠しフィールド#FRONT_IMG_IDに画像ID(B+9桁)がセットされること

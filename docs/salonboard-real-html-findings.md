@@ -184,6 +184,38 @@ salonboard.comへ何度もPlaywright/curlでアクセスした結果、Akamai系
 
 ---
 
+## 4. 画像アップロードモーダル (2026-08-09、ユーザー本人のDevToolsスクリーンショットにより確定)
+
+スタイル編集画面で画像プレースホルダー(`#FRONT_IMG_ID_IMG`)をクリックすると開く
+「画像アップロード」ポップアップの内部構造。
+
+```html
+<div class="imageUploaderModalInner">
+  <div class="imageUploaderModalDropArea jscImageUploaderModalDropArea is-Active">
+    <div id="uploadError" class="dn"></div>
+    <div class="imageUploaderModalDropAreaIcon jscImageUploaderModalDropAreaIcon">...</div>
+    <p class="imageUploaderModalDropAreaText">...</p>
+    <label class="imageUploaderModalInput">
+      ファイルを選択
+      <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
+    </label>
+  </div>
+  <div class="imageUploaderModalThumbnailArea jscImageUploaderModalThumbnailArea">...</div>
+  <p class="imageUploaderModalCopyrightText">...</p>
+  <div class="imageUploaderModalBottomButton">
+    <!-- 「閉じる」「登録する」ボタン。「登録する」はファイル未選択時グレーアウト(disabled) -->
+  </div>
+</div>
+```
+
+- **`#imageUploaderModalBody`という要素IDは実際には存在しない**(旧実装の推測が誤りだった)。
+- 実際のファイル入力は `#formFile`(`input[name="formFile"]`)。
+- ⚠️ `imageUploaderModalBottomButton`配下の「登録する」ボタンの正確なid/class・
+  活性化条件の実装詳細は、スクリーンショットの範囲外(collapsed)だったため未確認のまま。
+  次回確認する際は、この`div`を展開した状態のスクリーンショットが有効。
+
+---
+
 ## 旧: 未検証・要フォローアップ(2026-08-09 初回調査時点)
 
 1. 複数ページが存在するアカウントでの「次へ」リンクの実onclick文字列(現アカウントはスタイル数が少なく1ページに収まるため未確認)。
