@@ -1165,3 +1165,32 @@ Puppeteerはハンドラが無いとダイアログに応答できずそのま�
   未対応でも登録は通る想定)。
 
 `npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その13、画像アップロードモーダルの「登録する」ボタンの実装ミスを修正）
+
+ユーザーがスタイル投稿の全手順を実HTML付きで棚卸ししてくれたことで、
+致命的な実装ミスが判明した。
+
+**画像アップロードモーダル内の「登録する」ボタンは`<input type="button">`
+だったが、旧実装(その11で追加)は`<button>`/`<a>`タグしか探していなかった**
+(`.imageUploaderModalBottomButton button, .imageUploaderModalBottomButton a`)。
+つまりこのボタンは一度もクリックされておらず、ファイルを選択しても
+モーダル側の確定処理が走らず、`#FRONT_IMG_ID`が永久にセットされない状態
+だったと考えられる。**これが画像アップロードが完了しなかった直接の原因の
+可能性が高い。**
+
+```html
+<input type="button" class="imageUploaderModalSubmitButton
+  jscImageUploaderModalSubmitButton isActive" value="登録する">
+```
+
+`src/lib/salonboard-automation.ts` `uploadFrontImage()`のボタン探索を
+`input.jscImageUploaderModalSubmitButton`に修正(`isActive`クラスの有無で
+活性化判定)。
+
+あわせて、フォーム全体の最終「登録」ボタンが`<img>`タグ(画像ボタン)である
+ことも確認したが、現行コードは属性セレクタ`[onclick*="doRegister("]`
+(タグ種別を問わない)のため修正不要と判断。詳細は
+`docs/salonboard-real-html-findings.md` 4-1/4-2参照。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**

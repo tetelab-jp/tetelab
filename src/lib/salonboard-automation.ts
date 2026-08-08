@@ -518,30 +518,29 @@ async function uploadFrontImage(
     fileName
   )
 
-  // モーダル下部に「登録する」ボタンがあり(スクリーンショットで確認済み、
-  // クラス名`imageUploaderModalBottomButton`配下)、ファイル未選択時はグレー
-  // アウトしている。ファイル選択(change イベント発火)後に活性化されると
-  // 推測されるため、活性化を待ってから明示的にクリックする。
-  // ⚠️ ボタン自体の正確なid/class・活性化の実装詳細は未確認のため、
-  // テキスト一致(「登録する」)による探索とし、見つからない場合は
-  // 警告ログに留めてエラーにはしない(推測が外れていた場合の安全策)。
-  const registerBtnHandle = await page.waitForFunction(
-    () => {
-      const buttons = Array.from(document.querySelectorAll('.imageUploaderModalBottomButton button, .imageUploaderModalBottomButton a'))
-      const btn = buttons.find((b) => b.textContent?.trim() === '登録する') as HTMLButtonElement | undefined
-      return btn && !btn.disabled && !btn.className.includes('disabled') ? btn : null
-    },
-    { timeout: 10000 }
-  ).catch(() => null)
+  // モーダル下部の「登録する」ボタンは、ユーザーが実HTMLを確認したことで確定した:
+  //   <input type="button" class="imageUploaderModalSubmitButton
+  //     jscImageUploaderModalSubmitButton isActive" value="登録する">
+  // <button>/<a>ではなく<input type="button">だった(旧実装はここが原因で
+  // 一度もこのボタンを見つけられていなかったと考えられる)。"isActive"クラスが
+  // 活性化状態を表すと推測されるため、これを待ってからクリックする。
+  const registerBtnSelector = 'input.jscImageUploaderModalSubmitButton'
+  const registerBtnActive = await page
+    .waitForFunction(
+      (sel: string) => {
+        const btn = document.querySelector(sel) as HTMLInputElement | null
+        return btn && !btn.disabled && btn.className.includes('isActive') ? true : false
+      },
+      { timeout: 10000 },
+      registerBtnSelector
+    )
+    .then(() => true)
+    .catch(() => false)
 
-  if (registerBtnHandle) {
-    const registerBtnElement = registerBtnHandle.asElement()
-    if (registerBtnElement) {
-      // @ts-ignore - asElement()の戻り値型がPuppeteerのバージョン間で微妙に異なるため
-      await registerBtnElement.click()
-    }
+  if (registerBtnActive) {
+    await page.click(registerBtnSelector)
   } else {
-    log('警告: 画像アップロードモーダルの「登録する」ボタンが見つからないか、活性化しませんでした。')
+    log('警告: 画像アップロードモーダルの「登録する」ボタン(input.jscImageUploaderModalSubmitButton)が見つからないか、活性化しませんでした。')
   }
 
   // アップロード完了・setUploadImage()コールバック発火を待つ。

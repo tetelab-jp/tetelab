@@ -210,9 +210,30 @@ salonboard.comへ何度もPlaywright/curlでアクセスした結果、Akamai系
 
 - **`#imageUploaderModalBody`という要素IDは実際には存在しない**(旧実装の推測が誤りだった)。
 - 実際のファイル入力は `#formFile`(`input[name="formFile"]`)。
-- ⚠️ `imageUploaderModalBottomButton`配下の「登録する」ボタンの正確なid/class・
-  活性化条件の実装詳細は、スクリーンショットの範囲外(collapsed)だったため未確認のまま。
-  次回確認する際は、この`div`を展開した状態のスクリーンショットが有効。
+
+### 4-1. モーダル内「登録する」ボタン(2026-08-09、ユーザーがHTMLを直接貼付・確定)
+
+```html
+<input type="button" class="imageUploaderModalSubmitButton jscImageUploaderModalSubmitButton isActive" value="登録する">
+```
+
+**`<button>`/`<a>`ではなく`<input type="button">`だった。** 旧実装は
+`.imageUploaderModalBottomButton button, .imageUploaderModalBottomButton a`
+というセレクタで探していたため、このボタンには絶対にヒットしていなかった
+(画像アップロードが完了しない実際の原因だったと考えられる)。
+正しいセレクタは`input.jscImageUploaderModalSubmitButton`。`isActive`クラスの
+有無で活性化状態を判定する。
+
+### 4-2. フォーム全体の最終「登録」ボタン(2026-08-09確定)
+
+```html
+<img src="https://imgbp.salonboard.com/CNB/img/bns_btn4_toroku_B.gif" border="0" alt="登録">
+```
+
+画像ベースのボタン。おそらく`<a onclick="doRegister(event); return false;">`に
+包まれている(login/editStyle等、このサイトの他のボタンと同じパターン)。
+現行コードは属性セレクタ`[onclick*="doRegister("]`(タグ種別を問わない)を
+使っているため、この点は修正不要と判断。
 
 ---
 
