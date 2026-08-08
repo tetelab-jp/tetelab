@@ -294,16 +294,21 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   await page.select('#stylistCheckCd', input.stylistSelectValue)
 
   // ---- スタイリストコメント ----
+  // 2026-08-09追記: ユーザーが実画面のスクリーンショットを比較し、旧実装の
+  // 文字数上限(240)が実際のサロンボードの上限(120)と異なることが判明。
+  // 上限超過分を送っていた場合、サロンボード側のバリデーションで登録自体が
+  // 拒否されていた可能性が高い(これまでの登録失敗の実際の原因と推測される)。
   await page.evaluate((text: string) => {
     const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
     if (el) el.value = text
-  }, input.stylistComment.slice(0, 240))
+  }, input.stylistComment.slice(0, 120))
 
   // ---- スタイル名 ----
+  // 2026-08-09追記: 同様に、実際の上限は60ではなく30文字だった。
   await page.evaluate((text: string) => {
     const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
     if (el) el.value = text
-  }, input.styleName.slice(0, 60))
+  }, input.styleName.slice(0, 30))
 
   // ---- カテゴリ（レディース/メンズ） ----
   const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
@@ -334,10 +339,11 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   }
 
   // ---- メニュー詳細（必須） ----
+  // 2026-08-09追記: 実際の上限は100ではなく50文字だった。
   await page.evaluate((text: string) => {
     const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
     if (el) el.value = text
-  }, input.menuDetailText.slice(0, 100))
+  }, input.menuDetailText.slice(0, 50))
 
   // ---- クーポン（任意） ----
   // docs/phase3-mvp-design.md 9章で確定: 見た目はモーダル選択UIだが、

@@ -339,12 +339,15 @@ export async function importSelectedStyles(
           stylistDbId,
           couponDbId,
           styleId,
-          detail.title.slice(0, 60),
-          detail.comment.slice(0, 240),
+          // 2026-08-09追記: サロンボードの実際の文字数上限は30/50/120
+          // (旧HANDOFF記載の60/100/240は誤り)。取り込み元データは既に
+          // 実上限内のはずだが、念のため実上限に合わせて統一する。
+          detail.title.slice(0, 30),
+          detail.comment.slice(0, 120),
           detail.categoryValue,
           detail.lengthValue,
           JSON.stringify(detail.menuValues),
-          detail.menuDetailText.slice(0, 100),
+          detail.menuDetailText.slice(0, 50),
           JSON.stringify(detail.hashtags),
           JSON.stringify(detail.modelAttributes)
         )

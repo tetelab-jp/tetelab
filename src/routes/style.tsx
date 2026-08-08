@@ -658,6 +658,9 @@ function StyleForm({
         </div>
       )}
 
+      {/* 2026-08-09: 実際のサロンボードの入力順序(画像→スタイリスト→コメント→
+          スタイル名→カテゴリ→長さ→メニュー内容→クーポン→ハッシュタグ→モデル情報)
+          に合わせて並び替え済み(ユーザーが実画面のスクリーンショットで確認)。 */}
       <div>
         <label class="block text-sm font-medium text-gray-700 mb-1">スタイル画像（FRONT）</label>
         {detail?.front_style_image_id && (
@@ -666,38 +669,37 @@ function StyleForm({
         <input type="file" name="image" accept="image/*" class="block w-full text-sm border border-gray-300 rounded-lg px-3 py-2" />
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">担当スタイリスト</label>
-          <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-            <option value="">未設定</option>
-            {stylists.map((s) => (
-              <option value={s.id} selected={detail?.stylist_id === s.id}>{s.name}</option>
-            ))}
-          </select>
-          {stylists.length === 0 && (
-            <p class="text-xs text-amber-600 mt-1">
-              スタイリストが未登録です。<a href="/settings/salonboard" class="underline">連携設定</a>から同期してください。
-            </p>
-          )}
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">クーポン（任意）</label>
-          <select name="coupon_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-            <option value="">なし</option>
-            {coupons.map((cp) => (
-              <option value={cp.id} selected={detail?.coupon_id === cp.id}>{cp.name}</option>
-            ))}
-          </select>
-        </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">担当スタイリスト</label>
+        <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+          <option value="">未設定</option>
+          {stylists.map((s) => (
+            <option value={s.id} selected={detail?.stylist_id === s.id}>{s.name}</option>
+          ))}
+        </select>
+        {stylists.length === 0 && (
+          <p class="text-xs text-amber-600 mt-1">
+            スタイリストが未登録です。<a href="/settings/salonboard" class="underline">連携設定</a>から同期してください。
+          </p>
+        )}
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大60文字）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">スタイリストコメント（最大120文字）</label>
+        <textarea
+          name="comment"
+          rows={4}
+          maxlength={120}
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        >{detail?.comment || ''}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大30文字）</label>
         <input
           type="text"
           name="title"
-          maxlength={60}
+          maxlength={30}
           value={detail?.title || ''}
           required
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
@@ -747,20 +749,20 @@ function StyleForm({
         <textarea
           name="menu_detail_text"
           rows={2}
-          maxlength={100}
-          placeholder="メニュー内容（最大100文字）"
+          maxlength={50}
+          placeholder="メニュー内容（最大50文字）"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         >{detail?.menu_detail_text || ''}</textarea>
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイリストコメント（最大240文字）</label>
-        <textarea
-          name="comment"
-          rows={4}
-          maxlength={240}
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-        >{detail?.comment || ''}</textarea>
+        <label class="block text-sm font-medium text-gray-700 mb-1">クーポン（任意）</label>
+        <select name="coupon_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+          <option value="">なし</option>
+          {coupons.map((cp) => (
+            <option value={cp.id} selected={detail?.coupon_id === cp.id}>{cp.name}</option>
+          ))}
+        </select>
       </div>
 
       <div>
@@ -826,12 +828,14 @@ function parseStyleForm(body: Record<string, any>) {
     .filter(Boolean)
 
   return {
-    title: String(body.title || '').trim().slice(0, 60),
-    comment: String(body.comment || '').trim().slice(0, 240),
+    // 2026-08-09追記: 実際のサロンボードの文字数上限は30/50/120であり、
+    // 旧来の60/100/240は誤りだった(HANDOFF.md参照)。
+    title: String(body.title || '').trim().slice(0, 30),
+    comment: String(body.comment || '').trim().slice(0, 120),
     categoryValue: category,
     lengthValue,
     menuValues,
-    menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 100),
+    menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 50),
     hashtags,
     modelAttributes: parseModelAttributesForm(body),
     stylistId: body.stylist_id ? Number(body.stylist_id) : null,
@@ -1361,11 +1365,21 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大60文字）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">コメント雛形（最大120文字）</label>
+        <textarea
+          name="comment_template"
+          rows={4}
+          maxlength={120}
+          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        >{detail?.comment_template || ''}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大30文字）</label>
         <input
           type="text"
           name="title_template"
-          maxlength={60}
+          maxlength={30}
           value={detail?.title_template || ''}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
@@ -1414,19 +1428,9 @@ function TemplateForm({
         <textarea
           name="menu_detail_text"
           rows={2}
-          maxlength={100}
+          maxlength={50}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         >{detail?.menu_detail_text || ''}</textarea>
-      </div>
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">コメント雛形（最大240文字）</label>
-        <textarea
-          name="comment_template"
-          rows={4}
-          maxlength={240}
-          class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-        >{detail?.comment_template || ''}</textarea>
       </div>
 
       <div>
@@ -1488,12 +1492,12 @@ function parseTemplateForm(body: Record<string, any>) {
 
   return {
     templateName: String(body.template_name || '').trim(),
-    titleTemplate: String(body.title_template || '').trim().slice(0, 60),
-    commentTemplate: String(body.comment_template || '').trim().slice(0, 240),
+    titleTemplate: String(body.title_template || '').trim().slice(0, 30),
+    commentTemplate: String(body.comment_template || '').trim().slice(0, 120),
     categoryValue: category,
     lengthValue,
     menuValues,
-    menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 100),
+    menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 50),
     hashtags,
     modelAttributes: parseModelAttributesForm(body),
     couponId: body.coupon_id ? Number(body.coupon_id) : null,
