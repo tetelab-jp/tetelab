@@ -130,7 +130,61 @@
 
 ---
 
-## 未検証・要フォローアップ
+## 追記(2026-08-09 再調査): window上の主要関数一括検証は未完了(要フォローアップ)
+
+`dologin` / `editStyle` / `addStyle` / `delStyle` / `unpresentStyle` / `presentStyle` /
+`doSelectFirst` / `doSelectPrevious` / `doSelectLink` / `doSelectNext` / `doSelectLast` を
+Playwright(非headless)で一つずつ実機検証する試みを行ったが、**この日のうちに
+salonboard.comへ何度もPlaywright/curlでアクセスした結果、Akamai系のボット対策と
+思われる仕組みによって接続がほぼ完全にブロックされる状態になった**(ログイン後の
+スタイル一覧ページへの`page.goto`が繰り返しタイムアウトし、素の`curl`でも
+0バイトのままタイムアウトする状態を確認)。そのため、今回は以下の1点のみ確定し、
+残りは**未確認のまま**である。
+
+### 確定した事実(本番エラーより)
+
+- 本番(Cloudflare Browser Rendering)で `window.doSelectNext()` を偽のevent無しで
+  直接呼び出すと、実際に **`Cannot read properties of undefined (reading 'target')`**
+  というエラーが発生することを確認した。
+- これは `dologin`/`editStyle` と同様、`doSelectNext` の実装内部が `event`(おそらく
+  `event.target`)を参照する作りになっていることを強く示唆する。
+
+### 上記を踏まえた対応方針(⚠️ 類推による修正・実HTML未確認)
+
+`src/lib/salonboard-import.ts` の `fetchExistingStyles()` 内のページ送り処理を、
+`window.doSelectNext()` の直接呼び出しから、**`a[onclick*="doSelectNext"], span[onclick*="doSelectNext"]`
+にマッチする実要素を探して `page.click()` でネイティブクリックする方式**に変更した。
+これは `dologin`・`editStyle` で既に実機確認・修正済みの「実要素をclickする」パターンを
+そのまま踏襲したものであり、**「次へ」リンクの実際のonclick文字列・class名・タグ名は
+今回まだ実機確認できていない**(`a[onclick*="doSelectNext"]`という部分一致セレクタで
+実際にヒットするかどうかも未確認)。
+
+このため、安全策として以下を実装した:
+- 上記セレクタで実要素が見つからない場合、または見つかったがクリック/遷移待ちで
+  例外が発生した場合は、**エラーにせず「次のページなし」として扱い**、
+  それまでに取得できたページの結果だけを返して処理を継続する。
+- これにより、たとえ推測(セレクタ)が外れていたとしても、少なくとも1ページ目分の
+  取り込みは失敗せずに完了する。
+
+### 次回実機検証が必要な項目(まとめ)
+
+1. `doSelectNext`(および `doSelectFirst`/`doSelectPrevious`/`doSelectLink`/`doSelectLast`)
+   に対応する実要素の実際のタグ・class・onclick文字列。複数ページが存在するアカウントで
+   実際に「次へ」をクリックし、遷移後の1件目のstyleIdが変化することの確認。
+2. `addStyle`(新規スタイル追加ボタン)の実HTML・クリック後の画面。
+3. `delStyle`・`unpresentStyle`・`presentStyle` の関数ソース(`toString()`)による
+   event依存の有無の確認(**破壊的操作のため実際に呼び出してはいけない**。ソースの
+   静的確認のみに留めること)。
+4. `reflectedButton` 系が非 `--disabled` になった際の実際のHTML/クリックハンドラの中身。
+5. `editStyle` 実行後の画面遷移がPOSTベースかAjaxベースか(ネットワークログのキャプチャは未実施)。
+
+**方針:** 同日中の salonboard.com への追加アクセス(Playwright/curl問わず)は、
+ブロックがさらに長引くリスクを避けるため見送り、実機での最終確認は
+時間を置いてから(翌日以降を目安に)改めて行う。
+
+---
+
+## 旧: 未検証・要フォローアップ(2026-08-09 初回調査時点)
 
 1. 複数ページが存在するアカウントでの「次へ」リンクの実onclick文字列(現アカウントはスタイル数が少なく1ページに収まるため未確認)。
 2. `reflectedButton` 系が非 `--disabled` になった際の実際のHTML/クリックハンドラの中身。

@@ -52,7 +52,19 @@ export type ExistingStyleDetail = {
 /**
  * スタイル一覧ページを巡回し、既存スタイルのID・タイトルを取得する。
  * HANDOFF.md 4-4「約150件/2ページ構成」「doSelectNext」を踏まえ、
- * ページネーションに対応する（ただし「次へ」ボタンの実際のセレクタは未確認）。
+ * ページネーションに対応する。
+ *
+ * ⚠️ 2026-08-09時点、「次へ」リンクの実HTML/onclick文字列そのものは
+ * salonboard.com側の一時的なアクセス制限により実機未確認（類推による実装）。
+ * login/editStyleの実測結果（docs/salonboard-real-html-findings.md）から、
+ * このサイトのリンクは軒並み `<a onclick="fn(event, ...); return false;">`
+ * という実要素で、window.fn()を直接（偽のevent無しで）呼ぶと
+ * 「Cannot read properties of undefined (reading 'target')」のように
+ * event参照でエラーになることが確認されているため、doSelectNextも
+ * 同様に実要素を探してネイティブクリックする方式に統一した。
+ * 実要素が見つからない場合／クリックに失敗した場合は、推測が外れている
+ * 可能性を考慮してエラーにはせず「次のページなし」として扱い、
+ * それまでに取得できた分だけで処理を継続する(安全策)。
  */
 export async function fetchExistingStyles(page: Page, log: AutomationLogger): Promise<ExistingStyleSummary[]> {
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, {
@@ -132,21 +144,32 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
 
     if (addedInThisPage === 0) break
 
-    // 「次のページ」への遷移。実際のトリガー関数はHANDOFF.md 4-4の
-    // doSelectNext等と思われるが未確認のため、存在すれば呼び、
-    // 存在しなければページネーション無しとみなして終了する。
-    const hasNext = await page.evaluate(() => {
-      // @ts-ignore
-      if (typeof (window as any).doSelectNext === 'function') {
-        // @ts-ignore
-        ;(window as any).doSelectNext()
-        return true
+    // 「次のページ」への遷移。
+    // window.doSelectNext()を直接呼ぶと本番で実際に
+    // 「Cannot read properties of undefined (reading 'target')」エラーになることを確認済み
+    // （event引数を要求する実装のため）。login/editStyleと同様、実要素を
+    // ネイティブクリック(page.click)する方式に変更。
+    // 実要素が見つからない／クリックに失敗した場合は、エラーにせず
+    // 「次のページなし」として扱い、ここまでの取得結果で処理を終了する。
+    let hasNext = false
+    const nextLinkSelector = 'a[onclick*="doSelectNext"], span[onclick*="doSelectNext"]'
+    try {
+      const nextLinkHandle = await page.$(nextLinkSelector)
+      if (nextLinkHandle) {
+        await Promise.all([
+          page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null),
+          page.click(nextLinkSelector)
+        ])
+        hasNext = true
       }
-      return false
-    })
-    if (!hasNext) break
+    } catch (err: any) {
+      log(
+        `次のページへの遷移に失敗したため、ここまでの取得結果(${results.length}件)で処理を終了します: ${String(err?.message || err)}`
+      )
+      hasNext = false
+    }
 
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 15000 }).catch(() => null)
+    if (!hasNext) break
   }
 
   log(`スタイル一覧を${results.length}件取得しました`)
