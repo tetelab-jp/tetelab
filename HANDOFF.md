@@ -1403,16 +1403,93 @@ NetworkタブでdoUpload通信を直接確認してもらった。**`doUpload?wF
 （コミット`7ef4122`）。これにより、次回失敗した場合に実行ログだけで
 「どのステップまで進んで止まったか」が判別できるようになる。
 
-`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+`npm run build`で確認済み。デプロイ済み(コミット`b884f25`、
+`https://50ab7ea8.hotpepper-automation.pages.dev`)。
 
-## 追記（2026-08-09 その20、手動操作フローの完全記録・fetch()方式は一旦保留）
+## 追記(2026-08-09 その18、合成方式アップロードの実機比較検証を試みるも接続不安定で未完了)
 
-ユーザーが「レイヤー6」というスタイルで、ログイン〜反映申請までの全ステップを
-手動で実施し、各ステップのURL遷移・ネットワークログ・コンソールログ・
-画面表示を詳細に記録してくれた。**結論: 手動操作では画像アップロード・
-登録・反映申請のいずれのステップでも、ネットワークエラー・コンソール
-エラーは一度も発生しなかった。** 「画像アップロードが時間内に完了しない」
-という不具合は今回の手動操作では一切再現しなかった。
+ユーザー指示により、`uploadFrontImage()`が使っている「Base64→File→
+DataTransfer→dispatchEvent('change')」という合成方式のファイルセットが、
+人間の実際のファイル選択(信頼されたイベント、isTrusted=true)と同じ結果を
+生んでいるかを検証しようとした。比較対象として、Playwrightの
+`page.setInputFiles()`(CDPの`DOM.setFileInputFiles`経由、信頼された
+input/changeイベントを発火)を使う「ネイティブ方式」も用意した。
+
+**結果: salonboard.comへのログイン後の画面遷移が2回とも30秒でタイムアウトし、
+合成方式単体の検証すら完了できなかった。** ユーザー判断により、
+salonboard.comへの直接アクセス試行は今後行わない方針となった。
+
+### 副次的に判明した事実(コード調査のみ、実機未検証)
+
+`@cloudflare/puppeteer`の`elementHandle.uploadFile(...paths: string[])`は
+実装上、内部でNode.jsの`path`モジュール(`import('path')`)と
+`path.resolve()`を使い、最終的にCDPの`DOM.setFileInputFiles`(実ファイルを
+ディスクから読んでブラウザに渡すコマンド)に依存している。**Cloudflare
+Workers環境にはファイルシステムが存在しないため、この方式は原理的に
+使用不可能。** つまり、仮に合成イベント方式が本当の原因だったとしても、
+Puppeteerの標準機能による単純な代替(ネイティブuploadFile)は本番環境
+(Cloudflare Browser Rendering)では選択肢に無い。
+
+### 今後の方針(salonboard.com直接アクセス無しで進める)
+
+合成イベント方式が本当にブロックされているかどうかを確認する最も確実な
+方法は、**ユーザー自身の通常ブラウザで実際に画像アップロードを行い、
+DevTools NetworkタブでアップロードのHTTPリクエスト(URL・メソッド・
+Content-Type・リクエストボディの形式)をキャプチャしてもらうこと**。
+これが分かれば、UI操作(クリック・ファイル選択)を模倣する現行方式ではなく、
+**そのHTTPリクエストをpage.evaluate()内の`fetch()`で直接再現する方式**に
+切り替えられる可能性がある。この方式ならブラウザのDOM/イベント層を
+一切経由しないため、isTrusted関連の問題が原理的に発生しない。
+次回、ユーザーからNetworkタブの情報が得られ次第、この方式への切り替えを
+検討すること。
+
+なお、直前の「その17」で「閉じる」ボタンの誤クリックを撤回した修正
+(コミット`b884f25`)がこの調査時点で既に本番反映済みだったため、まずは
+その効果を「手動実行する」で確認するのが次の一手として優先度が高い
+（画像アップロード自体の方式を変える前に、まずこの撤回で症状が
+改善するかを見るべき）。
+
+## 追記(2026-08-09 その19、最重要: 画像アップロードをUI操作からfetch()直接
+呼び出しに全面変更)
+
+ユーザーが自身のブラウザのDevTools NetworkタブでdoUploadリクエストの
+リクエスト・レスポンス両方を実際にキャプチャして提供してくれたことで、
+`uploadFrontImage()`(`src/lib/salonboard-automation.ts`)を全面的に
+書き直した。詳細な仕様は`docs/salonboard-real-html-findings.md`の
+同日付追記を参照。
+
+要点:
+- 画像アップロードモーダルのUI操作(クリック・ファイル選択の疑似イベント・
+  「登録する」ボタンの活性化待ち・完了検知のポーリング)を全て廃止し、
+  `page.evaluate()`内の`fetch()`でアップロードエンドポイント
+  (`POST /CNB/imgreg/imgUpload/doUpload?wFlg=true`)を直接呼び出す方式に
+  変更した。
+- レスポンス(モーダルHTML片)をパースして`imageId`等を取り出した後、
+  DOM更新はページ上に実在する`window.setUploadImage()`関数へそのまま
+  委譲する(自前でのDOM操作再実装はしない)。
+- これにより、これまで繰り返し問題になっていたUI操作のisTrusted/
+  タイミング関連の不確実性(合成クリック・合成change イベントが
+  無視される、モーダルの活性化待ちがタイムアウトする等)が原理的に
+  一切発生しなくなる。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はこれから。**
+salonboard.comへの直接アクセスは控える方針のため、次回はTETE AOUT本番
+サイトでの「手動実行する」経由でユーザーに確認してもらうこと。
+
+## 追記（2026-08-09 その20、fetch()方式の実機テストで新たなエラー・手動操作フローの完全記録）
+
+上記その19のfetch()方式デプロイ後、本番で「手動実行する」を実行したところ、
+**「Protocol error (Runtime.callFunctionOn): Target closed」**という
+Cloudflare Browser Rendering側のインフラエラー(ブラウザセッション強制終了)
+が発生した。サロンボード側が実際にリクエストを受理したか拒否したかすら
+確認できずに終わっており、このテスト結果は「合成change event(isTrusted
+問題)が原因だったかどうか」を証明も否定もしていない。
+
+これと並行して、ユーザーが「レイヤー6」というスタイルで、ログイン〜
+反映申請までの全ステップを手動で実施し、各ステップのURL遷移・
+ネットワークログ・コンソールログ・画面表示を詳細に記録してくれた。
+**結論: 手動操作では画像アップロード・登録・反映申請のいずれのステップ
+でも、ネットワークエラー・コンソールエラーは一度も発生しなかった。**
 
 ### 記録された正常フロー(自動化の遷移待機条件の参考にできる)
 
@@ -1429,42 +1506,23 @@ reflect/storeReflect/doRegister(反映申請)
   独立している可能性がある(`checkReflectBlockers()`の判定ロジックが
   ボタン全体の`--disabled`クラスのみを見ている点は、将来的に見直しが
   必要かもしれない。今回は緊急度が低いため保留)。
-- doUploadの実際のリクエスト詳細(手動操作でDevTools Networkタブから
-  取得済み):
-  ```
-  POST https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true
-  Content-Type: multipart/form-data
-  フィールド: formFile(バイナリ), setImgId=FRONT_IMG_ID, dataKey=(空),
-  targetActionId=ABNKD3600_FRONT,
-  org.apache.struts.taglib.html.TOKEN=(セッション毎に変わる値),
-  STORE_ID=H000750928, modified=0, pubManageId=undefined
-  ```
 
-### fetch()直接呼び出し方式は一旦保留
+### 次の一手をめぐる判断
 
-上記の実リクエスト情報を元に、UI操作(DOM合成イベント)を経由せず
-`page.evaluate()`内`fetch()`でdoUploadを直接呼び出す方式への切り替えを
-試みたが、**「Protocol error (Runtime.callFunctionOn): Target closed」**
-というCloudflare Browser Rendering側のインフラエラー(ブラウザセッション
-強制終了)が発生し、サロンボード側が実際にリクエストを受理したか拒否したか
-すら確認できずに終わった。このテスト結果は「合成change event(isTrusted
-問題)が原因かどうか」を証明も否定もしていない。
-
-**方針変更**: これまで「doUploadが自動実行中に成功している」という証拠は
-すべて**ユーザーが手動操作した際**のものであり、**自動化コード実行中に
-実際にdoUploadが発生しているかどうかは一度も直接確認できていない**ことに
-気づいた。大きな実装変更(fetch()方式)に進む前に、まず元のDOM操作方式
-(`uploadFrontImage()`)に`page.on('response')`等でのネットワーク監視を
-追加し、自動実行中に実際に`doUpload`が発生するか・発生した場合の
-ステータスコード/レスポンスを直接ログに残すべきと判断した。
+「Target closed」がfetch()実装自体のバグ(evaluate()内の処理が重い/
+非効率等)によるものか、Cloudflare Browser Renderingのセッション制限に
+たまたま抵触しただけかは、まだ切り分けられていない。まずは実装コードを
+見直し、明らかな非効率(巨大なBase64文字列の扱い方等)が無いか確認し、
+それでも解決しない場合はDOM操作方式へ戻し`page.on('response')`等で
+実際に`doUpload`が自動実行時に発生しているかを直接観測する方式に
+切り替えることを検討する。
 
 ### 次にやるべきこと（更新）
-19. `uploadFrontImage()`実行中、`page.on('response')`でURLに'doUpload'を
-    含むレスポンスを監視し、実際に発生したか・ステータスコード・
-    レスポンス内容をログに残す処理を追加する。
-20. これにより「doUpload自体が自動実行時は発生していない(isTrusted等が
-    原因)」のか「doUploadは成功しているのに完了検知(`#FRONT_IMG_ID_ID`)
-    だけが失敗している」のかを確実に切り分ける。
-21. 切り分け結果に応じて、Puppeteerネイティブのファイルアップロード機能
-    (CDPの`DOM.setFileInputFiles`)の利用可否や、fetch()直接呼び出し方式
-    への再挑戦を検討する。
+19. fetch()実装(`uploadFrontImage()`)のコードを見直し、「Target closed」
+    エラーの原因(実装の非効率か、セッション制限か)を特定する。
+20. 原因不明のまま切り分けが必要な場合、`page.on('response')`でURLに
+    'doUpload'を含むレスポンスを監視し、実際に発生したか・ステータス
+    コード・レスポンス内容をログに残す診断コードを追加する。
+21. 上記結果に応じて、fetch()方式の修正、またはDOM操作方式への回帰＋
+    ネイティブファイルアップロード機能(CDPの`DOM.setFileInputFiles`)の
+    利用可否を検討する。

@@ -286,8 +286,8 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     if (radio) radio.checked = true
   })
 
-  // ---- 写真アップロード（最重要・不確定要素あり） ----
-  log('写真をアップロード中...（未検証の処理です）')
+  // ---- 写真アップロード ----
+  log('写真をアップロード中...')
   await uploadFrontImage(page, input.imageBuffer, input.imageFileName, log)
 
   // ---- スタイリスト選択 ----
@@ -478,149 +478,130 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
  * `#imageUploaderModalBody`という要素は実際には存在せず(旧実装の推測が誤りだった)、
  * 直接`#formFile`(またはinput[name="formFile"])を使う。
  */
+/**
+ * 写真アップロード処理。
+ *
+ * 2026-08-09追記(全面的な方式変更): ユーザーがDevTools NetworkタブでdoUpload
+ * リクエスト・レスポンスの実内容を直接キャプチャしてくれたことにより、
+ * UI操作(プレースホルダークリック→モーダル内file inputへの注入→「登録する」
+ * ボタンクリック→完了検知のポーリング)を一切経由せず、アップロード
+ * エンドポイントをfetch()で直接呼び出す方式に全面的に置き換えた。
+ * これにより、これまで繰り返し問題になっていたUI操作のisTrusted/タイミング
+ * 関連の不確実性が原理的に無くなる。
+ *
+ * リクエスト仕様(実機DevToolsで確認済み):
+ *   POST https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true
+ *   Content-Type: multipart/form-data
+ *   フィールド: formFile(画像バイナリ), setImgId="FRONT_IMG_ID", dataKey="",
+ *     targetActionId="ABNKD3600_FRONT",
+ *     org.apache.struts.taglib.html.TOKEN(CSRFトークン。ページ内の同名隠し
+ *     フィールドから取得。全フォーム共通のページ単位トークンであることを
+ *     実機確認済み)、STORE_ID(同じくページ内の隠しフィールドから取得)、
+ *     modified="0", pubManageId="undefined"(リテラル文字列。観測された
+ *     挙動をそのまま再現)。
+ *
+ * レスポンス仕様(実機DevToolsで確認済み): モーダルHTML片が返るが、その中の
+ * 隠しフィールドとして imageId(B+9桁)・elementName(=setImgIdと同じ値)・
+ * meetStandardFlg・lengthSizeOrg・sideSizeOrg・resolutionOrg・imageFilePath
+ * が埋め込まれている。これはページ内に実在するJSコールバック関数
+ * `setUploadImage(imageId, setImgId, meetStandardFlg, lengthSize, sideSize,
+ * resolution, imageFilePath)` の引数と完全に一致する形式。そのため、
+ * レスポンスHTMLをパースして値を取り出した後、DOM更新(サムネイル表示・
+ * 隠しフィールド更新・#JS_CHANGE_FLG設定等)を自前で再実装するのではなく、
+ * ページ上のwindow.setUploadImage()をそのまま呼び出すことで、
+ * サイト本来の更新ロジックを正しく適用させる。
+ */
 async function uploadFrontImage(
   page: Page,
   imageBuffer: ArrayBuffer,
   fileName: string,
   log: AutomationLogger
 ): Promise<void> {
-  // 一時ファイルとして書き出す必要はなく、CDPのDOM.setFileInputFiles相当を
-  // Puppeteerのuploadfile()経由で行うため、Bufferを直接使えるヘルパーを利用。
-  // @cloudflare/puppeteer は elementHandle.uploadFile(filePath) がローカルパス前提のため、
-  // Workers環境ではファイルシステムが無く使えない可能性が高い。
-  // その場合はページ内でBase64からFileオブジェクトを生成し、
-  // DataTransferでinputに注入する方式にフォールバックする。
+  log('画像をfetch()で直接アップロード中...(UI操作を経由しません)')
 
-  await page.click('#FRONT_IMG_ID_IMG')
-  const modalDetected = await page
-    .waitForSelector('#formFile', { timeout: 10000 })
-    .then(() => true)
-    .catch(() => false)
-  if (modalDetected) {
-    log('画像アップロードモーダルを検出しました')
-  } else {
-    log('警告: 画像アップロードモーダルの検出に失敗しました。セレクタの再確認が必要です。')
-  }
-
-  const fileInputSelector = '#formFile'
-  const fileInput = await page.$(fileInputSelector)
-
-  if (!fileInput) {
-    throw new Error(
-      '画像アップロード用のinput[type=file](#formFile)が見つかりませんでした。モーダルDOM構造の再調査が必要です。'
-    )
-  }
-
-  // Base64化してブラウザ内でFileオブジェクトを生成し、input.filesにセットする
   const base64 = arrayBufferToBase64(imageBuffer)
-  await page.evaluate(
-    async (selector: string, base64Data: string, name: string) => {
-      const input = document.querySelector(selector) as HTMLInputElement
+  const result = await page.evaluate(
+    async (base64Data: string, name: string) => {
+      const tokenEl = document.querySelector(
+        'input[name="org.apache.struts.taglib.html.TOKEN"]'
+      ) as HTMLInputElement | null
+      const storeIdEl = document.querySelector('input[name="STORE_ID"]') as HTMLInputElement | null
+      if (!tokenEl || !storeIdEl) {
+        return { success: false, error: 'CSRFトークンまたはSTORE_IDがページ内に見つかりませんでした', imageId: null }
+      }
+
       const byteChars = atob(base64Data)
       const byteNumbers = new Array(byteChars.length)
       for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i)
       const byteArray = new Uint8Array(byteNumbers)
-      const file = new File([byteArray], name, { type: 'image/jpeg' })
-      const dt = new DataTransfer()
-      dt.items.add(file)
-      input.files = dt.files
-      input.dispatchEvent(new Event('change', { bubbles: true }))
+      const blob = new Blob([byteArray], { type: 'image/jpeg' })
+
+      const formData = new FormData()
+      formData.append('formFile', blob, name)
+      formData.append('setImgId', 'FRONT_IMG_ID')
+      formData.append('dataKey', '')
+      formData.append('targetActionId', 'ABNKD3600_FRONT')
+      formData.append('org.apache.struts.taglib.html.TOKEN', tokenEl.value)
+      formData.append('STORE_ID', storeIdEl.value)
+      formData.append('modified', '0')
+      formData.append('pubManageId', 'undefined')
+
+      let resText: string
+      try {
+        const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
+          method: 'POST',
+          body: formData,
+          credentials: 'include'
+        })
+        resText = await res.text()
+      } catch (fetchErr: any) {
+        return { success: false, error: `fetch自体が失敗しました: ${String(fetchErr?.message || fetchErr)}`, imageId: null }
+      }
+
+      const doc = new DOMParser().parseFromString(resText, 'text/html')
+      const val = (id: string) => (doc.getElementById(id) as HTMLInputElement | null)?.value ?? null
+
+      const userErrorFlg = val('userErrorFlg')
+      const imageId = val('imageId')
+      const elementName = val('elementName')
+      const meetStandardFlg = val('meetStandardFlg')
+      const lengthSizeOrg = val('lengthSizeOrg')
+      const sideSizeOrg = val('sideSizeOrg')
+      const resolutionOrg = val('resolutionOrg')
+      const imageFilePath = val('imageFilePath')
+
+      if (userErrorFlg !== '0' || !imageId || !/^B\d{9}$/.test(imageId)) {
+        return {
+          success: false,
+          error: `アップロードレスポンスが想定外でした(userErrorFlg=${userErrorFlg}, imageId=${imageId})`,
+          imageId: null
+        }
+      }
+
+      if (typeof (window as any).setUploadImage !== 'function') {
+        return { success: false, error: 'window.setUploadImage関数がページ内に見つかりませんでした', imageId: null }
+      }
+      ;(window as any).setUploadImage(
+        imageId,
+        elementName,
+        meetStandardFlg,
+        lengthSizeOrg,
+        sideSizeOrg,
+        resolutionOrg,
+        imageFilePath
+      )
+
+      return { success: true, error: null, imageId }
     },
-    fileInputSelector,
     base64,
     fileName
   )
-  log('画像ファイルをinput[type=file]にセットしました')
 
-  // モーダル下部の「登録する」ボタンは、ユーザーが実HTMLを確認したことで確定した:
-  //   <input type="button" class="imageUploaderModalSubmitButton
-  //     jscImageUploaderModalSubmitButton isActive" value="登録する">
-  // <button>/<a>ではなく<input type="button">だった(旧実装はここが原因で
-  // 一度もこのボタンを見つけられていなかったと考えられる)。"isActive"クラスが
-  // 活性化状態を表すと推測されるため、これを待ってからクリックする。
-  const registerBtnSelector = 'input.jscImageUploaderModalSubmitButton'
-  const registerBtnActive = await page
-    .waitForFunction(
-      (sel: string) => {
-        const btn = document.querySelector(sel) as HTMLInputElement | null
-        return btn && !btn.disabled && btn.className.includes('isActive') ? true : false
-      },
-      { timeout: 10000 },
-      registerBtnSelector
-    )
-    .then(() => true)
-    .catch(() => false)
-
-  if (registerBtnActive) {
-    await page.click(registerBtnSelector)
-    log('モーダル内「登録する」ボタンをクリックしました(doUpload送信)')
-  } else {
-    log('警告: 画像アップロードモーダルの「登録する」ボタン(input.jscImageUploaderModalSubmitButton)が見つからないか、活性化しませんでした。')
+  if (!result.success) {
+    throw new Error(`画像アップロードに失敗しました(fetch方式): ${result.error}`)
   }
 
-  // 2026-08-09追記: DevTools Networkタブでの実機確認により、「登録する」クリック後
-  // doUpload自体は数秒で成功している(200 OK)ことを確認した。一時的に「その後
-  // 『閉じる』ボタンを押さないと反映されないのでは」という仮説でクリック処理を
-  // 追加したが、ユーザーへの確認で「閉じる」は通常操作に含まれないことが判明。
-  // 「閉じる」「登録する」が並んで表示される一般的なUIパターンでは「閉じる」＝
-  // キャンセル(適用しない)の意味であることが多く、doUpload成功後に「閉じる」を
-  // 押すと、むしろ今アップロードした内容を取り消してしまっている可能性が高いと
-  // 判断し、このクリック処理を削除した。doUpload成功後はモーダル内の
-  // サムネイル表示のみ確認し、あとは何もクリックせず完了検知を待つ。
-  const thumbnailConfirmed = await page
-    .waitForFunction(
-      () => {
-        const area = document.querySelector('.jscImageUploaderModalThumbnailArea')
-        return !!(area && area.querySelector('img'))
-      },
-      { timeout: 15000 }
-    )
-    .then(() => true)
-    .catch(() => false)
-
-  if (thumbnailConfirmed) {
-    log('アップロード後のサムネイル表示を確認しました')
-  } else {
-    log('警告: アップロード後のサムネイル表示を確認できませんでした。')
-  }
-
-  // アップロード完了・setUploadImage()コールバック発火を待つ。
-  // 主条件: 隠しフィールド#FRONT_IMG_IDに画像ID(B+9桁)がセットされること
-  //（docs/phase3-mvp-design.md 9章で確定済みの完了コールバック仕様に基づく）。
-  // 副条件（フォールバック）: プレースホルダー画像のクラスが変化すること。
-  //
-  // 2026-08-09追記: 本番実機で実際にこのタイムアウトが発生し、警告ログのみで
-  // 処理を続行した結果、#FRONT_IMG_IDが空のままdoRegister()まで進んでしまい、
-  // サーバー側バリデーションで確実に弾かれる(=無駄な実行1回分を浪費するだけ)
-  // ことが判明した。StylePost(競合製品)の同期履歴でも「画像アップロードが
-  // アクセス集中のため失敗しました」という記録が複数見られ、salonboard.com側の
-  // 画像アップロード自体がそもそも本質的に低速/不安定である可能性が高いため、
-  // タイムアウトを20秒→45秒に延長した上で、それでも確認できない場合は
-  // 警告に留めず例外を投げ、この時点で明確に失敗として扱うようにした。
-  // 2026-08-09追記: ユーザーが実HTMLを確認した結果、画像ID表示欄の実際の
-  // 要素IDは`FRONT_IMG_ID`ではなく`FRONT_IMG_ID_ID`(<span>タグ、隠しinputでは
-  // ない)だったことが判明。旧実装は存在しないID(`FRONT_IMG_ID`)を探して
-  // おり、絶対に見つかるはずが無かった。
-  //   <p class="mt8">画像ID:<span id="FRONT_IMG_ID_ID"></span></p>
-  const uploadConfirmed = await page
-    .waitForFunction(
-      () => {
-        const idSpan = document.getElementById('FRONT_IMG_ID_ID')
-        if (idSpan && idSpan.textContent && idSpan.textContent.trim() !== '') return true
-        const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
-        return !!(img && !img.className.includes('img_new_no_photo'))
-      },
-      { timeout: 45000 }
-    )
-    .then(() => true)
-    .catch(() => false)
-
-  if (!uploadConfirmed) {
-    throw new Error(
-      '画像アップロードの完了を確認できませんでした(#FRONT_IMG_ID_IDが45秒経っても空のまま)。' +
-        'salonboard.com側の画像アップロード処理が遅延/失敗している可能性があります。'
-    )
-  }
+  log(`画像アップロード成功(fetch方式): imageId=${result.imageId}`)
 }
 
 function sleep(ms: number): Promise<void> {

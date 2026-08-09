@@ -329,6 +329,75 @@ salonboard.comへ何度もPlaywright/curlでアクセスした結果、Akamai系
 
 ---
 
+## 追記(2026-08-09、画像アップロードをUI操作からfetch()直接呼び出しに全面変更)
+
+ユーザーが自身のブラウザのDevTools NetworkタブでdoUploadリクエストの
+リクエスト内容・レスポンス内容の両方を実際にキャプチャして提供してくれた。
+これにより、画像アップロードモーダルのUI操作(クリック・ファイル選択・
+「登録する」ボタン)を一切経由しない、確実な実装に切り替えられた。
+
+### リクエスト仕様(実機DevToolsで確認済み)
+
+```
+POST https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true
+Content-Type: multipart/form-data
+
+formFile: (画像バイナリ)
+setImgId: FRONT_IMG_ID
+dataKey: (空文字)
+targetActionId: ABNKD3600_FRONT
+org.apache.struts.taglib.html.TOKEN: (ページ内の同名隠しフィールドの値。
+  スタイル編集画面内の複数フォームすべてで同一値であることを実機確認済み
+  なので、ページ内のどのフォームから拾っても良い)
+STORE_ID: (ページ内の同名隠しフィールドの値、例: H000750928)
+modified: 0
+pubManageId: undefined  (リテラル文字列。理由不明だが観測された挙動を
+  そのまま再現)
+```
+
+### レスポンス仕様(実機DevToolsで確認済み)
+
+モーダルHTML片(`wFlg=false`版)が返るが、その中の非表示div内に以下の
+隠しフィールドとして必要な情報が全て含まれている:
+
+```html
+<div class="dn">
+  <input type="hidden" name="userErrorFlg" value="0" id="userErrorFlg">
+  <input type="hidden" name="imageId" value="B267912835" id="imageId">
+  <input type="hidden" name="setImgId" value="FRONT_IMG_ID" id="elementName">
+  <input type="hidden" name="meetStandardFlg" value="false" id="meetStandardFlg">
+  <input type="hidden" name="lengthSizeOrg" value="1600" id="lengthSizeOrg">
+  <input type="hidden" name="sideSizeOrg" value="1200" id="sideSizeOrg">
+  <input type="hidden" name="resolutionOrg" value="72" id="resolutionOrg">
+  <input type="hidden" name="imageFilePath"
+    value="https://imgbp.salonboard.com/IMGDB_HD/28/35/B267912835/B267912835.jpg?impolicy=SB_policy_default&amp;w=180&amp;h=240"
+    id="imageFilePath">
+</div>
+```
+
+これはページ内に実在するJSコールバック関数
+`setUploadImage(imageId, setImgId, meetStandardFlg, lengthSize, sideSize, resolution, imageFilePath)`
+(HANDOFF.md 4-5に既出)の引数と完全に一致する形式である。
+
+### 対応(コード修正)
+
+`uploadFrontImage()`(`src/lib/salonboard-automation.ts`)を全面書き換え:
+1. `page.evaluate()`内で上記フィールドを組み立て、`fetch()`で直接POST。
+2. レスポンスHTMLを`DOMParser`でパースし、上記の値を抽出。
+3. DOM更新(サムネイル表示・隠しフィールド更新等)を自前で再実装せず、
+   ページ上に実在する`window.setUploadImage()`をそのまま呼び出すことで
+   サイト本来の更新ロジックに委ねる。
+
+これにより、プレースホルダークリック→モーダル検出待ち→ファイル注入→
+「登録する」ボタンの活性化待ち・クリック→完了検知のポーリング、という
+一連のUI操作(と、それに伴うisTrusted関連の不確実性)が全て不要になった。
+
+⚠️ 本番実機での動作確認はまだ(salonboard.comへの直接アクセスを控える
+方針のため、ユーザーによるTETE AOUT本番サイトでの「手動実行する」経由の
+確認が必要)。
+
+---
+
 ## 旧: 未検証・要フォローアップ(2026-08-09 初回調査時点)
 
 1. 複数ページが存在するアカウントでの「次へ」リンクの実onclick文字列(現アカウントはスタイル数が少なく1ページに収まるため未確認)。
