@@ -545,6 +545,15 @@ async function uploadFrontImage(
   // 主条件: 隠しフィールド#FRONT_IMG_IDに画像ID(B+9桁)がセットされること
   //（docs/phase3-mvp-design.md 9章で確定済みの完了コールバック仕様に基づく）。
   // 副条件（フォールバック）: プレースホルダー画像のクラスが変化すること。
+  //
+  // 2026-08-09追記: 本番実機で実際にこのタイムアウトが発生し、警告ログのみで
+  // 処理を続行した結果、#FRONT_IMG_IDが空のままdoRegister()まで進んでしまい、
+  // サーバー側バリデーションで確実に弾かれる(=無駄な実行1回分を浪費するだけ)
+  // ことが判明した。StylePost(競合製品)の同期履歴でも「画像アップロードが
+  // アクセス集中のため失敗しました」という記録が複数見られ、salonboard.com側の
+  // 画像アップロード自体がそもそも本質的に低速/不安定である可能性が高いため、
+  // タイムアウトを20秒→45秒に延長した上で、それでも確認できない場合は
+  // 警告に留めず例外を投げ、この時点で明確に失敗として扱うようにした。
   const uploadConfirmed = await page
     .waitForFunction(
       () => {
@@ -553,13 +562,16 @@ async function uploadFrontImage(
         const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
         return !!(img && !img.className.includes('img_new_no_photo'))
       },
-      { timeout: 20000 }
+      { timeout: 45000 }
     )
     .then(() => true)
     .catch(() => false)
 
   if (!uploadConfirmed) {
-    log('警告: 画像アップロード完了の検知がタイムアウトしました。処理は続行しますが要確認です。')
+    throw new Error(
+      '画像アップロードの完了を確認できませんでした(#FRONT_IMG_IDが45秒経っても空のまま)。' +
+        'salonboard.com側の画像アップロード処理が遅延/失敗している可能性があります。'
+    )
   }
 }
 
