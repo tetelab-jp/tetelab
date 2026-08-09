@@ -1357,3 +1357,30 @@ NetworkタブでdoUpload通信を直接確認してもらった。**`doUpload?wF
 18. それでも解消しない場合、「閉じる」ボタンクリック後に実際に
     `#FRONT_IMG_ID`やDOM構造がどう変化するかを、開いたままのDevTools
     Elementsパネルで直接確認する必要がある。
+
+## 追記（2026-08-09 その18、真因確定: 完了検知の要素IDそのものが間違っていた）
+
+ユーザーがElementsパネルのスクリーンショットを追加で提供してくれたことで、
+決定的な事実が判明した。**画像ID表示欄の実際の要素は
+`<span id="FRONT_IMG_ID_ID">`（隠しinputではなくspanタグ、IDも
+`FRONT_IMG_ID`ではなく`FRONT_IMG_ID_ID`）だった。**
+
+```html
+<p class="mt8">
+  画像ID:
+  <span id="FRONT_IMG_ID_ID"></span>
+</p>
+```
+
+旧実装は`document.getElementById('FRONT_IMG_ID')`という、**そもそも
+実在しないIDの要素**を探し続けていたため、`uploadFrontImage()`の完了検知
+が最初から成立し得ない状態だった(その17の「閉じる」ボタン漏れの疑いより
+さらに根本的な原因)。設計書(`docs/phase3-mvp-design.md` 9章)記載の
+「隠しフィールド`#FRONT_IMG_ID`にセット」という前提自体が誤りだった。
+
+`uploadFrontImage()`・送信前セルフチェックの両方で、`FRONT_IMG_ID`への
+参照を`FRONT_IMG_ID_ID`（`<span>`の`.textContent`で判定、`.value`ではない）
+に修正した。その17の「閉じる」ボタンクリック処理とあわせて、これで
+画像アップロードの完了が正しく検知できるようになるはずである。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**

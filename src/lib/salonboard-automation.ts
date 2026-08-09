@@ -368,7 +368,7 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
     return {
       styleRegistFormat: (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)?.value ?? '(未選択)',
-      frontImgId: val('FRONT_IMG_ID'),
+      frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
       stylistCheckCd: val('stylistCheckCd'),
       stylistCommentTxt: val('stylistCommentTxt'),
       styleNameTxt: val('styleNameTxt'),
@@ -592,11 +592,16 @@ async function uploadFrontImage(
   // 画像アップロード自体がそもそも本質的に低速/不安定である可能性が高いため、
   // タイムアウトを20秒→45秒に延長した上で、それでも確認できない場合は
   // 警告に留めず例外を投げ、この時点で明確に失敗として扱うようにした。
+  // 2026-08-09追記: ユーザーが実HTMLを確認した結果、画像ID表示欄の実際の
+  // 要素IDは`FRONT_IMG_ID`ではなく`FRONT_IMG_ID_ID`(<span>タグ、隠しinputでは
+  // ない)だったことが判明。旧実装は存在しないID(`FRONT_IMG_ID`)を探して
+  // おり、絶対に見つかるはずが無かった。
+  //   <p class="mt8">画像ID:<span id="FRONT_IMG_ID_ID"></span></p>
   const uploadConfirmed = await page
     .waitForFunction(
       () => {
-        const hiddenField = document.getElementById('FRONT_IMG_ID') as HTMLInputElement | null
-        if (hiddenField && hiddenField.value.trim() !== '') return true
+        const idSpan = document.getElementById('FRONT_IMG_ID_ID')
+        if (idSpan && idSpan.textContent && idSpan.textContent.trim() !== '') return true
         const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
         return !!(img && !img.className.includes('img_new_no_photo'))
       },
@@ -607,7 +612,7 @@ async function uploadFrontImage(
 
   if (!uploadConfirmed) {
     throw new Error(
-      '画像アップロードの完了を確認できませんでした(#FRONT_IMG_IDが45秒経っても空のまま)。' +
+      '画像アップロードの完了を確認できませんでした(#FRONT_IMG_ID_IDが45秒経っても空のまま)。' +
         'salonboard.com側の画像アップロード処理が遅延/失敗している可能性があります。'
     )
   }
