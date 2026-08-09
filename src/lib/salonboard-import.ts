@@ -201,22 +201,19 @@ export async function fetchExistingStyles(page: Page, log: AutomationLogger): Pr
 export async function fetchStyleDetail(page: Page, styleId: string, log: AutomationLogger): Promise<ExistingStyleDetail> {
   log(`スタイル詳細を取得中...(${styleId})`)
 
-  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
-
-  // 既存スタイル編集画面を開く。docs/salonboard-real-html-findings.md 2章で確定済み:
-  // 詳細行のリンクは <a onclick="editStyle(event, 'L244286488'); return false;">。
-  // window.editStyle()を偽のevent引数で直接呼ぶ、あるいはpage.evaluate内で
-  // element.click()すると isTrusted=false の合成イベントになり、ボット対策等に
-  // 無視される可能性があるため、Puppeteerネイティブのpage.click()
-  // (CDP経由の本物のマウスイベント、isTrusted=true)を使う。
-  // クリック後もURLは変化せず（同一ページ内でDOMがまるごと差し替わる）ため、
-  // 遷移そのものは発生せずwaitForNavigationは使わない。
-  const editLinkSelector = `a[onclick*="editStyle(event, '${styleId}')"]`
-  const editLinkHandle = await page.$(editLinkSelector)
-  if (!editLinkHandle) {
-    throw new Error(`スタイル編集画面へのリンクが見つかりませんでした（styleId: ${styleId}）`)
-  }
-  await page.click(editLinkSelector)
+  // 2026-08-09追記: StylePost(競合製品)がスタイル一覧から
+  // `https://salonboard.com/CNB/draft/styleEdit/?styleId=Lxxxxxxxxx` という
+  // クエリパラメータ付き直リンクで各スタイルの編集画面へ遷移していることを確認し、
+  // 自アカウントの既知styleIdで実機検証したところ実際に機能した(#styleId・
+  // #styleNameTxtとも正しく反映されることを確認済み)。
+  // 従来の「一覧ページを開いてeditStyle(event, styleId)リンクを探してクリックする」
+  // 方式は、対象スタイルが一覧の何ページ目にあるか探す必要がありページネーションの
+  // 影響を受けていたが、この直リンク方式なら一覧を経由せず1回のgoto()で確実に
+  // 対象の編集画面を開けるため、そちらに置き換える。
+  await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleEdit/?styleId=${styleId}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  })
 
   await page.waitForSelector('#styleEditForm', { timeout: 15000 })
 
