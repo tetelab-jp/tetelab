@@ -1404,3 +1404,67 @@ NetworkタブでdoUpload通信を直接確認してもらった。**`doUpload?wF
 「どのステップまで進んで止まったか」が判別できるようになる。
 
 `npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その20、手動操作フローの完全記録・fetch()方式は一旦保留）
+
+ユーザーが「レイヤー6」というスタイルで、ログイン〜反映申請までの全ステップを
+手動で実施し、各ステップのURL遷移・ネットワークログ・コンソールログ・
+画面表示を詳細に記録してくれた。**結論: 手動操作では画像アップロード・
+登録・反映申請のいずれのステップでも、ネットワークエラー・コンソール
+エラーは一度も発生しなかった。** 「画像アップロードが時間内に完了しない」
+という不具合は今回の手動操作では一切再現しなかった。
+
+### 記録された正常フロー(自動化の遷移待機条件の参考にできる)
+
+```
+styleList → styleEdit(新規追加) → styleEdit/doRegister(登録) →
+styleList(一覧確認) → reflectTop(掲載管理TOP) →
+reflect/storeReflect/doRegister(反映申請)
+```
+
+- 「登録」と「反映申請」は完全に別の処理・別画面(既知の通り再確認)。
+- 掲載管理TOPで他カテゴリ(サロン基本情報・スタイリスト掲載情報一覧)が
+  「要確認」状態でも、**スタイル掲載情報一覧の「反映申請」ボタンは
+  有効(クリック可能)だった**。「反映申請」の可否判定はカテゴリ単位で
+  独立している可能性がある(`checkReflectBlockers()`の判定ロジックが
+  ボタン全体の`--disabled`クラスのみを見ている点は、将来的に見直しが
+  必要かもしれない。今回は緊急度が低いため保留)。
+- doUploadの実際のリクエスト詳細(手動操作でDevTools Networkタブから
+  取得済み):
+  ```
+  POST https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true
+  Content-Type: multipart/form-data
+  フィールド: formFile(バイナリ), setImgId=FRONT_IMG_ID, dataKey=(空),
+  targetActionId=ABNKD3600_FRONT,
+  org.apache.struts.taglib.html.TOKEN=(セッション毎に変わる値),
+  STORE_ID=H000750928, modified=0, pubManageId=undefined
+  ```
+
+### fetch()直接呼び出し方式は一旦保留
+
+上記の実リクエスト情報を元に、UI操作(DOM合成イベント)を経由せず
+`page.evaluate()`内`fetch()`でdoUploadを直接呼び出す方式への切り替えを
+試みたが、**「Protocol error (Runtime.callFunctionOn): Target closed」**
+というCloudflare Browser Rendering側のインフラエラー(ブラウザセッション
+強制終了)が発生し、サロンボード側が実際にリクエストを受理したか拒否したか
+すら確認できずに終わった。このテスト結果は「合成change event(isTrusted
+問題)が原因かどうか」を証明も否定もしていない。
+
+**方針変更**: これまで「doUploadが自動実行中に成功している」という証拠は
+すべて**ユーザーが手動操作した際**のものであり、**自動化コード実行中に
+実際にdoUploadが発生しているかどうかは一度も直接確認できていない**ことに
+気づいた。大きな実装変更(fetch()方式)に進む前に、まず元のDOM操作方式
+(`uploadFrontImage()`)に`page.on('response')`等でのネットワーク監視を
+追加し、自動実行中に実際に`doUpload`が発生するか・発生した場合の
+ステータスコード/レスポンスを直接ログに残すべきと判断した。
+
+### 次にやるべきこと（更新）
+19. `uploadFrontImage()`実行中、`page.on('response')`でURLに'doUpload'を
+    含むレスポンスを監視し、実際に発生したか・ステータスコード・
+    レスポンス内容をログに残す処理を追加する。
+20. これにより「doUpload自体が自動実行時は発生していない(isTrusted等が
+    原因)」のか「doUploadは成功しているのに完了検知(`#FRONT_IMG_ID_ID`)
+    だけが失敗している」のかを確実に切り分ける。
+21. 切り分け結果に応じて、Puppeteerネイティブのファイルアップロード機能
+    (CDPの`DOM.setFileInputFiles`)の利用可否や、fetch()直接呼び出し方式
+    への再挑戦を検討する。
