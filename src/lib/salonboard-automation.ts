@@ -462,25 +462,6 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 /**
  * 写真アップロード処理。
  *
- * docs/phase3-mvp-design.md 9章で確定済みの情報:
- * - `.img_new_no_photo`（`#FRONT_IMG_ID_IMG`が該当）クリックで
- *   `img_upload_modal_view('FRONT_IMG_ID', 'ABNKD3600_FRONT', dataKey, false, 'styleEditForm')`
- *   が発火し、`#imageUploaderModalBody`にモーダル内容がJSで動的挿入される
- * - アップロード完了コールバック`setUploadImage(...)`が隠しフィールド`#FRONT_IMG_ID`に
- *   画像ID(B+9桁形式)をセットする → これを完了検知の主条件として使う
- *
- * 2026-08-09追記: ユーザーが実際にモーダルを開いた状態のDevTools画面を確認し、
- * 実際の`<input type=file>`セレクタを確定した。
- *   <label class="imageUploaderModalInput">
- *     ファイルを選択
- *     <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
- *   </label>
- * `#imageUploaderModalBody`という要素は実際には存在せず(旧実装の推測が誤りだった)、
- * 直接`#formFile`(またはinput[name="formFile"])を使う。
- */
-/**
- * 写真アップロード処理。
- *
  * 2026-08-09追記(全面的な方式変更): ユーザーがDevTools NetworkタブでdoUpload
  * リクエスト・レスポンスの実内容を直接キャプチャしてくれたことにより、
  * UI操作(プレースホルダークリック→モーダル内file inputへの注入→「登録する」
