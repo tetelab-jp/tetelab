@@ -492,9 +492,15 @@ async function uploadFrontImage(
   // DataTransferでinputに注入する方式にフォールバックする。
 
   await page.click('#FRONT_IMG_ID_IMG')
-  await page.waitForSelector('#formFile', { timeout: 10000 }).catch(() => {
+  const modalDetected = await page
+    .waitForSelector('#formFile', { timeout: 10000 })
+    .then(() => true)
+    .catch(() => false)
+  if (modalDetected) {
+    log('画像アップロードモーダルを検出しました')
+  } else {
     log('警告: 画像アップロードモーダルの検出に失敗しました。セレクタの再確認が必要です。')
-  })
+  }
 
   const fileInputSelector = '#formFile'
   const fileInput = await page.$(fileInputSelector)
@@ -524,6 +530,7 @@ async function uploadFrontImage(
     base64,
     fileName
   )
+  log('画像ファイルをinput[type=file]にセットしました')
 
   // モーダル下部の「登録する」ボタンは、ユーザーが実HTMLを確認したことで確定した:
   //   <input type="button" class="imageUploaderModalSubmitButton
@@ -546,6 +553,7 @@ async function uploadFrontImage(
 
   if (registerBtnActive) {
     await page.click(registerBtnSelector)
+    log('モーダル内「登録する」ボタンをクリックしました(doUpload送信)')
   } else {
     log('警告: 画像アップロードモーダルの「登録する」ボタン(input.jscImageUploaderModalSubmitButton)が見つからないか、活性化しませんでした。')
   }
@@ -559,7 +567,7 @@ async function uploadFrontImage(
   // (jscImageUploaderModalThumbnailArea)に画像が表示された状態で、この「閉じる」を
   // 押して初めてモーダルが閉じ親フォームの#FRONT_IMG_IDへ反映される可能性が高いと
   // 推測し、サムネイル表示を待ってから明示的に「閉じる」をクリックするようにした。
-  await page
+  const thumbnailConfirmed = await page
     .waitForFunction(
       () => {
         const area = document.querySelector('.jscImageUploaderModalThumbnailArea')
@@ -567,14 +575,20 @@ async function uploadFrontImage(
       },
       { timeout: 15000 }
     )
-    .catch(() => {
-      log('警告: アップロード後のサムネイル表示を確認できませんでした。')
-    })
+    .then(() => true)
+    .catch(() => false)
+
+  if (thumbnailConfirmed) {
+    log('アップロード後のサムネイル表示を確認しました')
+  } else {
+    log('警告: アップロード後のサムネイル表示を確認できませんでした。')
+  }
 
   const closeBtnSelector = 'a.jscImageUploaderModalCloseButton'
   const closeBtnHandle = await page.$(closeBtnSelector)
   if (closeBtnHandle) {
     await page.click(closeBtnSelector)
+    log('モーダルの「閉じる」ボタンをクリックしました')
   } else {
     log('警告: 画像アップロードモーダルの「閉じる」ボタンが見つかりませんでした。')
   }
