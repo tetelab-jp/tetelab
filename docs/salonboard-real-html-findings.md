@@ -282,6 +282,53 @@ salonboard.comへ何度もPlaywright/curlでアクセスした結果、Akamai系
 
 ---
 
+## 追記(2026-08-09、StylePost調査から発見: `?styleId=`クエリパラメータ直リンクが機能する)
+
+ユーザー指示によりStylePost(競合製品)のスタイル一覧ページ
+(`https://style-post.com/w/style/style-list`、閲覧のみ・変更操作なし)を
+再調査したところ、全118件のスタイル行が
+`https://salonboard.com/CNB/draft/styleEdit/?styleId=Lxxxxxxxxx`
+という**salonboard.com本物への直リンク**になっていることを確認した。
+
+自アカウントの既知styleId(`L244286488`)でこのURLパターンを実機検証した結果:
+```json
+{
+  "url": "https://salonboard.com/CNB/draft/styleEdit/?styleId=L244286488",
+  "formFound": true,
+  "styleIdValue": "L244286488",
+  "styleNameValue": "白髪もキレイに魅せる、大人の艶カラーショート"
+}
+```
+**正しく該当スタイルの編集画面が開き、`#styleId`・`#styleNameTxt`とも実データと
+一致することを確認した。** つまり、一覧ページを開いて`editStyle(event, styleId)`
+リンクを探してクリックする(ページネーションの影響を受ける)従来方式に代えて、
+`page.goto('.../CNB/draft/styleEdit/?styleId=' + styleId)` で直接遷移すれば
+確実に対象の編集画面を開ける。
+
+### 対応(コード修正)
+
+- `fetchStyleDetail()`(`src/lib/salonboard-import.ts`): 一覧ページ経由の
+  クリック方式から、この直リンクへのgoto()に置き換えた。これにより
+  「対象スタイルが一覧の何ページ目にあるか探す」という、doSelectNext等の
+  ページネーション実装の不確実性に一切依存しなくなった。
+- `draftRegisterStyle()`の登録成功判定(`src/lib/salonboard-automation.ts`):
+  `#styleId`隠しフィールドに加えて、現在のURLに`styleId=L\d{9}`パターンが
+  含まれるかも確認するようにし、どちらか一方で確認できれば成功とする
+  冗長化を行った(doRegister()成功時にこのURL形式へ遷移する可能性がある
+  ため)。
+
+### 応用の余地(今後の検討)
+
+- `unpresentStyle`/`delStyle`等、他のstyleId操作についても、同様の
+  クエリパラメータ形式のURLが使えないか調査の価値がある。
+- StylePostは「オリジナルID」という独自の内部連番IDと、salonboardの
+  styleId(L+9桁)を並べて管理しており(スタイル一覧のスクリーンショット参照)、
+  これは弊アプリの`styles.id`(内部ID)と`source_salonboard_style_key`
+  (salonboard側styleId)の関係と概ね同じ設計。特に目新しい実装の余地は
+  見当たらなかったが、設計方針が近いことの確認にはなった。
+
+---
+
 ## 旧: 未検証・要フォローアップ(2026-08-09 初回調査時点)
 
 1. 複数ページが存在するアカウントでの「次へ」リンクの実onclick文字列(現アカウントはスタイル数が少なく1ページに収まるため未確認)。

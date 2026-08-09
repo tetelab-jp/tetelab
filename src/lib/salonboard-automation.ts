@@ -404,11 +404,20 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   // (editStyle実行後と同様、同一ページ内でフルページ相当の再レンダリングが
   // 起きる仕様のため)。これが確認できない場合はサーバー側で実際に保存された
   // 保証が無いため、エラーとして扱う(無条件の「成功」報告はしない)。
+  //
+  // 2026-08-09追記: StylePost(競合製品)の実装調査から、salonboard.comが
+  // `https://salonboard.com/CNB/draft/styleEdit/?styleId=Lxxxxxxxxx` という
+  // クエリパラメータ付きURLを実際にサポートしていることを実機確認した。
+  // doRegister()成功時にこのURLへ遷移する可能性があるため、#styleId隠し
+  // フィールドに加えて現在のURLからも同じ形式のstyleIdを拾えるようにし、
+  // どちらか一方でも確認できれば成功と判定する(冗長化による検知の安定化)。
   const registeredStyleId = await page
     .waitForFunction(
       () => {
         const el = document.getElementById('styleId') as HTMLInputElement | null
-        return el && /^L\d{9}$/.test(el.value) ? el.value : false
+        if (el && /^L\d{9}$/.test(el.value)) return el.value
+        const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
+        return urlMatch ? urlMatch[1] : false
       },
       { timeout: 20000 }
     )
