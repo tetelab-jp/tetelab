@@ -26,8 +26,18 @@
 /// <reference lib="dom" />
 
 import type { Bindings } from '../types'
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import type { Browser, Page } from 'puppeteer'
+import puppeteerExtra from 'puppeteer-extra'
+import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 export type { Browser, Page }
+
+// 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
+// Akamai系ボット対策を回避できないことが実機検証(プロキシでIPを変えても
+// 症状不変)で確認できたため、headless検知への対策として実績のある
+// puppeteer-extra-plugin-stealthを導入した(WebGL vendor/renderer・
+// Permissions API・plugins/mimeTypesの形状・iframe.contentWindow等、
+// 手動では網羅しきれない検知ポイントを幅広くカバーする)。
+puppeteerExtra.use(StealthPlugin())
 
 export const SALONBOARD_BASE_URL = 'https://salonboard.com' // ⚠️ 要確認
 
@@ -77,7 +87,7 @@ export async function launchBrowser(): Promise<Browser> {
     args.push(`--proxy-server=${proxyServer}`)
   }
 
-  return puppeteer.launch({
+  return puppeteerExtra.launch({
     headless: true,
     args
   })
