@@ -101,20 +101,15 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
     await dialog.accept().catch(() => {})
   })
 
-  // 代表的なheadless検知ポイントを可能な範囲で偽装する
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] })
-    Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja', 'en-US', 'en'] })
-    if (!(window as any).chrome) {
-      ;(window as any).chrome = { runtime: {} }
-    }
-  })
-
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-  )
-
+  // 2026-08-10追記(重要な不整合を修正): 以前はここで手動のnavigator.*パッチと
+  // 固定User-Agent(Windows NT 10.0; Win64; x64)を設定していたが、実行環境は
+  // 常にLinux(Fargateコンテナ)であり、Chromeが自動送信するSec-CH-UA-Platform
+  // (Client Hints)ヘッダーやnavigator.userAgentData.platformは実際のLinuxを
+  // 報告し続けるため、「UAはWindows・他の信号はLinux」という内部矛盾が常に
+  // 発生していた。詳細はsrc/lib/salonboard-automation.tsの同日付コメント参照。
+  // puppeteer-extra-plugin-stealth(モジュール冒頭でuse()済み)がこれらの
+  // 手動パッチより精巧かつ実行環境と整合する形でカバーするため撤去し、
+  // User-Agentも上書きせず本物の値をそのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
   return page
