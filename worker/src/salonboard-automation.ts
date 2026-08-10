@@ -408,12 +408,14 @@ async function uploadFrontImage(
       formData.append('pubManageId', 'undefined')
 
       let resText: string
+      let resStatus: number
       try {
         const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
           method: 'POST',
           body: formData,
           credentials: 'include'
         })
+        resStatus = res.status
         resText = await res.text()
       } catch (fetchErr: any) {
         return { success: false, error: `fetch自体が失敗しました: ${String(fetchErr?.message || fetchErr)}`, imageId: null }
@@ -432,9 +434,14 @@ async function uploadFrontImage(
       const imageFilePath = val('imageFilePath')
 
       if (userErrorFlg !== '0' || !imageId || !/^B\d{9}$/.test(imageId)) {
+        // 2026-08-10追記: userErrorFlg/imageIdが両方nullになる不具合の原因調査のため、
+        // 実際のレスポンス本文(先頭500文字)を診断情報として残す。想定外のHTML
+        // (ログイン切れ・エラーページ等)が返っている可能性を切り分けるため。
         return {
           success: false,
-          error: `アップロードレスポンスが想定外でした(userErrorFlg=${userErrorFlg}, imageId=${imageId})`,
+          error:
+            `アップロードレスポンスが想定外でした(status=${resStatus}, userErrorFlg=${userErrorFlg}, imageId=${imageId}) ` +
+            `レスポンス冒頭500文字: ${resText.replace(/\s+/g, ' ').trim().slice(0, 500)}`,
           imageId: null
         }
       }
