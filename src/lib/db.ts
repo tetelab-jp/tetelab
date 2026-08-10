@@ -98,7 +98,13 @@ export function createDb(connectionString: string): PgDatabase {
     // 「UTCとして」パースする前提で書かれているため)。
     // Pool の 'connect' イベントで別途 client.query() すると、既に
     // 待機中のクエリと競合し得るため、接続時オプションとして渡す。
-    sharedPool = new Pool({ connectionString, options: '-c TimeZone=UTC' })
+    sharedPool = new Pool({
+      connectionString,
+      options: '-c TimeZone=UTC',
+      // RDSはSSL接続を必須にしているため有効化する(自己署名扱いのRDS CA
+      // チェーンを都度検証する構成は今回のスコープでは行わず簡略化する)
+      ssl: { rejectUnauthorized: false }
+    })
   }
   return new PgDatabase(sharedPool)
 }
