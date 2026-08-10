@@ -178,6 +178,57 @@ async function recordConnectionStatus(
 }
 
 /**
+ * 2026-08-10追記(診断用): 「Navigation timeout of 30000 ms exceeded」が
+ * AWS Fargate環境で繰り返し発生する問題の切り分けのため、salonboard.comへの
+ * アクセスを試みる前に、salonboard.comとは無関係な外部サイトへの疎通を
+ * まず確認する。
+ *   - Node標準fetch()経由: ChromiumのTLSスタックを経由しない、コンテナの
+ *     ネットワーク経路(NAT Gateway/セキュリティグループ等)そのものの疎通確認。
+ *   - Puppeteer page.goto()経由: Chromiumから見た疎通確認。
+ * 両方失敗する場合はAWS側のネットワーク設定(NAT Gateway/ルートテーブル/
+ * セキュリティグループのアウトバウンド許可等)の問題である可能性が高く、
+ * salonboard.comだけ失敗する場合は、salonboard.com(Akamai等)側の
+ * ブロックである可能性が高いと判断できる。結果はCloudWatch Logs
+ * (console.log/console.error)とlog()コールバックの両方に出す。
+ */
+async function diagnoseOutboundConnectivity(page: Page, log: AutomationLogger): Promise<void> {
+  const testUrl = 'https://example.com'
+
+  // ---- Node標準fetch()での疎通確認(Chromiumを経由しない) ----
+  const fetchStart = Date.now()
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000)
+    const res = await fetch(testUrl, { signal: controller.signal })
+    clearTimeout(timeoutId)
+    const elapsed = Date.now() - fetchStart
+    const msg = `[診断] Node fetch()での${testUrl}疎通確認: 成功 (status=${res.status}, ${elapsed}ms)`
+    console.log(msg)
+    log(msg)
+  } catch (err: any) {
+    const elapsed = Date.now() - fetchStart
+    const msg = `[診断] Node fetch()での${testUrl}疎通確認: 失敗 (${elapsed}ms経過) - ${String(err?.message || err)}`
+    console.error(msg)
+    log(msg)
+  }
+
+  // ---- Puppeteer(Chromium)経由での疎通確認 ----
+  const gotoStart = Date.now()
+  try {
+    await page.goto(testUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
+    const elapsed = Date.now() - gotoStart
+    const msg = `[診断] Chromium page.goto()での${testUrl}疎通確認: 成功 (${elapsed}ms, 到達URL=${page.url()})`
+    console.log(msg)
+    log(msg)
+  } catch (err: any) {
+    const elapsed = Date.now() - gotoStart
+    const msg = `[診断] Chromium page.goto()での${testUrl}疎通確認: 失敗 (${elapsed}ms経過) - ${String(err?.message || err)}`
+    console.error(msg)
+    log(msg)
+  }
+}
+
+/**
  * サロンボードにログインする。
  * フォームの見た目のactionはおとりで、実際は以下の<a>タグのonclickに紐づく
  * JS関数 dologin(event) 経由で /CNC/login/doLogin/ にPOSTされる:
@@ -201,6 +252,8 @@ export async function loginToSalonBoard(
   env?: Bindings,
   userId?: number
 ): Promise<void> {
+  await diagnoseOutboundConnectivity(page, log)
+
   log('ログインページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 

@@ -361,6 +361,12 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
   if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
 
   let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  // 2026-08-10追記: loginToSalonBoard()に空関数のloggerを渡していたため、
+  // 診断用ログ(diagnoseOutboundConnectivity()の疎通確認結果等)が
+  // CloudWatch Logsにしか出ず、画面上のエラーメッセージからは見えなかった。
+  // 収集してエラー時のレスポンスに含める。
+  const logLines: string[] = []
+  const collectLog = (msg: string) => logLines.push(msg)
   try {
     const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
     const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
@@ -369,7 +375,7 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     browser = await launchBrowser()
     const page = await newAutomationPage(browser)
     console.log(`[sync-stylists-coupons] user=${user.id} ログイン開始`)
-    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+    await loginToSalonBoard(page, loginId, password, collectLog, c.env, user.id)
     console.log(`[sync-stylists-coupons] user=${user.id} ログイン成功、同期開始`)
 
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
@@ -379,7 +385,8 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     return c.json({ success: true, stylistCount, couponCount })
   } catch (err: any) {
     console.error(`[sync-stylists-coupons] user=${user.id} エラー:`, err?.stack || err)
-    return c.json({ success: false, error: String(err?.message || err) }, 400)
+    const diagnostics = logLines.length > 0 ? ` / 診断ログ: ${logLines.join(' | ')}` : ''
+    return c.json({ success: false, error: (String(err?.message || err) + diagnostics).slice(0, 2000) }, 400)
   } finally {
     if (browser) await browser.close().catch(() => {})
   }
