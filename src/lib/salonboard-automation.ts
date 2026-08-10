@@ -87,6 +87,13 @@ export async function launchBrowser(): Promise<Browser> {
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
   if (proxyServer) {
     args.push(`--proxy-server=${proxyServer}`)
+    // ホスト:ポートのみ(認証情報を含まない)を出力する。値そのものにpass/userを
+    // 埋め込む形式(例: user:pass@host:port)のプロキシ業者もあるため、
+    // "@"より後ろだけをログに残すことで誤って認証情報をCloudWatchに残さないようにする。
+    const safeProxyLabel = proxyServer.includes('@') ? proxyServer.split('@').pop() : proxyServer
+    console.log(`[launchBrowser] プロキシ経由で起動: ${safeProxyLabel}`)
+  } else {
+    console.log('[launchBrowser] プロキシ未設定、直接アクセスで起動')
   }
 
   // 2026-08-10追記: headlessモードは一貫してSALON BOARD側のボット対策に
@@ -282,7 +289,28 @@ export async function loginToSalonBoard(
   log('ログインページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
-  await page.waitForSelector('input[name="userId"]', { timeout: 15000 })
+  try {
+    await page.waitForSelector('input[name="userId"]', { timeout: 15000 })
+  } catch (err) {
+    // 2026-08-11追記: page.goto()自体は成功したのにログインフォームが
+    // 見つからないケース(Akamai系のチャレンジ/ブロック画面、あるいは
+    // プロキシ業者側のエラー/残高不足ページ等がsalonboard.comの代わりに
+    // 表示されている可能性)を切り分けるため、失敗時点のURL・タイトル・
+    // 本文冒頭を診断情報としてログに残す。
+    const currentUrl = page.url()
+    const pageTitle = await page.title().catch(() => '(取得失敗)')
+    const pageText = await page
+      .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
+      .catch(() => '(画面テキスト取得失敗)')
+    const cleanedText = pageText.replace(/\s+/g, ' ').trim()
+    const proxyConfigured = !!process.env.SALONBOARD_PROXY_SERVER
+    const diagMsg =
+      `[診断] ログインフォーム検出失敗時の画面情報: url=${currentUrl} title="${pageTitle}"` +
+      ` proxy設定=${proxyConfigured} pageText="${cleanedText}"`
+    console.error(diagMsg)
+    log(diagMsg)
+    throw err
+  }
   await page.type('input[name="userId"]', loginId, { delay: 20 })
   await page.type('input[name="password"]', password, { delay: 20 })
 
