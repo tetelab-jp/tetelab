@@ -103,3 +103,10 @@ variable "encryption_key" {
   sensitive = true
   default   = ""
 }
+
+# CloudWatchアラーム(ALB 5xx・ECSタスク異常・RDS逼迫・投稿ワーカー異常終了)の
+# 通知先メールアドレス。空文字なら通知(SNSサブスクリプション)自体を作らない。
+variable "alert_email" {
+  type    = string
+  default = ""
+}
