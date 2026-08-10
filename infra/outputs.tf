@@ -1,0 +1,68 @@
+# アプリ本体がAWS上で動くようになったため、ECS_CLUSTER/AWS_ACCESS_KEY_ID等は
+# ecs-app.tfのタスク定義でTerraformが直接環境変数/Secretsとして注入しており、
+# 手動でどこかにコピーする必要はない。以下はCI/CD設定やデータ移行など、
+# 人がまだ手を動かす必要がある箇所のための出力のみ。
+
+output "worker_ecr_repository_url" {
+  description = "GitHub Actions(deploy-worker.yml)のsecrets.ECR_REPOSITORYに設定する値"
+  value       = aws_ecr_repository.worker.repository_url
+}
+
+output "app_ecr_repository_url" {
+  description = "GitHub Actions(deploy-app.yml)のsecrets.ECR_REPOSITORYに設定する値"
+  value       = aws_ecr_repository.app.repository_url
+}
+
+output "ecs_cluster_name" {
+  value = aws_ecs_cluster.worker.name
+}
+
+output "worker_task_definition_family" {
+  value = aws_ecs_task_definition.worker.family
+}
+
+output "app_task_definition_family" {
+  value = aws_ecs_task_definition.app.family
+}
+
+output "app_ecs_service_name" {
+  description = "GitHub Actions(deploy-app.yml)のsecrets.ECS_SERVICEに設定する値"
+  value       = aws_ecs_service.app.name
+}
+
+output "github_actions_deploy_role_arn" {
+  description = "GitHub Actions側のsecrets.AWS_DEPLOY_ROLE_ARNに設定する値"
+  value       = aws_iam_role.github_actions_deploy.arn
+}
+
+output "alb_dns_name" {
+  description = "manage_dns_in_route53=false の場合、自分のDNSでdomain_nameをこのALBへ向けること(CNAMEまたはALIAS)"
+  value       = aws_lb.app.dns_name
+}
+
+output "acm_certificate_validation_records" {
+  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なACM検証用CNAMEレコード(ドメイン未指定時は空)"
+  value = local.has_domain ? [
+    for dvo in aws_acm_certificate.app[0].domain_validation_options : {
+      name  = dvo.resource_record_name
+      type  = dvo.resource_record_type
+      value = dvo.resource_record_value
+    }
+  ] : []
+}
+
+output "rds_endpoint" {
+  description = "データ移行スクリプト実行時などに使う接続先(ホスト:ポート)"
+  value       = aws_db_instance.main.endpoint
+}
+
+output "database_url" {
+  description = "データ移行スクリプト(scripts/migrate-d1-to-postgres.ts)実行時にDATABASE_URLとして渡す値"
+  value       = "postgres://${var.db_username}:${random_password.db.result}@${aws_db_instance.main.address}:5432/${var.db_name}"
+  sensitive   = true
+}
+
+output "style_images_bucket" {
+  description = "データ移行スクリプト(scripts/migrate-r2-to-s3.ts)実行時にS3_BUCKETとして渡す値"
+  value       = aws_s3_bucket.style_images.bucket
+}

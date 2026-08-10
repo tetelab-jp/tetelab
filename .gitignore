@@ -31,3 +31,11 @@ lerna-debug.log*
 
 # misc
 .DS_Store
+
+# terraform(state・プロバイダバイナリは秘密情報を含む/巨大なためコミットしない。
+# state はS3バックエンドで管理する)
+infra/.terraform/
+infra/terraform.tfstate
+infra/terraform.tfstate.backup
+infra/*.tfplan
+infra/terraform.tfvars

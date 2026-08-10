@@ -1,0 +1,105 @@
+variable "aws_region" {
+  description = "デプロイ先AWSリージョン"
+  type        = string
+  default     = "ap-northeast-1"
+}
+
+variable "project_name" {
+  description = "リソース名のプレフィックス"
+  type        = string
+  default     = "salonboard-worker"
+}
+
+variable "task_cpu" {
+  description = "Fargateタスクに割り当てるCPU(単位: 1024 = 1vCPU)"
+  type        = string
+  default     = "1024"
+}
+
+variable "task_memory" {
+  description = "Fargateタスクに割り当てるメモリ(MiB)"
+  type        = string
+  default     = "3072"
+}
+
+# 初回のタスク定義登録に使うイメージ。ECRにまだ何もpushしていない段階なので、
+# 実在する公開ダミーイメージを既定値にしておく(RunTaskで実際に使われる
+# イメージは、GitHub Actionsが新しいリビジョンを登録した後のものになるため)。
+variable "initial_image" {
+  description = "タスク定義の初回登録時に使うコンテナイメージ"
+  type        = string
+  default     = "public.ecr.aws/docker/library/hello-world:latest"
+}
+
+variable "github_repository" {
+  description = "GitHub ActionsのOIDC信頼関係を許可するリポジトリ(例: tetelab-jp/tetelab)"
+  type        = string
+  default     = "tetelab-jp/tetelab"
+}
+
+variable "cloudflare_iam_user_name" {
+  description = "アプリ本体からECS RunTaskを呼ぶためのIAMユーザー名(旧: Cloudflare Workersから呼んでいた頃の名残。今はアプリ自身がAWS上で動くためこのユーザーの意味合いは変わったが、aws-ecs.tsの実装(静的アクセスキーでSigV4署名)を変えずに済むようそのまま流用している)"
+  type        = string
+  default     = "salonboard-worker-app-caller"
+}
+
+# ---- アプリ本体(常時稼働サービス)関連 ----
+
+variable "domain_name" {
+  description = "アプリを公開するホスト名(例: app.example.com)。空文字のままならACM証明書は作らず、ALBのHTTP(80番)を直接使うテスト構成になる。"
+  type        = string
+  default     = ""
+}
+
+variable "route53_zone_name" {
+  description = "domain_nameを含むRoute53ホストゾーン名(例: example.com)。manage_dns_in_route53=trueの場合のみ使用。"
+  type        = string
+  default     = ""
+}
+
+variable "manage_dns_in_route53" {
+  description = "trueならRoute53(既存ホストゾーン)にACM検証レコードとALBへのAレコードを自動作成する。falseならterraform output で出力される検証レコードを自分のDNSへ手動追加する。"
+  type        = bool
+  default     = true
+}
+
+variable "db_name" {
+  type    = string
+  default = "tetelab"
+}
+
+variable "db_username" {
+  type    = string
+  default = "tetelab"
+}
+
+variable "app_task_cpu" {
+  type    = string
+  default = "512"
+}
+
+variable "app_task_memory" {
+  type    = string
+  default = "1024"
+}
+
+variable "app_desired_count" {
+  type    = number
+  default = 1
+}
+
+# 初回のアプリタスク定義登録に使うイメージ(initial_imageと同様、ダミーでよい)
+variable "app_initial_image" {
+  type    = string
+  default = "public.ecr.aws/docker/library/hello-world:latest"
+}
+
+# 移行前にCloudflare Pages側で本番運用していた場合は、そのときの
+# ENCRYPTION_KEYと同じ値を渡すこと(異なる値にすると既存のsalon_credentials
+# (暗号化済みID/パスワード)が復号できなくなる)。空文字のままなら
+# Terraformが新しい鍵を自動生成する(まだ本番データが無いテスト環境向け)。
+variable "encryption_key" {
+  type      = string
+  sensitive = true
+  default   = ""
+}

@@ -2,6 +2,9 @@ import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
+import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
+import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
+import { formatJstDateTime } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -12,20 +15,23 @@ dashboard.use('*', requireAuth)
 
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
-  const cred = await c.env.DB.prepare('SELECT id, consent_given, updated_at FROM salon_credentials WHERE user_id = ?')
+  const cred = await c.env.DB.prepare(
+    'SELECT id, consent_given, updated_at, connection_status FROM salon_credentials WHERE user_id = ?'
+  )
     .bind(user.id)
-    .first<{ id: number; consent_given: number; updated_at: string }>()
+    .first<{ id: number; consent_given: number; updated_at: string; connection_status: string }>()
+  const isConnected = cred?.connection_status === 'success'
 
   const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
     .bind(user.id)
     .first<{ cnt: number }>()
 
-  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM style_images WHERE user_id = ?')
+  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ?')
     .bind(user.id)
     .first<{ total: number }>()
 
   const styleSelectedRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) as selected FROM style_images WHERE user_id = ? AND is_selected = 1'
+    'SELECT COUNT(*) as selected FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1'
   )
     .bind(user.id)
     .first<{ selected: number }>()
@@ -35,8 +41,14 @@ dashboard.get('/dashboard', async (c) => {
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="bg-white rounded-xl border border-gray-100 p-5">
           <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-          <p class={'text-lg font-bold ' + (cred ? 'text-green-600' : 'text-gray-400')}>
-            {cred ? <><i class="fas fa-circle-check mr-1"></i>連携済み</> : <><i class="fas fa-circle-xmark mr-1"></i>未設定</>}
+          <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+            {isConnected ? (
+              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+            ) : cred ? (
+              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+            ) : (
+              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+            )}
           </p>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
@@ -55,13 +67,17 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      {!cred && (
+      {!isConnected && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
           <i class="fas fa-triangle-exclamation text-amber-500 mt-0.5"></i>
           <div>
-            <p class="font-semibold text-amber-800">サロンボードとの連携が未設定です</p>
+            <p class="font-semibold text-amber-800">
+              {cred ? 'サロンボードとの連携がまだ確認できていません' : 'サロンボードとの連携が未設定です'}
+            </p>
             <p class="text-sm text-amber-700 mt-1">
-              自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。
+              {cred
+                ? 'ログインID/パスワードは登録済みですが、実際にサロンボードへログインできたことがまだ確認されていません。連携設定ページで「サロンボードと同期する」を実行して確認してください。'
+                : '自動投稿を行うには、まずサロンボードのログインID/パスワードを登録してください。'}
             </p>
             <a
               href="/settings/salonboard"
@@ -121,10 +137,18 @@ dashboard.get('/settings/salonboard', async (c) => {
   const error = c.req.query('error')
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, consent_given, updated_at FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, consent_given, updated_at, last_stylist_synced_at, last_coupon_synced_at, connection_status, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ salonboard_login_id_enc: string; consent_given: number; updated_at: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      consent_given: number
+      updated_at: string
+      last_stylist_synced_at: string | null
+      last_coupon_synced_at: string | null
+      connection_status: string
+      last_error: string | null
+    }>()
 
   let maskedLoginId = ''
   if (cred) {
@@ -138,6 +162,13 @@ dashboard.get('/settings/salonboard', async (c) => {
       }
     }
   }
+
+  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
+  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
 
   return c.render(
     <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
@@ -168,7 +199,61 @@ dashboard.get('/settings/salonboard', async (c) => {
           <div class="bg-white rounded-xl border border-gray-100 p-6">
             <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
             <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
-            <p class="text-xs text-gray-400 mt-2">最終更新: {cred.updated_at}</p>
+            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
+            <div class="mt-3 pt-3 border-t border-gray-100">
+              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
+              {cred.connection_status === 'success' ? (
+                <p class="text-sm font-semibold text-green-600">
+                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
+                </p>
+              ) : cred.connection_status === 'failed' ? (
+                <div>
+                  <p class="text-sm font-semibold text-red-600">
+                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+                  </p>
+                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
+                </div>
+              ) : (
+                <p class="text-sm font-semibold text-gray-500">
+                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                </p>
+              )}
+              <p class="text-xs text-gray-400 mt-1">
+                下の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
+              </p>
+            </div>
+          </div>
+        )}
+
+        {cred && (
+          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+            <p class="font-semibold">
+              <i class="fas fa-rotate mr-2 text-pink-500"></i>スタイリスト・クーポンの同期
+            </p>
+            <p class="text-sm text-gray-500 leading-relaxed">
+              サロンボードに登録されているスタイリスト・クーポンの一覧を取得し、このアプリのスタイル投稿フォームで選べるようにします。
+              スタイリストやクーポンを追加・変更した場合は再度同期してください。
+            </p>
+            <div class="grid grid-cols-2 gap-3 text-sm">
+              <div class="bg-gray-50 rounded-lg p-3">
+                <p class="text-xs text-gray-400">スタイリスト</p>
+                <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at ? formatJstDateTime(cred.last_stylist_synced_at) : '未実施'}</p>
+              </div>
+              <div class="bg-gray-50 rounded-lg p-3">
+                <p class="text-xs text-gray-400">クーポン</p>
+                <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
+                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at ? formatJstDateTime(cred.last_coupon_synced_at) : '未実施'}</p>
+              </div>
+            </div>
+            <button
+              id="sync-stylists-coupons-btn"
+              type="button"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i class="fas fa-rotate mr-1"></i>サロンボードと同期する
+            </button>
+            <p id="sync-stylists-coupons-status" class="text-sm"></p>
           </div>
         )}
 
@@ -207,6 +292,8 @@ dashboard.get('/settings/salonboard', async (c) => {
           </button>
         </form>
       </div>
+
+      {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
     { title: 'サロンボード連携設定' }
   )
@@ -258,6 +345,39 @@ dashboard.post('/settings/salonboard', async (c) => {
   }
 
   return c.redirect('/settings/salonboard?saved=1')
+})
+
+// ---------- スタイリスト・クーポン同期 ----------
+
+dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
+  const user = c.get('user')
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+
+  if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
+  if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser()
+    const page = await newAutomationPage(browser)
+    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+
+    const stylistCount = await syncStylists(page, c.env, user.id, () => {})
+    const couponCount = await syncCoupons(page, c.env, user.id, () => {})
+
+    return c.json({ success: true, stylistCount, couponCount })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
 })
 
 function maskLoginId(loginId: string): string {

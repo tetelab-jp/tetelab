@@ -200,7 +200,9 @@ async function setSession(c: any, userId: number, email: string) {
   const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
   const token = await signJwt({ sub: userId, email, exp }, secret)
-  const isHttps = c.req.url.startsWith('https://')
+  // ALB配下ではTLSがALBで終端され、コンテナへは平文HTTPで届くため
+  // c.req.url は常に http:// になる。ALBが付与するX-Forwarded-Protoで判定する。
+  const isHttps = c.req.header('x-forwarded-proto') === 'https' || c.req.url.startsWith('https://')
   setCookie(c, SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: isHttps,

@@ -14,8 +14,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const selected = target.checked
 
       try {
-        const res = await axios.post('/api/style/toggle', { imageId, selected })
-        updateSelectedCount(res.data.selectedCount)
+        const res = await fetch('/api/style/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageId, selected })
+        })
+        const data = await res.json()
+        updateSelectedCount(data.selectedCount)
       } catch (err) {
         alert('更新に失敗しました。再度お試しください。')
         target.checked = !selected
@@ -28,9 +33,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (selectAllBtn) {
     selectAllBtn.addEventListener('click', async () => {
       try {
-        const res = await axios.post('/api/style/bulk-select', { selected: true })
+        const res = await fetch('/api/style/bulk-select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selected: true })
+        })
+        const data = await res.json()
         document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = true))
-        updateSelectedCount(res.data.selectedCount)
+        updateSelectedCount(data.selectedCount)
       } catch (err) {
         alert('更新に失敗しました。')
       }
@@ -42,9 +52,14 @@ document.addEventListener('DOMContentLoaded', () => {
   if (deselectAllBtn) {
     deselectAllBtn.addEventListener('click', async () => {
       try {
-        const res = await axios.post('/api/style/bulk-select', { selected: false })
+        const res = await fetch('/api/style/bulk-select', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ selected: false })
+        })
+        const data = await res.json()
         document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = false))
-        updateSelectedCount(res.data.selectedCount)
+        updateSelectedCount(data.selectedCount)
       } catch (err) {
         alert('更新に失敗しました。')
       }
@@ -59,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm('この画像を削除しますか？')) return
 
       try {
-        await axios.post(`/style/library/delete/${imageId}`)
+        await fetch(`/style/library/delete/${imageId}`, { method: 'POST' })
         const card = document.querySelector(`[data-image-id="${imageId}"]`)
         if (card) card.remove()
         location.reload()
@@ -68,4 +83,45 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     })
   })
+
+  // テンプレート一括適用
+  const bulkApplyBtn = document.getElementById('bulk-apply-btn')
+  if (bulkApplyBtn) {
+    bulkApplyBtn.addEventListener('click', async () => {
+      const select = document.getElementById('bulk-apply-template-select')
+      const templateId = Number(select.value)
+      if (!templateId) {
+        alert('テンプレートを選択してください')
+        return
+      }
+
+      const styleIds = Array.from(document.querySelectorAll('.style-checkbox:checked')).map((cb) =>
+        Number(cb.getAttribute('data-image-id'))
+      )
+      if (styleIds.length === 0) {
+        alert('適用先のスタイルにチェックを入れてください')
+        return
+      }
+      if (!confirm(`チェック中の${styleIds.length}件のスタイルにテンプレートを適用します。よろしいですか？`)) return
+
+      bulkApplyBtn.disabled = true
+      try {
+        const res = await fetch('/api/style/bulk-apply-template', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ templateId, styleIds })
+        })
+        const data = await res.json()
+        if (data.success) {
+          alert(`適用しました（${data.appliedCount} / ${data.totalCount}件）`)
+        } else {
+          alert('一部またはすべて失敗しました: ' + (data.errors || []).join(', '))
+        }
+        location.reload()
+      } catch (err) {
+        alert('通信エラーが発生しました')
+        bulkApplyBtn.disabled = false
+      }
+    })
+  }
 })

@@ -17,13 +17,13 @@ blog.get('/blog/master', async (c) => {
   const saved = c.req.query('saved')
 
   const [authors, categories, coupons, profile] = await Promise.all([
-    c.env.DB.prepare('SELECT id, name, is_active FROM blog_authors WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
+    c.env.DB.prepare('SELECT id, name, is_active FROM stylists WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
       .bind(user.id)
       .all<MasterRow>(),
     c.env.DB.prepare('SELECT id, name, is_active FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
       .bind(user.id)
       .all<MasterRow>(),
-    c.env.DB.prepare('SELECT id, name, is_active FROM blog_coupons WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
+    c.env.DB.prepare('SELECT id, name, is_active FROM coupons WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
       .bind(user.id)
       .all<MasterRow>(),
     c.env.DB.prepare(
@@ -177,9 +177,9 @@ blog.post('/blog/master/profile', async (c) => {
 // ---------- マスタ（投稿者/カテゴリ/クーポン）のCRUD ----------
 
 const MASTER_TABLES: Record<string, string> = {
-  authors: 'blog_authors',
+  authors: 'stylists',
   categories: 'blog_categories',
-  coupons: 'blog_coupons'
+  coupons: 'coupons'
 }
 
 for (const key of Object.keys(MASTER_TABLES)) {
@@ -210,13 +210,13 @@ blog.get('/blog/posts', async (c) => {
   const saved = c.req.query('saved')
 
   const [authors, categories, coupons, posts] = await Promise.all([
-    c.env.DB.prepare('SELECT id, name FROM blog_authors WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
       .bind(user.id)
       .all<{ id: number; name: string }>(),
     c.env.DB.prepare('SELECT id, name FROM blog_categories WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
       .bind(user.id)
       .all<{ id: number; name: string }>(),
-    c.env.DB.prepare('SELECT id, name FROM blog_coupons WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
       .bind(user.id)
       .all<{ id: number; name: string }>(),
     c.env.DB.prepare(
@@ -299,7 +299,7 @@ blog.get('/blog/posts', async (c) => {
                 type="button"
                 class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-4 py-2 rounded-lg text-sm whitespace-nowrap"
               >
-                <i class="fas fa-sparkles mr-1"></i>AIで生成
+                <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成
               </button>
             </div>
             <p id="ai-status" class="text-xs text-pink-600 hidden"></p>

@@ -11,7 +11,7 @@
 - **対象自動化**: ①スタイル投稿(フォトギャラリー) ②ブログ投稿
 - **アーキテクチャ**: 1ユーザー = 1サロン(マルチテナント/salon_id設計は明示的に不採用)
 - **技術スタック**: Hono + TypeScript + Cloudflare Pages/Workers + D1(SQLite) + R2(画像) + Web Crypto API
-- **フロントエンド**: JSXサーバーレンダリング(`hono/jsx-renderer`) + TailwindCSS(CDN)
+- **フロントエンド**: JSXサーバーレンダリング(`hono/jsx-renderer`) + TailwindCSS(自前ビルド、後述の追記参照)
 - **禁止事項**: Node.js `fs`/`crypto`/`child_process`等は使用不可(Workers runtime制約)。暗号化はWeb Crypto APIのみ。
 
 ## 2. 現在の実装状況
@@ -265,3 +265,1264 @@ npm run deploy
 
 ### セキュリティに関する注意
 アップロードされた `.dev.vars` に実際のOpenAI APIキーが平文で含まれていた（gitには含まれていないことは確認済み）。共有環境を経由したキーなので、念のためOpenAI側でローテーション（キー再発行）することを推奨する。
+
+---
+
+## 追記（2026-08-05, Claude Code on the web上での引き継ぎ後の作業）
+
+Claude.ai上のセッションからzip一式（webapp.zip / webappphase3.zip）を引き継ぎ、
+`tetelab-jp/tetelab` リポジトリの `claude/genspark-cloude-migration-gjssen` ブランチとして
+GitHub上に移設した（PR #1）。gitの元コミット履歴（Genspark由来の7コミット）はそのまま保持。
+
+### このセッションで実施したこと
+1. **既存の型エラーを解消**（優先度4の着手前に発見・修正）
+   - `tsconfig.json` に `@cloudflare/workers-types` を追加し、`D1Database`/`R2Bucket`/`Fetcher`型を解決
+   - `src/lib/salonboard-automation.ts` の `page.evaluate()` コールバック（ブラウザ側で実行されるコード）向けに
+     `/// <reference lib="dom" />` を追加し、`window`/`document`/`HTMLFormElement`等の型エラーを解消
+   - `src/lib/crypto.ts` / `src/lib/jwt.ts` の `Uint8Array` を `Uint8Array<ArrayBuffer>` に明示し、
+     `BufferSource`への型不一致を解消
+   - `automation.ts` → `automation.tsx` にリネーム（JSXを含むのに拡張子が`.ts`のままでビルド失敗していた）
+   - `npx tsc --noEmit` がクリーンになることを確認済み
+2. **外部Cronトリガーの構築**（「次にやるべきこと」優先度4に対応）
+   - `cron-trigger-worker/` を新規プロジェクトとして追加。独立した `package.json`/`wrangler.jsonc`/`tsconfig.json`を持つ
+   - 1分間隔（`* * * * *`）で本体アプリの `/api/cron/run-style-posts` を`CRON_SECRET`付きBearer認証で叩く
+   - デプロイ手順は `cron-trigger-worker/README.md` に記載（`TARGET_URL`は本体アプリのデプロイ後URLに要書き換え）
+
+### わかったこと・今後の作業者への注意
+- **このセッションが動いていたクラウド実行環境からは、Cloudflare（`api.cloudflare.com`含む）を含むほぼ全ての外部ホストへの通信がネットワークポリシーでブロックされていた**（`cdn.tailwindcss.com`/`cdn.jsdelivr.net`も同様に403）。そのため、このセッション内ではCloudflareへの実デプロイも、TailwindCSS等CDN込みのデザイン確認もできなかった。
+  - 実際にCloudflareへデプロイする／CDN込みでデザインを確認する作業は、**ローカルPC上のClaude Code（またはインターネット制限のない環境）で行う必要がある**。
+- 上記の制約により、「次にやるべきこと」の1〜3・5番（実サロンボードへのログイン確認、本番E2Eテスト、`/style/template`の実測値入力、ブログHTML解析）はこのセッションでは着手不可だった。次の担当者（人またはAI）が実施すること。
+
+### 追記2: TailwindCSS/FontAwesome/axiosのCDN依存を撤廃
+
+上記の通信制限が判明したことをきっかけに、そもそも本番運用としても好ましくない
+「CDN経由でTailwindCSS/FontAwesome/axiosを読み込む」設計自体を見直した
+（TailwindCSSの公式ドキュメントでも `cdn.tailwindcss.com` は「本番環境では非推奨」と明記されている）。
+
+- **TailwindCSS**: `tailwindcss` / `@tailwindcss/cli` (v4)をdevDependenciesに追加。
+  `src/tailwind-input.css`(`@import "tailwindcss";`のみ)を入力に、
+  `npm run build:css`(`tailwindcss -i ./src/tailwind-input.css -o ./public/static/tailwind.css --minify`)
+  でJSX内のクラス使用を自動スキャンして`public/static/tailwind.css`を生成。`npm run build`に組み込み済み。
+- **FontAwesome**: `@fortawesome/fontawesome-free`(v7)をdevDependenciesに追加し、
+  `css/all.min.css`と`webfonts/*.woff2`を`public/static/fontawesome/`にコピーして自前ホスト化。
+  移行時に使用中の全アイコンクラスがv7 Free版に存在することを確認済み。
+  なお`fa-sparkles`は元々Free版に存在しないアイコン名だった(Genspark時代からの軽微な不具合)ため、
+  `fa-wand-magic-sparkles`に修正した。
+- **axios**: 使用箇所(`public/static/blog-post.js`, `public/static/style-library.js`)を
+  すべてネイティブの`fetch()`に置き換え、CDN読み込み自体を削除。
+- `src/renderer.tsx`から`<script src="https://cdn...">`/`<link href="https://cdn...">`を全て削除し、
+  `/static/tailwind.css`・`/static/fontawesome/css/all.min.css`をローカル参照に変更。
+- 生成物である`public/static/tailwind.css`はリポジトリにコミット済み(サイズも19KB程度と小さいため)。
+  **Tailwindのクラスを新規追加・変更した場合は`npm run build:css`を実行して再コミットすること**
+  (`npm run build`にも組み込まれているため、デプロイ時は自動で最新化される)。
+
+この変更により、外部ネットワーク接続が制限された環境でも、本体アプリの見た目を含めた
+動作確認が可能になった(実際にこのセッション内のサンドボックスでスクリーンショットにより確認済み)。
+
+### 次にやるべきこと（優先順位順・更新）
+1. **写真アップロードの実装検証**（未着手）: HANDOFF.md旧セクション6-5と同内容。実サロンボードへのログインが必要。
+2. **本番/リモート環境でのE2Eテスト**（未着手）: Cloudflareへの実デプロイが前提。ローカルPCまたはCI等、外部ネットワーク制限のない環境で実施すること。
+3. **`/style/template`の実際の値の入力**（未着手）: 実サロンボードのHTML確認が必要。
+4. **外部Cronトリガーの構築**: ✅ コード実装完了（`cron-trigger-worker/`）。実際のデプロイ・`TARGET_URL`/`CRON_SECRET`設定は未実施。
+5. **ブログ投稿の自動化**（未着手）: ブログ一覧・編集画面の生HTMLダンプが必要。
+
+## 追記（2026-08-08, Phase 3 MVP再設計）
+
+ユーザー提供の競合3サイト分析・詳細MVP仕様書・実サロンボードHTML（スタイル一覧/編集、
+スタイリスト一覧、クーポン一覧）をもとに、店舗全体でスタイルを一元管理する新データモデルへ
+全面移行した。詳細設計は `docs/phase3-mvp-design.md` を参照。要点は以下の通り。
+
+### データモデルの再設計（マイグレーション0004・0005）
+- `blog_authors` → `stylists`、`blog_coupons` → `coupons` に統合・改名し、
+  スタイル投稿とブログ投稿の両方で共有する共通マスタとした（`salonboard_stylist_key`/
+  `salonboard_coupon_key` でサロンボード側の内部IDと紐付け）。
+- 旧`style_images`（1行=1画像）を廃止し、`styles`（1行=1スタイル投稿の内容）+
+  `style_images`（`image_role`付きの子テーブル、FRONT画像など）に分割。
+- `styles`に3段階の状態管理カラムを追加: `internal_save_status`(draft/ready/disabled)、
+  `salonboard_register_status`(not_started/success/failed)、
+  `reflection_request_status`(not_started/pending/success/failed/blocked)。
+  「自動投稿完了」はサロンボードの**反映申請(公開)が成功したこと**で定義する
+  （ユーザー確定仕様、内部保存だけでは完了扱いにしない）。
+- 旧`style_post_templates`を廃止し、複数テンプレートを使い回せる`templates`テーブルを新設。
+- 0005で`templates.menu_detail_text`カラム追加漏れを修正（ローカルE2E確認中に発覚）。
+
+### スタイリスト/クーポンの自動取得
+- `src/lib/salonboard-sync.ts`: サロンボードの「スタイリスト一覧」「クーポン一覧」ページを
+  Puppeteerでスクレイピングし、`stylists`/`coupons`テーブルへupsertする関数群を実装済み。
+  セレクタは実HTML（`/CNB/draft/stylistList/`, `/CNB/draft/couponList/`）から確認済みだが、
+  **実行はBrowser Rendering環境が必要なため、このセッション内では未実行**。
+  `/settings/salonboard`画面への同期ボタン設置はまだ未実施（次にやるべきこと）。
+
+### 新スキーマに合わせたルート全面書き直し
+マイグレーション適用により壊れた以下4ファイルを新スキーマに合わせて再実装済み
+（`npx tsc --noEmit`・`npm run build`・`wrangler pages dev --local`でのE2E動作確認済み:
+サインアップ→スタイリスト/クーポン登録→スタイル新規作成（画像あり/なし）→編集→
+自動投稿トグルAPI→テンプレート作成/編集まで一通り確認）。
+
+- `src/routes/dashboard.tsx`: 集計クエリを`styles`/`auto_post_enabled_flag`ベースに変更。
+- `src/routes/blog.tsx`: `blog_authors`/`blog_coupons`への参照を`stylists`/`coupons`に変更。
+- `src/lib/style-post-runner.ts`: 「登録（下書き保存）」と「反映申請（公開）」を別ステップとして
+  実行し、それぞれの成否を`styles.salonboard_register_status`/`reflection_request_status`に
+  個別記録するよう変更（旧`postStyleImageFull`の一括呼び出しから分離）。
+- `src/routes/style.tsx`: スタイル一覧（`/style/library`）・作成/編集フォーム
+  （`/style/new`, `/style/:id/edit`）・自動投稿スケジュール（`/style/schedule`）・
+  テンプレート管理（`/style/template`系）を新スキーマで全面書き直し。
+  カテゴリ（レディース/メンズ）に応じた長さセレクトの表示切替用に
+  `public/static/style-form.js`を新規作成。
+
+### 次にやるべきこと（優先順位順・更新2）
+1. **`/settings/salonboard`にスタイリスト/クーポン同期ボタンを設置**し、
+   `salonboard-sync.ts`の`syncStylists()`/`syncCoupons()`を実際に呼び出せるようにする。
+2. **本番/リモート環境でのE2Eテスト**（未着手・変わらず）: Cloudflareへの実デプロイまたは
+   `wrangler dev`のリモートモードが前提。写真アップロード（モーダル操作）の実装検証も含む。
+3. **既存スタイルのインポート機能**（`docs/phase3-mvp-design.md` Phase 3-F、未着手）:
+   サロンボードに既に登録済みのスタイルを`styles`テーブルへ取り込む機能。
+4. **NG/未確認ワード等によるブロック検知**（Phase 3-G、未着手）: 反映申請前に
+   サロンボード側のブロック要因をチェックし`reflection_request_status='blocked'`にする処理。
+5. **ブログ投稿の自動化**（未着手・変わらず）: ブログ一覧・編集画面の生HTMLダンプが必要。
+
+## 追記（2026-08-08 その2、ユーザーの実機テストフィードバック対応）
+
+ユーザーがローカルPC（`npm run dev:sandbox`）で実際にアプリを操作し、以下の指摘を受けて対応した。
+
+### 対応した指摘
+1. **モデル情報の入力欄がない** → `styles`/`templates`両テーブルに元々あった
+   `model_attributes_json`カラムがフォームに露出していなかっただけ。髪量/髪質/太さ/
+   クセ/顔型/年代の6項目を`style.tsx`の`ModelAttributeFields`コンポーネントとして追加
+   （値のコード自体は`docs/phase3-mvp-design.md` 4-6参照。1〜3スケールの表示文言は
+   実HTML未確認のため暫定表記であることをコード上にコメントで明記）。
+2. **一度登録したスタイルを再編集できない** → 実際にはサーバー側は正常に動作していた
+   （ローカルE2Eで確認済み）。原因はUIの発見しにくさで、編集導線がタイトルの
+   テキストリンクのみだったため。一覧を行レイアウトに変更し、明示的な「編集」ボタンを追加。
+3. **スタイル一覧の画像が欠けている** → `object-cover`で固定高さの箱に詰めていたため
+   トリミングされていた。`object-contain`に変更し、全体が見えるようにした。
+   あわせて「スタイルポストのように横一列」という要望通り、グリッドカードから
+   1行1スタイルの行レイアウトに変更。
+4. **テンプレートとスタイル投稿の項目を統一したい（画像だけ設定すればいいように）** →
+   `templates`テーブルに元々あった`title_template`カラムもフォーム未露出だったため追加。
+   さらに`/style/new`に「テンプレートから作成」ドロップダウンを追加し、選択すると
+   画像以外の全項目（スタイル名・コメント・カテゴリ・長さ・メニュー・ハッシュタグ・
+   クーポン・モデル情報）が自動入力されるようにした（`style-form.js`のJS側で実装）。
+5. **自動投稿スケジュールをユーザー選択式ではなく「毎朝7:00から順次投稿・1日最大100件」
+   の固定方式にしたい** → `style_post_schedules`テーブルから`times_per_day`/`run_times`
+   カラムを削除（migration 0006）し、`enabled`フラグのみに簡素化。
+   `style-post-runner.ts`のクエリに`ORDER BY sort_order, id ASC LIMIT 100`を追加、
+   `automation.tsx`の外部Cron受け口を`run_times`照合ではなく固定文字列`'07:00'`との
+   比較に変更。あわせて、既に反映申請成功済み（`reflection_request_status='success'`）
+   のスタイルは対象から除外するようにした（従来は成功済みでも毎回再投稿されてしまう
+   潜在バグがあったため）。
+
+### 対応中に見つけた重大バグ2件（ユーザーからの指摘とは別）
+- **外部Cronエンドポイントが到達不能だった**: `dashboard.tsx`/`style.tsx`/`blog.tsx`が
+  それぞれ`.use('*', requireAuth)`でセッション認証必須にしていたが、Honoの
+  `app.route('/', subApp)`はサブアプリの`.use('*', ...)`をアプリ全体のワイルドカード
+  ミドルウェアとしてマージするため、これらより後にマウントされていた`automation.tsx`の
+  `/api/cron/run-style-posts`（`CRON_SECRET`のBearer認証のみで動く想定）が、
+  ログインセッションが無いと`dashboard`側の`requireAuth`に横取りされ401になっていた。
+  `src/index.tsx`で`automation`を`dashboard`/`style`/`blog`より先にマウントする順序に
+  修正して解決（`automation`自身が明示的に`requireAuth`を付けているルートは影響なし）。
+  **この修正が無いと、毎朝7:00の自動投稿は外部Cronから一切トリガーされない。**
+- **テンプレート自動入力JSが常に無効化されていた**: `style-form.js`が
+  `document.querySelector('form')`でフォームを取得していたが、ページの左サイドバーに
+  ログアウト用の`<form>`がDOM上で先に存在するため、常にそちらを誤って取得していた。
+  `.category-radio`要素の`closest('form')`で本来のフォームを取得するよう修正。
+
+### 動作確認方法
+`wrangler pages dev`のローカル環境 + Playwright（headless Chromium）で、テンプレート
+選択→自動入力の実際のJS挙動、モデル情報の保存・再表示、スタイル再編集、スケジュール
+保存、Cronエンドポイントの認証到達性（POST限定・requireAuthに横取りされないこと）まで
+すべて実際にブラウザ/HTTPリクエストで確認済み。
+
+## 追記（2026-08-08 その3、Phase 3-D/E/F/G実装）
+
+ユーザーから「既存スタイル取り込み・テンプレート一括適用・実行履歴汎用化・
+NG/未確認ブロック検知をすべて同時に進めてほしい」との指示を受け、4つとも実装した。
+サロンボードへの実接続が必要な検証（既存スタイル取り込み・NG検知）は
+「テスト環境の状態がすべて確定してから」という方針のため、コードは完成させたが
+実サイトでの動作確認は次のデプロイ時に持ち越し。
+
+### Phase 3-G: NG/未確認ワード等のブロック検知
+`src/lib/salonboard-automation.ts`に`checkReflectBlockers(page)`と
+`ReflectionBlockedError`を追加。`submitReflectApplication()`は反映申請ボタンを
+押す前に掲載管理TOPページのテキストから「NGワード」「未確認」等のキーワードを
+検索し、見つかった場合は`ReflectionBlockedError`をthrowして反映申請自体を行わない。
+`style-post-runner.ts`側でこれを捕捉し、`styles.reflection_request_status='blocked'`
+（通常の`failed`とは区別）として記録する。
+**⚠️ 実際の掲載管理TOPページでNG/未確認がどう表示されるか(DOM構造・文言)は未確認**
+のため、キーワード検索によるベストエフォート実装。実サイト確認後、確実な
+セレクタベースの判定に置き換えること。
+
+### Phase 3-E: 実行履歴画面の汎用化
+`automation.tsx`の`/style/test-run`を刷新。
+- `execution_logs`の`execution_type`（登録/反映申請）を表示し、関連スタイルへの
+  リンクを追加
+- `blocked`ステータス用のバッジ色（amber）を追加
+- 「失敗・ブロック中のスタイル」一覧と個別「再実行」ボタンを追加
+  （`POST /api/style/:id/retry`新設）
+- `style-post-runner.ts`は1件分の「登録＋反映申請」処理を`processStyleRow()`
+  として関数化し、通常のバッチ実行(`runStyleAutomationForUser`)と
+  単体再実行(`retryStylePost`)の両方から共有する構造にリファクタリング
+
+### Phase 3-D: テンプレート一括適用
+`POST /api/style/bulk-apply-template`を新設。`/style/library`画面で
+チェックボックス（既存の「自動投稿対象」チェックを流用）で選んだスタイルに、
+選択したテンプレートの内容を一括反映する。**画像・スタイル名・担当スタイリストは
+上書きしない**（画像とスタイリストは指示書通り、スタイル名は「複数スタイルに同じ
+タイトルが付くのはおかしい」という判断で対象外とした）。結果は
+`batch_template_apply_logs`に記録。
+
+### Phase 3-F: 既存スタイル取り込み
+`src/lib/salonboard-import.ts`を新設。
+- `fetchExistingStyles(page, log)`: スタイル一覧ページを巡回し、`styleId`
+  （`L`+9桁形式、HANDOFF.md 4-4で確認済み）とタイトルらしき文字列を取得
+- `fetchStyleDetail(page, styleId, log)`: 既存スタイル編集画面
+  （HANDOFF.md 4-4記載の`editStyle(event, styleId)`で遷移）を開き、
+  `draftRegisterStyle()`が書き込みに使っているのと同じセレクタ
+  （実HTML確認済み）でフィールド値を読み取る
+- `importSelectedStyles(...)`: 選択されたスタイルを取り込み、画像は
+  ブラウザのCookieセッション経由でfetchしR2へ保存、`styles`へ
+  `source_type='imported_from_salon_board'`、`internal_save_status='ready'`、
+  `salonboard_register_status`/`reflection_request_status`は
+  （既に実サイトで公開済みのはずのため）`'success'`で保存する。
+  重複投稿を避けるため`auto_post_enabled_flag=0`（初期OFF）とする。
+- `/style/import`画面：「一覧取得」→チェックボックスで選択→「取り込む」の
+  2ステップUI（`style-import.js`）
+
+**⚠️ `fetchExistingStyles()`のスタイル一覧ページの行DOM構造は実HTML未確認**。
+`styleId`形式（`L\d{9}`）の正規表現でhidden input/リンク等から抽出する
+ベストエフォート実装になっている。実際の一覧HTMLを確認後、確実な
+セレクタベースの実装に置き換えること。ページネーションの「次へ」トリガー
+（`doSelectNext`と推測）も未確認。
+
+### ローカルでの動作確認範囲
+Browser Renderingが必要な部分（ブラウザ起動より先）は、このセッションの
+ネットワーク制限下では検証できない。ローカル`wrangler pages dev`では、
+これらのAPI（`/api/style/import/fetch-list`・`/api/style/import/execute`・
+`/api/style/:id/retry`）を呼ぶと「ブラウザ起動失敗」のエラーがJSON形式で
+正しく返ること（＝コードパスがブラウザ起動の直前まで正常に到達すること）
+まで確認済み。それ以外（テンプレート一括適用のDB更新、実行履歴画面の表示、
+再実行ボタンのUI表示）は実際にDBへ書き込み・確認済み。
+
+## 追記（2026-08-08 その4、自動投稿の分散実行方式への変更）
+
+ユーザーから「毎朝7:00に一括投稿ではなく、7:00〜24:00の間に均等に分散して
+投稿したい」との要望があり、変更した。
+
+### 変更内容
+- `style-post-runner.ts`に`shouldPostNextStyle()`（ペース判定）・
+  `runNextStyleForUser()`（1件だけ処理する版の実行関数）を追加。
+- 判定ロジック：外部Cronが呼ばれるたびに「残り時間(24:00まで) ÷
+  残り対象件数」で理想の投稿間隔を毎回動的に算出し、本日(JST)最後に
+  投稿した時刻からその間隔以上経過していれば次の1件を投稿する。
+  固定スロット（"9:00に投稿"のような）を持たないため、日中に新しい
+  スタイルが自動投稿ONになったり、一部が失敗して対象件数が変わったり
+  しても、次回判定時に自動で間隔が再計算される。
+- `/api/cron/run-style-posts`は上記の1件版に切り替え。「手動実行」
+  ボタン（`/api/automation/test-run`）は従来通り全件即時実行のまま
+  （動作確認・急ぎ投稿用に維持）。
+- `/style/schedule`の説明文言を更新。
+
+### 動作確認方法
+`last_executed_at`をSQLで直接操作し、「本日未投稿→即実行」
+「5分前に投稿済み・残り1件→スキップ」「100分前に投稿済み→再度実行」
+の3パターンを`/api/cron/run-style-posts`への実際のリクエストで確認済み
+（ブラウザ起動そのものはこの環境では検証不可のため、そこで期待通り
+失敗することまでを確認）。
+
+### 「テスト実行」→「手動実行」表記変更
+ユーザー要望により、ナビゲーション・ページタイトル・ボタン文言の
+「テスト実行」表記をすべて「手動実行」に変更した（URLパス
+`/style/test-run`・`/api/automation/test-run`・ファイル名`test-run.js`は
+内部実装のため変更していない）。
+
+## 追記（2026-08-09、実機テスト＋実HTML調査に基づく重大バグ修正）
+
+Cloudflareへの実デプロイ後、ユーザーが実際にサロンボード連携をテストし、
+「既存スタイル取り込みでNavigation timeout of 30000 ms exceeded」が発生。
+原因調査のため、ユーザーのローカルPCでPlaywright(非headless)を使い
+実アカウントに実際にログインしてDOM調査を実施。結果は
+`docs/salonboard-real-html-findings.md`に記録済み。**今後salonboard-automation.ts/
+salonboard-import.tsを触る際は必ずこのファイルを先に読むこと。**
+
+### 判明した重大な事実
+
+1. **反映申請ボタン(`#reflectedButton`)にinline onclick属性が無い**。旧実装の
+   `[onclick*="reflected("]`セレクタは常にヒットせず、反映申請のクリックが
+   実質何もしていなかった。→ IDセレクタ+`element.click()`に修正済み。
+2. **NG/未確認のキーワード検索は必ずfalse positiveになる**。「NG」「未確認」は
+   画面上部の固定注意書き文の中にのみ出現し、実際のライブステータスとしては
+   出ない。ページ全文検索方式は常にこの注意書きにヒットしてブロック扱いになる
+   欠陥があった。→ `#reflectedButton`の`--disabled`クラス＋「要確認」リンクの
+   有無で判定する方式に修正済み。
+3. **旧HANDOFF.md 4-3の「要確認はブロックしない」という記述は誤りだった**。
+   実測で「要確認が残っているためreflectedButtonが無効化されている」ことを確認。
+   要確認もブロック要因として扱うべき。
+4. **dologin(event)・editStyle(event, styleId)は実際にevent引数を取る**。
+   window上の関数を偽のevent引数(または引数無し)で直接呼ぶ旧実装はリスクが
+   あった。→ 実際の`<a>`要素を`element.click()`する方式に修正済み。
+5. **クーポンが自動投稿時に一切SALON BOARDへ送信されていなかった**
+   （設計書で確定済みの隠しフィールド`frmStyleEditStyleDto.couponId`への
+   セットが未実装だった）。→ 修正済み。
+6. **SALON BOARDにはAkamai系のボット対策があり、headlessブラウザからの
+   アクセスが弾かれる**（curlも通常設定のheadless Chromiumも弾かれ、非headless
+   (実ブラウザウィンドウ)でのみ正常動作したことをローカル調査で確認）。
+   Cloudflare Browser Renderingは常にheadlessで動作するため、これが
+   「既存スタイル取り込みのタイムアウトが直らない」の根本原因である可能性が高い。
+   → `salonboard-automation.ts`に`newAutomationPage()`を追加し、
+   `navigator.webdriver`の隠蔽・User-Agent偽装・viewport設定などの
+   基本的なheadless検知回避策を追加済み（全ての`browser.newPage()`呼び出しを
+   これに置き換え済み）。**これでも弾かれる場合、より高度な
+   フィンガープリンティング対策(Canvas/WebGL偽装等)の追加が必要になる。**
+
+### 次にやるべきこと
+1. 上記6の対策を本番デプロイ後、実際に「既存スタイル取り込み」等を再実行し、
+   Akamai対策を突破できているか確認する（ユーザーへの確認待ち）。
+2. 突破できていない場合、より高度なstealth対策（`puppeteer-extra-plugin-stealth`
+   相当の対策をCloudflare Workers環境で実現する方法の調査、または
+   Cloudflare Browser Renderingの設定オプションの見直し）を検討する。
+3. スタイル一覧のページネーション（複数ページ時の「次へ」リンクの実onclick文字列）
+   は未検証のまま（`docs/salonboard-real-html-findings.md`「未検証」参照）。
+4. 反映申請ボタンが有効化された状態の実HTML/クラス差分は未確認のまま。
+
+## 追記（2026-08-09 その2、isTrustedクリック対策とスタイリスト/クーポン同期ボタンの追加）
+
+### クリックイベントのisTrusted対策（ユーザーローカルのClaude Codeと並行して対応・マージ済み）
+
+上記6のstealth対策後も「ログインに失敗しました」エラーが発生。
+`page.evaluate(() => element.click())`で発火するクリックイベントは
+`event.isTrusted = false`の合成イベントになる点に着目し、Akamai等の
+ボット対策JSがこれを判定材料にしている可能性を疑って対策した。
+
+- ログインボタン・`editStyle`リンク・`#reflectedButton`のクリックを、
+  すべて`page.evaluate(() => element.click())`からPuppeteerネイティブの
+  `page.click(selector)`（実際のCDPレベルmouseイベント、`isTrusted: true`）
+  に変更済み。
+- `newAutomationPage()`のstealth対策を強化（`navigator.plugins`・
+  `navigator.languages`・`window.chrome`オブジェクトの偽装を追加）。
+- ログイン失敗時の診断情報（失敗時URL・画面文言先頭500文字）を
+  `execution_logs`とエラーメッセージの両方に出力するようにした。
+- 本番デプロイ後、この対策で実際にログインが通るかは未確認のまま
+  （次にやるべきこと1・2を参照）。
+
+### スタイリスト/コンテンツ「サロンボードと同期する」ボタンを追加（根本原因対応）
+
+ユーザーから「画像ライブラリからスタイルの新規作成でスタイリストが
+表示されない」という報告を受け調査したところ、`syncStylists()`/
+`syncCoupons()`（`src/lib/salonboard-sync.ts`）は実装済みだったが、
+これを呼び出すUIボタンが一度も設置されていなかったことが判明
+（=DBのstylists/couponsテーブルが常に空だった）。これがスタイル作成
+フォームのスタイリスト欄が常に空になる直接の原因。
+
+- `/settings/salonboard`ページに「スタイリスト・クーポンの同期」
+  セクションを追加。現在の同期件数・最終同期日時を表示し、
+  「サロンボードと同期する」ボタンで手動同期できるようにした。
+- 新規APIルート`POST /api/settings/sync-stylists-coupons`
+  （`src/routes/dashboard.tsx`）を追加。既存のimportルートと同じ
+  `launchBrowser` → `newAutomationPage` → `loginToSalonBoard` →
+  （今回は）`syncStylists`/`syncCoupons`のパターンで実装。
+- `salonboard-sync.ts`側の`page.goto()`も他ファイルと同様
+  `networkidle0`→`domcontentloaded`＋`waitForSelector`に修正
+  （このファイルだけ旧方式のまま残っていて、他箇所と同じタイムアウト
+  リスクを抱えていたため）。
+- フロントJSは`public/static/salonboard-sync.js`を新規作成
+  （`style-import.js`と同じ構成）。
+
+### 次にやるべきこと（更新）
+5. 本番デプロイ後、`/settings/salonboard`で「サロンボードと同期する」を
+   実行し、スタイリスト・クーポンが正しく取得できるか確認する
+   （ここが通れば、上記のisTrusted対策・Akamai対策が実際に効いている
+   ことの検証にもなる）。
+6. 同期が成功したら、スタイル新規作成フォームのスタイリスト欄に
+   選択肢が表示されることを確認する。
+
+## 追記（2026-08-09 その3、ログイン成功判定バグの修正 と 連携ステータス表示の是正）
+
+同期ボタンを実行したところ、実際には
+`エラー: ログインに失敗しました [診断情報] url=https://salonboard.com/CNC/login/doLogin/ pageText="(画面テキスト取得失敗)"`
+というエラーが発生。調査の結果、`loginToSalonBoard()`の成功/失敗判定
+そのものにバグがあったことが判明。
+
+### バグの内容
+
+`dologin()`のPOST先URLは`https://salonboard.com/CNC/login/doLogin/`だが、
+このURL自体に判定条件の`"/login/"`という文字列が **含まれてしまう**
+（`/CNC/login/doLogin/`の`login/`部分にマッチ）。findings.md 1章に
+「ログインボタンクリック後、`/CNC/login/doLogin/`へ遷移し、その後
+ダッシュボード配下の画面が認証済み状態でレンダリングされる」と
+記載されている通り、**このURLは正常ログイン時にも通過する中間URL**。
+つまり旧ロジックは、ログインの成否に関わらず、doLogin到達直後に
+チェックすると常に「失敗」と誤判定する欠陥があった
+（`pageText`取得も失敗しているのは、ちょうど次の遷移が進行中で
+実行コンテキストが破棄されたタイミングで評価しようとしたため
+と推測される）。
+
+### 修正内容（`src/lib/salonboard-automation.ts` `loginToSalonBoard()`）
+
+1. URLが`/login/doLogin/`を含んでいる場合、追加でもう一段階の
+   ナビゲーション完了を待つようにした（doLogin後さらに遷移する
+   ケースに対応）。
+2. 成功判定をURL文字列の部分一致から、**ログインフォームの入力欄
+   (`input[name="userId"]`)がまだ画面に残っているかどうか**の
+   DOM判定に変更した。サーバー側フォワード等でURLが変わらない
+   ケースでも正しく判定できるようにするため。
+
+### 連携ステータス表示の是正（ユーザー指摘対応）
+
+ダッシュボードの「サロンボード連携」表示が、`salon_credentials`に
+ID/パスワードが**保存されているだけ**で「連携済み」と表示していた
+（実際にログインが成功したかどうかを一切見ていなかった）。
+これは元々の設計書（`docs/phase3-mvp-design.md` 5-1）にあった
+「接続確認」機能が実装されないまま残っていたギャップ。
+
+- `salon_credentials.connection_status`（migration 0004で追加済みだが
+  一度も書き込まれていなかったカラム）を、`loginToSalonBoard()`が
+  ログインを試行するたびに`'success'`/`'failed'`で更新するようにした
+  （`recordConnectionStatus()`ヘルパーを追加、`env`/`userId`を渡した
+  場合のみ動作、6箇所の呼び出し元すべてに`env`/`userId`を追加）。
+  失敗時は`last_error`にも診断メッセージを保存する。
+- ダッシュボード（`/dashboard`）の「サロンボード連携」表示を、
+  `cred`の有無ではなく`connection_status === 'success'`で判定するように
+  変更。ID/Pass登録済みだが未確認/失敗の場合は「未確認/失敗」を
+  amber色で表示し、「連携設定へ進む」の注意書きも出し分けるようにした。
+- `/settings/salonboard`ページにも、現在の`connection_status`と
+  `last_error`を表示する「連携ステータス」欄を追加。
+
+### 次にやるべきこと（更新）
+7. ✅ 上記のログイン成功判定バグ修正を本番デプロイし、「サロンボードと
+   同期する」を再実行して、実際に成功するか確認する。→ 本番でスタイリスト
+   同期・既存スタイル取り込み(1ページ目分)が成功することを確認済み
+   (2026-08-09、ユーザー報告)。
+8. ✅ 成功した場合、ダッシュボードの「サロンボード連携」表示が
+   「連携済み」に切り替わることを確認する。
+
+## 追記（2026-08-09 その4、作業分担の変更）
+
+**サロンボード連携部分(salonboard-automation.ts / salonboard-import.ts /
+salonboard-sync.ts)の実装・検証は、以降ローカルのClaude Codeが担当する。**
+クラウド側セッションはこのリポジトリからサロンボード本番サイトへの
+接続ができない(プロキシで`salonboard.com`への接続がブロックされる)ため、
+これまでの修正はすべて`docs/salonboard-real-html-findings.md`等の
+既存ドキュメントからの推測ベースだった。実際にPlaywrightでログインして
+検証できるローカル側の方が、この領域については精度・速度ともに優れる
+と判断し、ユーザーと合意のうえ役割分担を変更した。
+
+- **ローカルのClaude Code担当**: サロンボード連携コードの修正・実機検証・
+  デプロイ
+- **クラウド側セッション担当**: それ以外の設計相談・UI実装・DB設計等
+
+### 既知の未解決バグ(ローカル側で対応予定)
+
+- `src/lib/salonboard-import.ts`の`fetchExistingStyles()`内、ページネーション
+  処理で`window.doSelectNext()`を引数無しで呼んでいる箇所が
+  `Cannot read properties of undefined (reading 'target')`エラーの原因と
+  推測される(dologin/editStyle/addStyleと同様、event引数を要求する関数の
+  可能性が高い)。`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
+  `doSelectLast`も同様の懸念があり未検証。実際の「次へ」ボタン要素の
+  実HTML構造も含めて、ローカル側での実機調査・修正が必要。→ **2026-08-09
+  その5で対応(下記参照)。**
+
+## 追記（2026-08-09 その5、window関数の実機一括検証を試みるも salonboard.com 側の
+アクセス制限により未完了。doSelectNextはエラー内容からの類推で暫定修正）
+
+### 実施したこと
+
+`dologin`/`editStyle`/`addStyle`/`delStyle`/`unpresentStyle`/`presentStyle`/
+`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/`doSelectNext`/`doSelectLast`
+の全関数について、Playwright(非headless、ローカルMac)で実機ログインし、
+1つずつ`toString()`でソース確認・実要素セレクタ確認を行う計画で着手した。
+
+### 結果: 想定通りには進まなかった
+
+この日は既にPlaywright/curlでsalonboard.comへ何度もアクセスしていたため
+(前段の`docs/salonboard-real-html-findings.md`初回調査・その後の複数回の
+ログイン試行等)、調査の後半でAkamai系ボット対策と思われる仕組みにより
+**接続がほぼ完全にブロックされる状態**になった。ログイン後の
+`page.goto('.../CNB/draft/styleList/')`が繰り返しタイムアウトし、
+最終的には素の`curl`でも0バイトのままタイムアウトすることを確認した
+(TLSハンドシェイクは成功するがHTTPレスポンスが一切返らない)。
+そのため、`doSelectNext`以外の関数(`addStyle`/`delStyle`/`unpresentStyle`/
+`presentStyle`/`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
+`doSelectLast`)については**ソース・実要素とも今回未確認のまま**。
+
+同日中の追加アクセスはブロックの長期化を招くリスクがあるため、ユーザーとの
+合意により見送り、実機での最終確認は後日(翌日以降)改めて行う方針とした。
+
+### `doSelectNext`のみ、暫定修正を実施(⚠️類推による修正)
+
+唯一、本番の実エラーから直接的な手がかりが得られていた`doSelectNext`に
+ついてのみ、以下の方針で`src/lib/salonboard-import.ts`を修正した:
+
+- 本番で`window.doSelectNext()`を偽のevent無しで呼ぶと実際に
+  `Cannot read properties of undefined (reading 'target')`が発生することを
+  確認済み → `dologin`/`editStyle`と同じく、関数内部が`event`(おそらく
+  `event.target`)を参照する実装だと強く推測される。
+- 修正: `window.doSelectNext()`の直接呼び出しをやめ、
+  `a[onclick*="doSelectNext"], span[onclick*="doSelectNext"]`にマッチする
+  実要素を`page.$()`で探し、見つかれば`page.click()`でネイティブクリック
+  する方式に変更(login/editStyleと同じ確立済みパターン)。
+- **安全策**: 上記セレクタが実際にヒットするかどうかは今回未確認のため、
+  要素が見つからない場合・クリック/遷移待ちで例外が発生した場合は、
+  エラーにせず「次のページなし」として扱い、**それまでに取得できた
+  ページの結果だけで処理を継続する**ようにした。これにより、たとえ
+  セレクタの推測が外れていても、最低1ページ目分の取り込みは失敗せずに
+  完了する。
+- 詳細・今後の実機検証項目は`docs/salonboard-real-html-findings.md`の
+  「追記(2026-08-09 再調査)」章に記載。
+
+`npm run build`で型チェック通過を確認し、commit・push・`npm run deploy`で
+本番反映済み(コミット`fa7174d`)。**ただし本番で実際に複数ページ分の
+スタイルが取得できることの確認は、上記のアクセス制限を理由にユーザーの
+指示により今回は実施していない。** 次回、salonboard.comへの接続が
+回復してから確認すること。
+
+### 次にやるべきこと（更新）
+9. salonboard.comへの接続制限が解消してから(翌日以降目安)、Playwrightで
+   `doSelectNext`含む全関数の実機再検証を行い、
+   `docs/salonboard-real-html-findings.md`を更新する。
+10. 本番の「既存スタイル取り込み」機能で、スタイルが複数ページ
+    (150件程度/2ページ構成の想定)存在するアカウントで実際に2ページ目以降も
+    取得できることを確認する。
+
+## 追記（2026-08-09 その5、重要な訂正: 「要確認」はブロック要因ではない）
+
+**ユーザー（サロンボード運用の実務経験者）から重要な訂正があった:
+「要確認」は通常運用でよくある表示であり、反映申請をブロックしない。
+ブロックするのは「NG」表示のみ。**
+
+これは2026-08-09の実HTML調査結果に基づき「要確認もブロック要因として扱う
+べき」と記載していた本ドキュメントの記述（および`checkReflectBlockers()`
+の実装）と矛盾する。当時の調査は「`#reflectedButton`に`--disabled`クラスが
+付いているタイミングで、たまたま「要確認」リンクも存在した」という
+一度きりの観察に基づくもので、両者が因果関係にあると断定するには
+根拠が不十分だった（実際には、後日の追加調査でスタイル一覧の全16件に
+「要確認」が付いており、かつ反映申請自体は必ずしも常時ブロックされて
+いるわけではないらしいことが判明しており、「要確認」の有無と
+`#reflectedButton`の無効化は無関係である可能性が高い）。
+
+### 今後の方針（ローカルで対応予定）
+
+1. `checkReflectBlockers()`(`src/lib/salonboard-automation.ts`)の判定条件を、
+   「要確認」リンクの有無からではなく、**実際に「NG」を示すDOM表示**を
+   検知する方式に変更する。ただし「NG」の実際のライブ表示形式（文言・
+   クラス名・出現場所）はまだ実機で観測できていない
+   （前回調査時は固定注意書き文中にしか「NG」の文字列が無かった）。
+   実際にNG状態のスタイル/データが存在するタイミングで再調査が必要。
+2. `#reflectedButton`の`--disabled`クラスが実際にどのような条件で
+   付与されるのか（「要確認」件数とは無関係の可能性が高い）を、
+   時間を置いて改めて実機確認する。
+3. それまでの暫定対応として、「要確認」を検知してもブロック扱いに
+   せず、警告としてログに残す程度に留める(要検討)。
+
+→ 上記1〜3は2026-08-09中に対応完了（下記「その6」参照）。
+
+## 追記（2026-08-09 その6、checkReflectBlockers暫定修正の本番反映・本番実機
+調査による重大な発見・launchBrowser()の429リトライ追加）
+
+### checkReflectBlockers()の暫定修正（対応完了・本番反映済み）
+
+上記の方針1〜3の通り、「要確認」を一切ブロック判定に使わない実装に変更した。
+`#reflectedButton`の`--disabled`クラスについても、それが実際のNGによるものか
+「反映すべき変更が無いだけ」かを区別できないため、現時点ではブロック判定には
+使わず、参考ログとしてのみ出力するに留めた。NG検知の実DOM構造が判明するまでの
+暫定実装であることをコード内コメントに明記済み。ユーザーによる実機確認
+（クーポン参照切れ→要確認、というこちらの見立てが正しいこと）も得た。
+
+### 本番実機テストによる重大な発見: 投稿失敗の真因は`doSelectNext`ではなかった
+
+ユーザー依頼に基づき、TETE AOUT本番サイト(`https://hotpepper-automation.pages.dev`、
+アカウント: `mememarche@gmail.com`)に実際にログインし、「サロンボードと同期する」
+・「手動実行・実行履歴」画面を操作して調査した結果、**実際の投稿失敗の直接原因は
+`doSelectNext`ではなく、`uploadFrontImage()`（画像アップロードモーダル）の
+`input[type=file]`検出失敗であることが判明した**。
+
+実行ログ実例（`/style/test-run`画面より）:
+```
+[登録]レイヤー２ — スタイル登録失敗: 画像アップロード用のinput[type=file]が
+                    見つかりませんでした。モーダルDOM構造の再調査が必要です。
+                    (2026-08-08 17:38:26)
+[反映申請]レイヤー — 反映申請ブロック: 反映申請がブロックされている可能性が
+                    あります: 「要確認」項目が1件残っています
+                    (2026-08-08 16:27:52、※この時点ではcheckReflectBlockers
+                    修正前だったため誤ブロックされていた)
+```
+
+- `doSelectNext`は「**既存スタイル取り込み**」機能内のページネーションでのみ
+  使われており、「**手動投稿（新規スタイル登録）**」の失敗経路には一切関与しない。
+  この点、当初の依頼内容（doSelectNextが直接原因という推測）は実機ログの証拠と
+  一致しなかった。
+- `uploadFrontImage()`(`src/lib/salonboard-automation.ts`)は、実装当初から
+  「⚠️ 未確認: モーダル内部の実際の`<input type=file>`のセレクタは
+  静的HTMLからは分からず、実際にクリックして開いた状態を確認する必要がある」
+  とコード内コメントで明記されていた既知の弱点であり、今回の実機ログはこれが
+  実際に本番で発生していることを裏付けた。
+- **次にsalonboard.comへの接続が安定した際の最優先調査対象は、この画像
+  アップロードモーダルの実DOM構造（`#imageUploaderModalBody`内部の実際の
+  `<input type=file>`セレクタ・アップロードAJAXのリクエスト形式）である。**
+  本日は接続不安定のため実機確認を見送った。
+
+### Cloudflare Browser Renderingの429レート制限を実機で確認
+
+本番サイトで「サロンボードと同期する」を短時間に複数回連続実行したところ、
+2回目以降で以下のエラーを確認:
+```
+エラー: Unable to create new browser: code: 429: message: Rate limit exceeded
+```
+これは salonboard.com 側のブロックではなく、**Cloudflare Browser Rendering
+自体の同時起動数上限**によるもの。`launchBrowser()`(`src/lib/salonboard-automation.ts`)
+に、429エラー検知時の指数バックオフ付きリトライ(最大3回、1s→2s→4s待機)を追加した
+（同関数は`style-post-runner.ts`・`dashboard.tsx`・`style.tsx`の計6箇所から
+共通で呼ばれているため、この1箇所の修正で全体に効く）。
+
+### StylePost（競合製品）の調査（閲覧のみ、変更操作なし）
+
+ユーザー指示によりStylePost(`https://style-post.com`)に実際にログインし、
+実装の参考として以下を確認（**閲覧・スクリーンショット取得のみ。データの変更・
+投稿は一切行っていない**）:
+
+- スタイル一覧ページ上部に「スタイルに存在しないクーポンが設定されています。:
+  20件」という警告バナーが常設されており、**salonboard.com側で確認した
+  「クーポン参照切れ→要確認」と同種の現象を、件数表示のみに留めて動作は
+  ブロックしていない**。「要確認はブロック要因ではない」というユーザーの
+  訂正の妥当性を裏付ける外部証拠。
+- 同期履歴ページのログ形式が参考になる: `[内部ID] スタイル名` + salonboardの
+  styleId(L+9桁)を1行ごとに記録し、エラー列に「反映申請を実行しました。」
+  「処理がタイムアウトしました（応答なし）: 登録結果の待機」「画像アップロードが
+  アクセス集中のため失敗しました: ファイル名」等、具体的な文言を残している。
+  **画像アップロード失敗が「アクセス集中」を理由に複数回記録されている**ことから、
+  salonboard.com側の画像アップロードエンドポイント自体がそもそも本質的に
+  不安定である可能性が高いと分かる。今後`uploadFrontImage()`にリトライ処理を
+  実装する際の裏付けとして有用。
+- 設定ページはStylePost自身のアカウント情報とsalonboardログイン情報を分けて
+  表示する2段構成で、現在のTETE AOUTの`/settings/salonboard`の設計と概ね
+  同じ考え方だった。
+
+### 画像アップロードモーダルの実機調査試行(2026-08-09、未完了)
+
+同日中に、優先度を「反映申請ブロック調査は後回し、登録段階の画像アップロード
+モーダル調査に集中」と再整理したうえで、`uploadFrontImage()`の実DOM調査を
+複数回試みた(ログイン→新規スタイル作成フォームを開く→画像プレースホルダー
+`#FRONT_IMG_ID_IMG`をクリック→`#imageUploaderModalBody`内の`input[type=file]`
+を確認、という手順のPlaywrightスクリプトを用意し、間隔を空けて2回試行)。
+
+**結果: 2回ともログインボタンのクリック自体は成功したが、その後の画面遷移が
+毎回タイムアウトし、モーダルのDOM構造は今回も確認できなかった。**
+本日はsalonboard.comへの接続不安定が最後まで解消せず、ユーザー判断により
+これ以上の直接アクセス試行は中止した。
+
+### 次にやるべきこと（更新）
+11. 【最優先・未着手】salonboard.comへの接続が安定してから(翌日以降目安)、
+    `uploadFrontImage()`の画像アップロードモーダル(`#imageUploaderModalBody`)を
+    実際に開いた状態のDOM構造を調査し、`input[type=file]`セレクタを特定して
+    修正する。今回判明した「実際の投稿失敗の直接原因」であり最優先。
+    2026-08-09中に2回試行したが、いずれもログイン後の画面遷移でタイムアウトし
+    未達成。手順自体は「ログイン→`/CNB/draft/styleList/`→新規追加リンク
+    (`onclick`に`addStyle`を含む要素)をネイティブクリック→`#styleEditForm`が
+    出るまで待機→`#FRONT_IMG_ID_IMG`をクリック→数秒待って
+    `#imageUploaderModalBody`内の`input[type=file]`を確認」という単純なもの
+    なので、次回セッションでPlaywrightスクリプトとして作り直すのは容易
+    （このセッションで使った一時スクリプトはローカルの一時ディレクトリに
+    あり、次回セッションからは参照できない前提で再作成すること）。
+12. `doSelectNext`含む`doSelectFirst`/`doSelectPrevious`/`doSelectLink`/
+    `doSelectLast`の実機検証は、現在のテストアカウント（スタイル16件・1ページの
+    み）では構造的に検証不可能（次ページが存在しないため）。複数ページを持つ
+    アカウントでの検証機会が得られ次第、または本番の`SALON BOARD`実アカウントに
+    十分なスタイル数（150件超）が登録された時点で再検証する。
+13. `uploadFrontImage()`にStylePostの知見を踏まえた「アクセス集中による
+    失敗」への対応（リトライ処理）の追加を検討する。
+
+## 追記（2026-08-09 その6、画像アップロードモーダルの実HTML確定・修正）
+
+**ユーザー本人がサロンボードの実画面でDevTools(Elements)のスクリーンショットを
+撮影し提供してくれたことで、画像アップロードモーダルの実HTML構造が確定した。**
+salonboard.comへの直接アクセスが不安定な状況でも、実機で操作できる人間が
+DevToolsで直接確認すれば調査可能であることが分かった（今後、自動アクセスが
+不安定な場合の代替手段として有効）。
+
+### 確定したHTML構造
+
+```html
+<div class="imageUploaderModalInner">
+  <div class="imageUploaderModalDropArea jscImageUploaderModalDropArea is-Active">
+    <label class="imageUploaderModalInput">
+      ファイルを選択
+      <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
+    </label>
+  </div>
+  <div class="imageUploaderModalThumbnailArea jscImageUploaderModalThumbnailArea">...</div>
+  <p class="imageUploaderModalCopyrightText">...</p>
+  <div class="imageUploaderModalBottomButton">
+    <!-- 「閉じる」「登録する」ボタン。「登録する」はファイル未選択時グレーアウト -->
+  </div>
+</div>
+```
+
+**`#imageUploaderModalBody`という要素は実際には存在しなかった**（旧実装の
+推測が誤り）。正しいセレクタは`#formFile`（直接ID指定）。
+
+### 修正内容（`src/lib/salonboard-automation.ts` `uploadFrontImage()`）
+
+1. ファイル入力のセレクタを`#imageUploaderModalBody input[type="file"]`から
+   `#formFile`に修正。
+2. モーダル下部の「登録する」ボタンをテキスト一致で探索し、ファイル選択後に
+   活性化されるのを待ってからクリックする処理を追加。
+   **⚠️ このボタンの正確なid/class・活性化の実装詳細はスクリーンショットの
+   範囲外で未確認**。テキスト一致(`.imageUploaderModalBottomButton`配下で
+   textContent === '登録する')による推測実装であり、見つからない/クリック
+   できない場合はエラーにせず警告ログに留める安全策を入れている。次回、
+   このボタンの実HTML(可能なら`imageUploaderModalBottomButton`をExpandした
+   スクリーンショット)が確認できれば、より確実な実装に置き換えること。
+
+`npm run build`で確認済み（クラウド側セッションで直接修正・commit・push、
+コミット予定）。**本番デプロイ・実機での動作確認はまだ行っていない**ので、
+次回`npm run deploy`後に「画像ライブラリ→新規作成→手動実行する」で
+実際に画像アップロードが成功するか確認すること。
+
+## 追記（2026-08-09 その7、429エラーのリトライ時間延長）
+
+上記の画像アップロード修正をデプロイ後、ユーザーが再実行したところ
+`Unable to create new browser: code: 429: message: Rate limit exceeded`
+が再発。`launchBrowser()`の最大3回・合計約7秒のリトライでは不十分
+だったと判断し、最大5回・合計最大約90秒(3s,6s,12s,24s,48s)に延長した
+（クラウド側セッションで直接修正）。1回の自動化フロー自体が数十秒
+かかることがあり、先行実行中のブラウザセッションが解放されるまで
+7秒では足りないケースがあると推測される。`npm run build`で確認済み。
+本番での再確認が必要。
+
+## 追記（2026-08-09 その8、「長さ」がプルダウンではなくラジオボタンだった）
+
+ユーザーが実際のサロンボード操作手順を細かく説明してくれたことで、
+もう1つの重大な実装ミスが判明した。**「長さ」選択は`<select>`(プルダウン)
+ではなく、ラジオボタン群だった。** 旧HANDOFF 4-5の「select」という記述は
+誤りで、`draftRegisterStyle()`が`page.select(lengthSelector, value)`を
+呼んでいた箇所は、対象が`<select>`要素でないため必ず失敗していたと
+考えられる（画像アップロードが直っても、次にここで止まっていた可能性が高い）。
+
+### 修正内容
+
+1. `src/lib/salonboard-automation.ts` `draftRegisterStyle()`: 長さ選択を
+   `page.select()`からラジオボタンのネイティブクリック
+   (`input.ladiesHairLengthCd[value="..."]` / `input.mensHairLengthCd[value="..."]`
+   をpage.click())に変更。
+2. `src/lib/salonboard-import.ts` `fetchStyleDetail()`: 既存スタイル取り込み時の
+   長さ読み取りも、同じクラスを複数のradioが共有しているため`:checked`を
+   付けないと常に先頭要素の値を誤って読んでしまうバグがあった。
+   `input.ladiesHairLengthCd:checked`のようにセレクタを修正。
+
+あわせて、ユーザーへの確認で以下も判明:
+- 「ヘアスタイル特集」は選択しなくても登録可能(空欄のままでよい、という
+  既存の実装方針で問題ない)。
+- 「ハッシュタグ」も未入力で登録可能(必須ではない)。実際の操作は
+  「キーワード入力→追加ボタンをタグごとに繰り返す」という動的UIで、
+  現状は未実装のまま(将来的な拡張候補)。
+
+`npm run build`で確認済み。本番デプロイ・実機確認はまだ。
+
+## 追記（2026-08-09 その9、「長さ」の実HTML確定・最終修正）
+
+上記その8で「ラジオボタン」と判断したが、その後ユーザーから送られた
+スクリーンショットの見た目が`<select>`のドロップダウンに見えたため、
+実行時にタグ名を見て両対応する暫定コードに一度変更。最終的に
+ユーザーが実HTMLをそのまま貼ってくれたことで確定した。
+
+```html
+<select name="frmStyleEditStyleDto.ladiesHairLengthCd" id="ladiesHairLengthCd" class="h20">
+  <option value="HL05">ベリーショート</option>
+  <option value="HL04">ショート</option>
+  <option value="HL03">ミディアム</option>
+  <option value="HL02">セミロング</option>
+  <option value="HL01">ロング</option>
+  <option value="HL08">ヘアセット</option>
+  <option value="HL07">ミセス</option>
+</select>
+```
+
+**`<select>`で確定。ただしclassは"h20"であり、旧実装が使っていた
+`.ladiesHairLengthCd`というクラスセレクタは実在しなかった。** 正しくは
+`id="ladiesHairLengthCd"`（メンズ側は同じ命名規則から`#mensHairLengthCd`
+と推測、要確認）。`draftRegisterStyle()`・`fetchStyleDetail()`双方を
+`#ladiesHairLengthCd`/`#mensHairLengthCd`のid指定による`page.select()`/
+`.value`読み取りのシンプルな実装に戻した（タグ名自動判定の暫定コードは
+撤去）。
+
+`npm run build`で確認済み。本番デプロイ・実機確認はまだ。
+
+## 追記（2026-08-09 その10、Browser Rendering有料プランへアップグレード・登録確認失敗の診断強化）
+
+ユーザーがCloudflare Workers Paidプランへアップグレード。これにより
+Browser Renderingの「1日10分」制限が解消された（詳細はその9の直前の
+やり取り参照）。アップグレード後の初回テストで、新しいエラーが発生:
+
+```
+スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。
+サーバー側で実際に登録されていない可能性があります。
+```
+
+これは`draftRegisterStyle()`の登録ボタン(doRegister)クリック後の検証
+(コミット397d82b、`#styleId`にL+9桁のIDがセットされるか確認)が失敗した
+というエラーだが、**`#styleId`という要素ID自体が実HTML未確認のまま
+実装されていた**。失敗時の診断情報(URL・画面テキスト・エラー表示候補)が
+一切ログに残らない実装だったため、原因の切り分けができない状態だった。
+
+### 対応内容
+
+ログイン失敗時の診断パターン(HANDOFF既出)と同様に、登録確認失敗時にも
+以下を`execution_logs`とエラーメッセージの両方に残すよう改修:
+- 失敗時のURL
+- 画面テキスト冒頭500文字
+- `#styleId`要素の存在有無・値
+- `.error`/`.errorMessage`/`[class*="error"]`に一致する要素のテキスト
+  (バリデーションエラー等が表示されていないか)
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。** 次回この
+エラーが再発した場合、実行履歴の詳細ログに上記の診断情報が出るはずなので、
+それを見れば「#styleIdという確認方法自体が誤り」なのか「実際にサーバー側
+バリデーションで弾かれている」のかが判別できる。
+
+## 追記（2026-08-09 その11、ダイアログ未処理の疑い・送信前セルフチェック追加）
+
+上記診断強化後、実際にユーザーがサロンボードのスタイル一覧を直接確認した
+ところ、「登録失敗」としていたスタイルは**本当に登録されていなかった**
+ことが判明（#styleId確認方法自体の誤りではなく、実際に保存が失敗している）。
+
+### 有力な仮説: ブラウザネイティブダイアログの未処理
+
+コード全体を確認したところ、`page.on('dialog', ...)`のようなハンドラが
+一切実装されていないことが判明した。もしサロンボードが「登録する」button
+押下時に`confirm()`等のネイティブ確認ダイアログを出す仕様の場合、
+Puppeteerはハンドラが無いとダイアログに応答できずそのまま停止し、
+`waitForNavigation`/`waitForFunction`が静かにタイムアウトする。
+**このダイアログはDOM外のネイティブUIのため、`document.body.innerText`
+には絶対に現れず**、これまでの診断情報（画面テキスト）に何も手がかりが
+出なかった理由の説明として非常に筋が良い。
+
+`newAutomationPage()`に`page.on('dialog', ...)`ハンドラを追加し、
+出現した場合は自動的にOK(accept)するようにした(ログ関数を渡した場合は
+ダイアログの文言もログに残す)。
+
+### 送信前セルフチェックの追加
+
+`draftRegisterStyle()`の「登録する」クリック直前に、実際に各必須項目
+(画像アップロードID・スタイリスト・コメント・スタイル名・カテゴリ・
+長さ・メニュー詳細)が本当にセットされているかを`page.evaluate()`で
+読み取り、`execution_logs`に残すようにした。`page.select()`等は
+指定値が存在しない場合など静かに失敗することがあるため、これにより
+「どの項目が空のまま送信されてしまったか」が次回の実行結果から
+直接分かるようになる。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その12、文字数上限の不一致・入力順序の修正）
+
+ユーザーが実際のサロンボード「スタイル掲載情報編集」画面とTETE AOUTの
+「スタイル新規作成」画面のスクリーンショットを並べて比較し、**文字数上限が
+全く違うこと**を発見した。これが、これまで原因不明だった登録失敗
+（#styleIdが発行されない）の実際の原因である可能性が高い。
+
+### 判明した不一致
+
+| 項目 | 旧実装(誤り) | 実際のサロンボード |
+|---|---|---|
+| スタイル名 | 60文字 | **30文字** |
+| メニュー内容 | 100文字 | **50文字** |
+| スタイリストコメント | 240文字 | **120文字** |
+
+旧HANDOFF 4-5に記載していた上限(60/100/240)は誤りだった。ユーザーが
+実際の上限を超える文字数を入力していた場合、サロンボード側のバリデーション
+で登録自体を拒否されていた可能性が高い(かつ拒否時に分かりやすいエラー
+表示が出ない仕様のため、これまでの調査で発見できなかったと考えられる)。
+
+### 修正内容
+
+1. `src/lib/salonboard-automation.ts` `draftRegisterStyle()`: 送信直前の
+   `.slice()`を30/50/120に修正(実際にサロンボードへ送る値の上限)。
+2. `src/routes/style.tsx`: スタイル新規作成/編集フォーム・投稿テンプレート
+   設定フォームの両方で、ラベル表示・`maxlength`属性・サーバー側の
+   `.slice()`をすべて30/50/120に修正。
+3. `src/lib/salonboard-import.ts`: 既存スタイル取り込み時のDB保存も
+   同じ上限に統一(取り込み元データは既に実上限内のはずだが念のため)。
+
+### 入力順序をサロンボードと一致させる修正
+
+あわせてユーザーから「入力順序も実際のサロンボードと合わせてほしい」との
+指摘があり、`src/routes/style.tsx`のスタイル新規作成/編集フォームの
+項目順序を、実際のサロンボードの表示順（画像→スタイリスト名→コメント→
+スタイル名→カテゴリ→長さ→メニュー内容→クーポン→ハッシュタグ→モデル情報）
+に合わせて並び替えた。旧実装は「コメント」の位置が大きくズレており
+（本来はスタイリスト名の直後だが、メニュー内容の後に配置されていた）、
+「クーポン」の位置も早すぎた（本来はメニュー内容の後）。投稿テンプレート
+設定フォームも同様に修正。
+
+### 未対応のまま残っている差分（今後の検討事項）
+
+- 実際のサロンボードは画像を3枚(FRONT+2枚)まで登録できるが、TETE AOUTは
+  FRONT1枚のみ対応。FRONT以外は必須マーク(●)が無いため未対応でも登録は
+  通ると推測されるが、将来的な拡張候補。
+- 実際のハッシュタグ入力は「1件ずつ入力→追加ボタン」を繰り返す方式だが、
+  TETE AOUTはカンマ区切りの単一フィールド。現状ハッシュタグは自動化コード
+  から一切送信していない(空欄のまま)ため登録失敗の原因ではないが、
+  将来ハッシュタグ自動送信を実装する際はこの入力方式の違いに注意。
+- 「ヘアスタイル特集」欄はTETE AOUTのUIに存在しない(任意項目のため
+  未対応でも登録は通る想定)。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その13、画像アップロードモーダルの「登録する」ボタンの実装ミスを修正）
+
+ユーザーがスタイル投稿の全手順を実HTML付きで棚卸ししてくれたことで、
+致命的な実装ミスが判明した。
+
+**画像アップロードモーダル内の「登録する」ボタンは`<input type="button">`
+だったが、旧実装(その11で追加)は`<button>`/`<a>`タグしか探していなかった**
+(`.imageUploaderModalBottomButton button, .imageUploaderModalBottomButton a`)。
+つまりこのボタンは一度もクリックされておらず、ファイルを選択しても
+モーダル側の確定処理が走らず、`#FRONT_IMG_ID`が永久にセットされない状態
+だったと考えられる。**これが画像アップロードが完了しなかった直接の原因の
+可能性が高い。**
+
+```html
+<input type="button" class="imageUploaderModalSubmitButton
+  jscImageUploaderModalSubmitButton isActive" value="登録する">
+```
+
+`src/lib/salonboard-automation.ts` `uploadFrontImage()`のボタン探索を
+`input.jscImageUploaderModalSubmitButton`に修正(`isActive`クラスの有無で
+活性化判定)。
+
+あわせて、フォーム全体の最終「登録」ボタンが`<img>`タグ(画像ボタン)である
+ことも確認したが、現行コードは属性セレクタ`[onclick*="doRegister("]`
+(タグ種別を問わない)のため修正不要と判断。詳細は
+`docs/salonboard-real-html-findings.md` 4-1/4-2参照。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その14、エラーメッセージの画面全文埋め込みを廃止、デプロイ漏れ疑い）
+
+ユーザーから「実行履歴の表示が長文で見切れて見づらい」との指摘があった。
+`draftRegisterStyle()`の登録確認失敗時、これまで画面テキスト先頭500文字を
+エラーメッセージにそのまま埋め込んでいたが、**認証済みページはヘッダー
+メニューの定型文が長く、毎回そこで埋まってしまい一度も有用な情報が
+得られていなかった**。この画面全文埋め込みをやめ、`#styleId`要素の状態・
+エラー表示候補の有無という簡潔な情報のみに絞った(`log()`には残すが、
+`throw new Error()`のメッセージ本文には含めないようにした)。
+
+### 重要な疑い: 直近の修正が本番に反映されていない可能性
+
+ユーザーが貼った実行履歴のスクリーンショットを確認したところ、
+**「送信前セルフチェック: {...}」というログ(コミット84f5d52で追加、
+`doRegister`クリック直前に必ず出力される)が一件も出ていなかった**。
+このログは登録確認失敗に至る経路上で必ず実行されるはずのため、
+出ていないということは、**その11〜13の一連の修正(ダイアログ対応・
+送信前セルフチェック・input[type=button]修正等)が実際にはまだ本番へ
+デプロイされていない可能性が高い**。次回ユーザーとのやり取りで、
+`npm run deploy`が実際に最新コミットに対して実行されたか、
+デプロイ完了時刻・URLを確認すること。
+
+## 🎉 追記（2026-08-09 その15、スタイル投稿が実際にサロンボードへ反映成功）
+
+コミット25037c8（HEAD一致・デプロイ完了時刻2026-08-09 06:13、
+https://33220acf.hotpepper-automation.pages.dev ）の状態で「手動実行する」
+を実行したところ、**登録から反映申請までスタイル投稿が実際にサロンボードへ
+反映されたことをユーザーが確認**。プロジェクト開始以来初めての、
+エンドツーエンドでの成功。
+
+ここまでの主な修正の積み重ね（詳細は本ファイルの該当セクション参照）:
+- ログイン成否判定バグ・isTrusted対策・stealth対策
+- 「要確認」の誤検知修正（ブロック扱いをやめた）
+- 画像アップロードモーダルの実セレクタ確定（`#formFile`・
+  `input.jscImageUploaderModalSubmitButton`）
+- 「長さ」の実セレクタ確定（`#ladiesHairLengthCd`、select）
+- **文字数上限の不一致修正（30/50/120、これが最後の決定打だった可能性が高い）**
+- 入力順序をサロンボードと一致させる修正
+- ネイティブ確認ダイアログへの自動応答ハンドラ追加
+
+### 次にやるべきこと
+1. 複数スタイルでの再現性確認（1件の成功だけでは安定性は未確認）。
+2. 自動投稿（cronトリガー経由の`runNextStyleForUser`）でも同様に成功するか確認
+   （手動実行と自動投稿はコードパスは共通だが、実運用での動作確認はまだ）。
+3. ハッシュタグ・ヘアスタイル特集など、意図的に未実装のまま残している項目の
+   対応要否をユーザーと再確認。
+
+## 追記（2026-08-09 その16、ブロック対象の再実行許可・ステータス表示の細分化）
+
+ユーザーから2点の要望があった。
+
+1. **画像ライブラリで準備完了のスタイルは、ブロック中でも手動実行で
+   対象に含めてほしい**。従来、通常の手動実行・自動投稿の対象クエリ
+   (`style-post-runner.ts`内3箇所)は`reflection_request_status IN
+   ('not_started', 'failed')`で、`'blocked'`を除外していた。専用の
+   「再実行」ボタン(`retryStylePost`)からしか再試行できなかったが、
+   ブロック判定自体がこれまで何度も誤検知だったことを踏まえ、
+   `'blocked'`も対象に含めるようIN句を修正した。
+2. **一度でも投稿できたスタイルは「ブロック」ではなく正常と表示してほしい**。
+   調査の結果、`statusBadge()`(`src/routes/style.tsx`)が「公開済み
+   (success)/ブロック(それ以外すべて)」の2値表示になっており、
+   **一度も実行していない(not_started)スタイルや、ブロックとは無関係の
+   単純な失敗(failed)まで「ブロック」と表示されてしまう**問題があった
+   （これがユーザーの誤解の一因だった可能性が高い）。
+   `success`→公開済み(緑)、`blocked`→ブロック(赤)、`failed`→失敗(amber)、
+   それ以外→未実行(グレー)の4値表示に修正した。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+### 未解決の疑問: エラーメッセージ簡略化(その14)がデプロイ後も反映されていない?
+
+ユーザーが「06:18:12」のログ（06:13完了のデプロイより後のタイムスタンプ）
+を提示したが、その14で削除したはずの画面全文埋め込み(`pageText="..."`)が
+まだ表示されていた。コード自体は再確認済みで、現在のソースには画面全文の
+埋め込みは存在しない。考えられる原因:
+- デプロイの反映タイミングのズレ、または実際にはデプロイが完全に
+  最新コミットに対して行われていなかった可能性
+- 1回の登録処理自体が数十秒〜数分かかることがあり(429リトライ最大90秒等)、
+  ログのタイムスタンプ(06:18)は処理完了時刻であって、処理開始
+  (旧コードで起動した可能性)はそれより前だった可能性
+
+次回、ローカルに新規デプロイ直後の`git log -1`ハッシュと、その直後に
+実行した完全に新しいテストの実行ログを突き合わせて確認してもらうこと。
+
+→ 解決(その15参照): デプロイ自体は失敗しておらず、Cloudflare Pagesの
+エッジ反映が数分単位で遅延していただけだった(D1を直接クエリして
+タイムスタンプ単位で確認し、旧形式→新形式の切り替わりを実際に確認できた)。
+
+## 追記(2026-08-09 その15、真の原因を特定: 画像アップロード完了待ちの
+タイムアウトを警告のみで握りつぶしていた)
+
+その14の「登録確認失敗」自体は謎のままだったが、`draftRegisterStyle()`が
+`draftRegisterStyle(page, input, () => {})`と**空関数のloggerを渡していた
+ため、内部の有用な診断ログ(送信前セルフチェック等)が全て握りつぶされて
+いた**ことが判明。`processStyleRow()`(`src/lib/style-post-runner.ts`)を
+修正し、logコールバックの出力を配列に収集して失敗時のメッセージに含める
+ようにしたところ、次の一撃で原因が判明した:
+
+```
+写真をアップロード中...（未検証の処理です） | 警告: 画像アップロード完了の
+検知がタイムアウトしました。処理は続行しますが要確認です。 | 送信前セルフ
+チェック: {"styleRegistFormat":"0","frontImgId":"", ...}
+```
+
+**`frontImgId`が空のまま送信されていた。** `uploadFrontImage()`
+(`src/lib/salonboard-automation.ts`)内、`#FRONT_IMG_ID`が非空になるのを
+最大20秒待つ`waitForFunction`がタイムアウトした際、**警告ログを出すだけで
+処理を「続行」し、画像なしのままdoRegister()まで進めていた**ため、
+salonboard.com側のサーバーバリデーションで(必須の画像が無いため)確実に
+弾かれ、同じ編集フォームへ差し戻されていた。これが「登録確認失敗」の真因。
+
+StylePost(競合製品)の同期履歴にも「画像アップロードがアクセス集中のため
+失敗しました」という記録が複数あり、salonboard.com側の画像アップロード
+自体が本質的に低速/不安定な可能性が高いと判断し、以下を修正:
+1. アップロード完了待ちのタイムアウトを20秒→45秒に延長
+2. タイムアウト時、警告ログのみで続行するのをやめ、明確に例外を投げて
+   即座に失敗として扱うように変更(画像なしでの確実に失敗する送信を防止)
+
+詳細は`docs/salonboard-real-html-findings.md`の同日付追記も参照。
+
+### 次にやるべきこと
+14. 上記修正を本番デプロイし、「手動実行する」で実際に画像アップロードが
+    45秒以内に完了し、登録が成功するか確認する。
+15. 45秒でも間に合わない場合に備え、アップロード自体のリトライ処理を検討する。
+16. アップロードモーダルの「登録する」ボタンクリック後の実際のネットワーク
+    リクエスト(DevTools Network タブ)を確認できると、salonboard側の遅延か
+    こちらの実装不備かをより確実に切り分けられる(今回は未実施)。
+
+## 追記（2026-08-09 その17、画像アップロード後「閉じる」ボタンのクリック漏れを修正）
+
+45秒に延長してもタイムアウトが解消しなかったため、ユーザーにDevTools
+NetworkタブでdoUpload通信を直接確認してもらった。**`doUpload?wFlg=true`
+自体はStatus 200・3.79秒で成功しており、アップロードされた画像
+(`B267907659.jpg`)も正常に取得できていた。** つまりサロンボード側の
+処理は正常に完了しているのに、こちらの完了検知(`#FRONT_IMG_ID`)が
+反応していないことが確定した。
+
+一時的に「doUpload成功後、追加の確認モーダルが出るのでは」という仮説を
+立てたが、ユーザーへの確認で**実際にはそのような確認モーダルは表示され
+ない**ことが判明し、この仮説は誤りだった（Networkレスポンスのプレビュー
+に含まれていたのは、条件によって出し分けられる非表示の定型文だったと
+推測される）。
+
+代わりに、以前実HTML確認済みだった「モーダル下部の『閉じる』ボタン」
+(`class="imageUploaderModalBottomCloseButton jscImageUploaderModalCloseButton"`)
+に着目。**「登録する」を押してdoUploadが成功しても、モーダルは自動では
+閉じず、明示的に「閉じる」を押して初めて親フォームの`#FRONT_IMG_ID`へ
+反映される可能性が高い**と推測し、`uploadFrontImage()`
+(`src/lib/salonboard-automation.ts`)に、サムネイル表示
+(`jscImageUploaderModalThumbnailArea`内に`<img>`が現れる)を待ってから
+`a.jscImageUploaderModalCloseButton`を明示的にクリックする処理を追加した
+（クラウド側セッションで直接実装・commit・push、ローカルの
+`87d4bf1`(styleId直リンク採用・登録成功判定の冗長化)とマージ済み）。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+### 次にやるべきこと（更新）
+17. 上記の「閉じる」ボタンクリック処理を本番デプロイし、画像アップロードが
+    実際に完了・検知されるか確認する。
+18. それでも解消しない場合、「閉じる」ボタンクリック後に実際に
+    `#FRONT_IMG_ID`やDOM構造がどう変化するかを、開いたままのDevTools
+    Elementsパネルで直接確認する必要がある。
+
+## 追記（2026-08-09 その18、真因確定: 完了検知の要素IDそのものが間違っていた）
+
+ユーザーがElementsパネルのスクリーンショットを追加で提供してくれたことで、
+決定的な事実が判明した。**画像ID表示欄の実際の要素は
+`<span id="FRONT_IMG_ID_ID">`（隠しinputではなくspanタグ、IDも
+`FRONT_IMG_ID`ではなく`FRONT_IMG_ID_ID`）だった。**
+
+```html
+<p class="mt8">
+  画像ID:
+  <span id="FRONT_IMG_ID_ID"></span>
+</p>
+```
+
+旧実装は`document.getElementById('FRONT_IMG_ID')`という、**そもそも
+実在しないIDの要素**を探し続けていたため、`uploadFrontImage()`の完了検知
+が最初から成立し得ない状態だった(その17の「閉じる」ボタン漏れの疑いより
+さらに根本的な原因)。設計書(`docs/phase3-mvp-design.md` 9章)記載の
+「隠しフィールド`#FRONT_IMG_ID`にセット」という前提自体が誤りだった。
+
+`uploadFrontImage()`・送信前セルフチェックの両方で、`FRONT_IMG_ID`への
+参照を`FRONT_IMG_ID_ID`（`<span>`の`.textContent`で判定、`.value`ではない）
+に修正した。その17の「閉じる」ボタンクリック処理とあわせて、これで
+画像アップロードの完了が正しく検知できるようになるはずである。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はまだ。**
+
+## 追記（2026-08-09 その19、「閉じる」ボタンクリックを撤回・各ステップのログ強化）
+
+その17で追加した「登録するクリック後に『閉じる』ボタンを押す」処理について、
+ユーザーから「実際の手動操作にそのようなステップは含まれない」との指摘を
+受けた。冷静に考えると、モーダル下部に「閉じる」「登録する」が並んで
+表示される一般的なUIパターンでは、「閉じる」＝キャンセル(適用しない)、
+「登録する」＝確定(適用する)という役割分担であることが多い。つまり
+**doUploadで既に確定済みのアップロードを、その後の「閉じる」クリックで
+むしろ取り消してしまっていた可能性がある**(「画像が反映されない」という
+症状と一致する)。確認の取れていない推測だけで実装を追加したことが原因の
+ため、この「閉じる」クリック処理を削除した。
+
+あわせて、`uploadFrontImage()`内の各ステップ(モーダル検出・ファイルセット・
+「登録する」クリック・サムネイル表示確認)について、これまで失敗時のみ
+ログに残していたのを、**成功時にも簡潔なログを残す**ように変更した
+（コミット`7ef4122`）。これにより、次回失敗した場合に実行ログだけで
+「どのステップまで進んで止まったか」が判別できるようになる。
+
+`npm run build`で確認済み。デプロイ済み(コミット`b884f25`、
+`https://50ab7ea8.hotpepper-automation.pages.dev`)。
+
+## 追記(2026-08-09 その18、合成方式アップロードの実機比較検証を試みるも接続不安定で未完了)
+
+ユーザー指示により、`uploadFrontImage()`が使っている「Base64→File→
+DataTransfer→dispatchEvent('change')」という合成方式のファイルセットが、
+人間の実際のファイル選択(信頼されたイベント、isTrusted=true)と同じ結果を
+生んでいるかを検証しようとした。比較対象として、Playwrightの
+`page.setInputFiles()`(CDPの`DOM.setFileInputFiles`経由、信頼された
+input/changeイベントを発火)を使う「ネイティブ方式」も用意した。
+
+**結果: salonboard.comへのログイン後の画面遷移が2回とも30秒でタイムアウトし、
+合成方式単体の検証すら完了できなかった。** ユーザー判断により、
+salonboard.comへの直接アクセス試行は今後行わない方針となった。
+
+### 副次的に判明した事実(コード調査のみ、実機未検証)
+
+`@cloudflare/puppeteer`の`elementHandle.uploadFile(...paths: string[])`は
+実装上、内部でNode.jsの`path`モジュール(`import('path')`)と
+`path.resolve()`を使い、最終的にCDPの`DOM.setFileInputFiles`(実ファイルを
+ディスクから読んでブラウザに渡すコマンド)に依存している。**Cloudflare
+Workers環境にはファイルシステムが存在しないため、この方式は原理的に
+使用不可能。** つまり、仮に合成イベント方式が本当の原因だったとしても、
+Puppeteerの標準機能による単純な代替(ネイティブuploadFile)は本番環境
+(Cloudflare Browser Rendering)では選択肢に無い。
+
+### 今後の方針(salonboard.com直接アクセス無しで進める)
+
+合成イベント方式が本当にブロックされているかどうかを確認する最も確実な
+方法は、**ユーザー自身の通常ブラウザで実際に画像アップロードを行い、
+DevTools NetworkタブでアップロードのHTTPリクエスト(URL・メソッド・
+Content-Type・リクエストボディの形式)をキャプチャしてもらうこと**。
+これが分かれば、UI操作(クリック・ファイル選択)を模倣する現行方式ではなく、
+**そのHTTPリクエストをpage.evaluate()内の`fetch()`で直接再現する方式**に
+切り替えられる可能性がある。この方式ならブラウザのDOM/イベント層を
+一切経由しないため、isTrusted関連の問題が原理的に発生しない。
+次回、ユーザーからNetworkタブの情報が得られ次第、この方式への切り替えを
+検討すること。
+
+なお、直前の「その17」で「閉じる」ボタンの誤クリックを撤回した修正
+(コミット`b884f25`)がこの調査時点で既に本番反映済みだったため、まずは
+その効果を「手動実行する」で確認するのが次の一手として優先度が高い
+（画像アップロード自体の方式を変える前に、まずこの撤回で症状が
+改善するかを見るべき）。
+
+## 追記(2026-08-09 その19、最重要: 画像アップロードをUI操作からfetch()直接
+呼び出しに全面変更)
+
+ユーザーが自身のブラウザのDevTools NetworkタブでdoUploadリクエストの
+リクエスト・レスポンス両方を実際にキャプチャして提供してくれたことで、
+`uploadFrontImage()`(`src/lib/salonboard-automation.ts`)を全面的に
+書き直した。詳細な仕様は`docs/salonboard-real-html-findings.md`の
+同日付追記を参照。
+
+要点:
+- 画像アップロードモーダルのUI操作(クリック・ファイル選択の疑似イベント・
+  「登録する」ボタンの活性化待ち・完了検知のポーリング)を全て廃止し、
+  `page.evaluate()`内の`fetch()`でアップロードエンドポイント
+  (`POST /CNB/imgreg/imgUpload/doUpload?wFlg=true`)を直接呼び出す方式に
+  変更した。
+- レスポンス(モーダルHTML片)をパースして`imageId`等を取り出した後、
+  DOM更新はページ上に実在する`window.setUploadImage()`関数へそのまま
+  委譲する(自前でのDOM操作再実装はしない)。
+- これにより、これまで繰り返し問題になっていたUI操作のisTrusted/
+  タイミング関連の不確実性(合成クリック・合成change イベントが
+  無視される、モーダルの活性化待ちがタイムアウトする等)が原理的に
+  一切発生しなくなる。
+
+`npm run build`で確認済み。**本番デプロイ・実機確認はこれから。**
+salonboard.comへの直接アクセスは控える方針のため、次回はTETE AOUT本番
+サイトでの「手動実行する」経由でユーザーに確認してもらうこと。
+
+## 追記（2026-08-09 その20、fetch()方式の実機テストで新たなエラー・手動操作フローの完全記録）
+
+上記その19のfetch()方式デプロイ後、本番で「手動実行する」を実行したところ、
+**「Protocol error (Runtime.callFunctionOn): Target closed」**という
+Cloudflare Browser Rendering側のインフラエラー(ブラウザセッション強制終了)
+が発生した。サロンボード側が実際にリクエストを受理したか拒否したかすら
+確認できずに終わっており、このテスト結果は「合成change event(isTrusted
+問題)が原因だったかどうか」を証明も否定もしていない。
+
+これと並行して、ユーザーが「レイヤー6」というスタイルで、ログイン〜
+反映申請までの全ステップを手動で実施し、各ステップのURL遷移・
+ネットワークログ・コンソールログ・画面表示を詳細に記録してくれた。
+**結論: 手動操作では画像アップロード・登録・反映申請のいずれのステップ
+でも、ネットワークエラー・コンソールエラーは一度も発生しなかった。**
+
+### 記録された正常フロー(自動化の遷移待機条件の参考にできる)
+
+```
+styleList → styleEdit(新規追加) → styleEdit/doRegister(登録) →
+styleList(一覧確認) → reflectTop(掲載管理TOP) →
+reflect/storeReflect/doRegister(反映申請)
+```
+
+- 「登録」と「反映申請」は完全に別の処理・別画面(既知の通り再確認)。
+- 掲載管理TOPで他カテゴリ(サロン基本情報・スタイリスト掲載情報一覧)が
+  「要確認」状態でも、**スタイル掲載情報一覧の「反映申請」ボタンは
+  有効(クリック可能)だった**。「反映申請」の可否判定はカテゴリ単位で
+  独立している可能性がある(`checkReflectBlockers()`の判定ロジックが
+  ボタン全体の`--disabled`クラスのみを見ている点は、将来的に見直しが
+  必要かもしれない。今回は緊急度が低いため保留)。
+
+### 次の一手をめぐる判断
+
+「Target closed」がfetch()実装自体のバグ(evaluate()内の処理が重い/
+非効率等)によるものか、Cloudflare Browser Renderingのセッション制限に
+たまたま抵触しただけかは、まだ切り分けられていない。まずは実装コードを
+見直し、明らかな非効率(巨大なBase64文字列の扱い方等)が無いか確認し、
+それでも解決しない場合はDOM操作方式へ戻し`page.on('response')`等で
+実際に`doUpload`が自動実行時に発生しているかを直接観測する方式に
+切り替えることを検討する。
+
+### 次にやるべきこと（更新）
+19. fetch()実装(`uploadFrontImage()`)のコードを見直し、「Target closed」
+    エラーの原因(実装の非効率か、セッション制限か)を特定する。
+20. 原因不明のまま切り分けが必要な場合、`page.on('response')`でURLに
+    'doUpload'を含むレスポンスを監視し、実際に発生したか・ステータス
+    コード・レスポンス内容をログに残す診断コードを追加する。
+21. 上記結果に応じて、fetch()方式の修正、またはDOM操作方式への回帰＋
+    ネイティブファイルアップロード機能(CDPの`DOM.setFileInputFiles`)の
+    利用可否を検討する。
