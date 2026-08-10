@@ -235,10 +235,14 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
 
   const idealIntervalMinutes = remainingMinutes / remainingCount
 
+  // last_executed_at はUTCのnaive timestampとして保存されているため、
+  // 一度UTCのtimestamptzへ変換してからAsia/Tokyoのnaive timestampへ
+  // 変換し、日付部分だけを比較する(SQLiteの date(col, '+9 hours') と同義)。
   const lastRow = await env.DB.prepare(
     `SELECT MAX(last_executed_at) as last_at FROM styles
      WHERE user_id = ? AND last_executed_at IS NOT NULL
-       AND date(last_executed_at, '+9 hours') = date('now', '+9 hours')`
+       AND (last_executed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')::date
+         = (now() AT TIME ZONE 'Asia/Tokyo')::date`
   )
     .bind(userId)
     .first<{ last_at: string | null }>()
@@ -338,7 +342,7 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
 export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT id, style_id, user_id FROM style_post_jobs
-     WHERE status IN ('pending', 'running') AND created_at < datetime('now', '-10 minutes')`
+     WHERE status IN ('pending', 'running') AND created_at < (now() - interval '10 minutes')`
   ).all<{ id: number; style_id: number; user_id: number }>()
 
   const staleJobs = results || []

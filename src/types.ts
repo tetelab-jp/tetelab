@@ -1,8 +1,14 @@
-// Cloudflare Workers バインディング型定義
+// アプリ全体で使う Bindings 型定義。
+// 元はCloudflare Workers(D1Database/R2Bucket/Fetcher)のバインディング型
+// だったが、AWSへの全面移行に伴い、D1/R2互換シム(src/lib/db.ts,
+// src/lib/storage.ts)の型に置き換えている。ルート/ライブラリ側の
+// c.env.DB / c.env.STYLE_IMAGES の呼び出し方は変わらない。
+import type { PgDatabase } from './lib/db'
+import type { S3Storage } from './lib/storage'
+
 export type Bindings = {
-  DB: D1Database
-  STYLE_IMAGES: R2Bucket
-  BROWSER: Fetcher // Cloudflare Browser Rendering (@cloudflare/puppeteer)
+  DB: PgDatabase
+  STYLE_IMAGES: S3Storage
   JWT_SECRET?: string
   ENCRYPTION_KEY?: string
   OPENAI_API_KEY?: string

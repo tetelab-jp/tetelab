@@ -120,7 +120,7 @@ data "aws_iam_policy_document" "github_actions_deploy" {
       "ecr:UploadLayerPart",
       "ecr:CompleteLayerUpload"
     ]
-    resources = [aws_ecr_repository.worker.arn]
+    resources = [aws_ecr_repository.worker.arn, aws_ecr_repository.app.arn]
   }
   statement {
     sid       = "EcsTaskDef"
@@ -128,9 +128,14 @@ data "aws_iam_policy_document" "github_actions_deploy" {
     resources = ["*"] # RegisterTaskDefinitionはリソースレベル制御に対応していないため
   }
   statement {
+    sid       = "EcsServiceDeploy"
+    actions   = ["ecs:UpdateService", "ecs:DescribeServices"]
+    resources = [aws_ecs_service.app.id]
+  }
+  statement {
     sid       = "PassWorkerRolesForRegister"
     actions   = ["iam:PassRole"]
-    resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn]
+    resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn, aws_iam_role.app_task.arn]
   }
 }
 

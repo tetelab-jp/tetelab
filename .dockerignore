@@ -1,0 +1,11 @@
+node_modules
+dist
+.git
+.wrangler
+worker
+infra
+migrations-pg
+scripts
+*.md
+.dev.vars
+.env

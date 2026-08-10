@@ -365,7 +365,7 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
     const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
 
-    browser = await launchBrowser(c.env)
+    browser = await launchBrowser()
     const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
 

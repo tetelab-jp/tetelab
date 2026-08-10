@@ -37,7 +37,64 @@ variable "github_repository" {
 }
 
 variable "cloudflare_iam_user_name" {
-  description = "CloudflareからECS RunTaskを呼ぶためのIAMユーザー名"
+  description = "アプリ本体からECS RunTaskを呼ぶためのIAMユーザー名(旧: Cloudflare Workersから呼んでいた頃の名残。今はアプリ自身がAWS上で動くためこのユーザーの意味合いは変わったが、aws-ecs.tsの実装(静的アクセスキーでSigV4署名)を変えずに済むようそのまま流用している)"
   type        = string
-  default     = "salonboard-worker-cloudflare-caller"
+  default     = "salonboard-worker-app-caller"
+}
+
+# ---- アプリ本体(常時稼働サービス)関連 ----
+
+variable "domain_name" {
+  description = "アプリを公開するホスト名(例: app.example.com)。ACM証明書とALBのリスナーに使う。"
+  type        = string
+}
+
+variable "route53_zone_name" {
+  description = "domain_nameを含むRoute53ホストゾーン名(例: example.com)。manage_dns_in_route53=trueの場合のみ使用。"
+  type        = string
+  default     = ""
+}
+
+variable "manage_dns_in_route53" {
+  description = "trueならRoute53(既存ホストゾーン)にACM検証レコードとALBへのAレコードを自動作成する。falseならterraform output で出力される検証レコードを自分のDNSへ手動追加する。"
+  type        = bool
+  default     = true
+}
+
+variable "db_name" {
+  type    = string
+  default = "tetelab"
+}
+
+variable "db_username" {
+  type    = string
+  default = "tetelab"
+}
+
+variable "app_task_cpu" {
+  type    = string
+  default = "512"
+}
+
+variable "app_task_memory" {
+  type    = string
+  default = "1024"
+}
+
+variable "app_desired_count" {
+  type    = number
+  default = 1
+}
+
+# 初回のアプリタスク定義登録に使うイメージ(initial_imageと同様、ダミータグでよい)
+variable "app_initial_image" {
+  type = string
+}
+
+# 移行前にCloudflare Pages側で使っていたENCRYPTION_KEYと同じ値を渡すこと。
+# 異なる値にすると、既存のsalon_credentials(暗号化済みID/パスワード)が
+# 復号できなくなる。
+variable "encryption_key" {
+  type      = string
+  sensitive = true
 }

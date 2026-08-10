@@ -25,9 +25,7 @@
 /// <reference lib="dom" />
 
 import type { Bindings } from '../types'
-// @ts-ignore - ローカル型解決の都合上、実行時はWorkers環境でのみ動作する
-import type { Page } from '@cloudflare/puppeteer'
-import { SALONBOARD_BASE_URL, type AutomationLogger } from './salonboard-automation'
+import { SALONBOARD_BASE_URL, type AutomationLogger, type Page } from './salonboard-automation'
 
 export type ExistingStyleSummary = {
   styleId: string // L+9桁形式
@@ -363,9 +361,7 @@ export async function importSelectedStyles(
             return btoa(binary)
           }, detail.imageUrl)
 
-          const binary = atob(base64)
-          const bytes = new Uint8Array(binary.length)
-          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+          const bytes = new Uint8Array(Buffer.from(base64, 'base64'))
 
           const key = `style/${userId}/imported-${styleId}-${Date.now()}.jpg`
           await env.STYLE_IMAGES.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } })

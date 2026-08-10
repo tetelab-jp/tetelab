@@ -10,9 +10,7 @@
 /// <reference lib="dom" />
 
 import type { Bindings } from '../types'
-// @ts-ignore - ローカル型解決の都合上、実行時はWorkers環境でのみ動作する
-import type { Page } from '@cloudflare/puppeteer'
-import { SALONBOARD_BASE_URL, type AutomationLogger } from './salonboard-automation'
+import { SALONBOARD_BASE_URL, type AutomationLogger, type Page } from './salonboard-automation'
 
 export type SyncedStylist = {
   stylistId: string // T001014365 形式

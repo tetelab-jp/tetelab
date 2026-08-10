@@ -22,14 +22,11 @@
 // ============================================
 
 // page.evaluate() のコールバックはブラウザ(Chromium)側で実行されるため、
-// Workers側の型定義とは別にDOM型を参照する必要がある。
+// Node側の型定義とは別にDOM型を参照する必要がある。
 /// <reference lib="dom" />
 
 import type { Bindings } from '../types'
-
-// puppeteer本体はCloudflare Workers専用パッケージ。型のみ利用。
-// @ts-ignore - ローカル型解決の都合上、実行時はWorkers環境でのみ動作する
-import puppeteer, { type Browser, type Page } from '@cloudflare/puppeteer'
+import puppeteer, { type Browser, type Page } from 'puppeteer'
 export type { Browser, Page }
 
 export const SALONBOARD_BASE_URL = 'https://salonboard.com' // ⚠️ 要確認
@@ -61,38 +58,19 @@ export type StylePostResult = {
 }
 
 /**
- * Cloudflare Browser Renderingでブラウザインスタンスを起動する。
- * 呼び出し側で必ず finally 節等で browser.close() すること
- * （Browser Renderingは同時起動数・使用時間に上限があるため）。
+ * ブラウザインスタンスを起動する。呼び出し側で必ずfinally節等で
+ * browser.close()すること。
  *
- * 2026-08-09追記: 本番の「サロンボードと同期する」を短時間に複数回実行すると
- * `Unable to create new browser: code: 429: message: Rate limit exceeded`
- * が実機で発生することを確認済み(Cloudflare Browser Rendering自体の同時起動数
- * 上限)。salonboard.com側の問題ではないため、指数バックオフ付きリトライで
- * 吸収する。
- *
- * 2026-08-09再追記: 最大3回・合計約7秒のリトライでは不十分で、429が
- * 再発することを確認。1回の自動化フロー自体が(ページ遷移の複数待機を
- * 経て)数十秒かかることがあり、先行実行中のブラウザセッションが解放
- * されるまで7秒では足りないケースがあるため、リトライ回数・待機時間を
- * 大幅に延長した(最大5回・合計最大約90秒)。
+ * 元はCloudflare Browser Rendering固有の同時起動数上限(429エラー)への
+ * 指数バックオフリトライがあったが、AWS ECS/Fargate(Node標準puppeteer)へ
+ * 移行したことで、共有ブラウザプールの同時起動数制限という制約自体が
+ * 無くなったため不要になった。
  */
-export async function launchBrowser(env: Bindings, maxRetries = 5): Promise<Browser> {
-  let lastErr: unknown
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await puppeteer.launch(env.BROWSER)
-    } catch (err: any) {
-      lastErr = err
-      const message = String(err?.message || err)
-      const isRateLimited = /429|rate limit/i.test(message)
-      if (!isRateLimited || attempt === maxRetries) throw err
-      const delayMs = 3000 * 2 ** attempt // 3s, 6s, 12s, 24s, 48s
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-    }
-  }
-  // ここには到達しないが型を満たすため
-  throw lastErr
+export async function launchBrowser(): Promise<Browser> {
+  return puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox']
+  })
 }
 
 /**
@@ -269,7 +247,7 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     addStyleEl
-      ? addStyleEl.click()
+      ? (addStyleEl as any).click()
       : page.evaluate(() => {
           const form = document.getElementById('addStyleForm') as HTMLFormElement | null
           form?.submit()
@@ -681,10 +659,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
-  const bytes = new Uint8Array(buf)
-  let binary = ''
-  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
-  return btoa(binary)
+  return Buffer.from(buf).toString('base64')
 }
 
 /**

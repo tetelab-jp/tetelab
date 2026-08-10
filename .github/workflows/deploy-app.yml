@@ -1,21 +1,28 @@
-name: Deploy SALON BOARD worker to ECS/Fargate
+name: Deploy TETE AOUT app to ECS/Fargate
 
-# worker/ 配下(SALON BOARD投稿を実行するFargateワーカー)が変更されたときだけ、
-# Dockerイメージをビルドし、ECRへpushして、ECSタスク定義の新しいリビジョンを登録する。
-# タスク定義はfamily名(リビジョン固定ではない)でアプリ本体(src/lib/aws-ecs.ts)から
-# 参照される想定のため、ここで新しいリビジョンをACTIVEにするだけでアプリ側の変更は不要。
+# アプリ本体(管理画面・API)が変更されたときに、Dockerイメージをビルドし
+# ECRへpushして、ECSタスク定義の新しいリビジョンを登録した上で、
+# 常時稼働のECSサービスへforce-new-deploymentする。
 #
-# 前提(infra/ のTerraformで作成される、またはPhase 0で手動作成する):
-#   - ECRリポジトリ
-#   - ECSクラスタ・タスク定義(初回リビジョン)
-#   - このワークフロー用のOIDC IAMロール(ECRへのpush・ECSタスク定義登録権限のみ)
+# 前提(infra/ のTerraformで作成される):
+#   - ECRリポジトリ(app用)
+#   - ECSクラスタ・タスク定義(初回リビジョン)・ECSサービス
+#   - deploy-worker.ymlと共用のOIDC IAMロール(ECRへのpush・ECSタスク定義登録・
+#     ECSサービス更新権限が必要)
 
 on:
   push:
     branches: [main]
     paths:
-      - 'worker/**'
-      - '.github/workflows/deploy-worker.yml'
+      - 'src/**'
+      - 'public/**'
+      - 'migrations-pg/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'Dockerfile'
+      - '.github/workflows/deploy-app.yml'
   workflow_dispatch: {}
 
 permissions:
@@ -46,7 +53,7 @@ jobs:
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" worker/
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" .
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
@@ -67,8 +74,9 @@ jobs:
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Register new task definition revision
+        id: register-task-def
         run: |
-          aws ecs register-task-definition \
+          NEW_ARN=$(aws ecs register-task-definition \
             --cli-input-json file://<(
               python3 -c "
 import json
@@ -78,4 +86,19 @@ for key in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'co
     td.pop(key, None)
 print(json.dumps(td))
 "
-            )
+            ) --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "task_definition_arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Update ECS service
+        run: |
+          aws ecs update-service \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --service "${{ secrets.ECS_SERVICE }}" \
+            --task-definition "${{ steps.register-task-def.outputs.task_definition_arn }}" \
+            --force-new-deployment
+
+      - name: Wait for service to stabilize
+        run: |
+          aws ecs wait services-stable \
+            --cluster "${{ secrets.ECS_CLUSTER }}" \
+            --services "${{ secrets.ECS_SERVICE }}"
