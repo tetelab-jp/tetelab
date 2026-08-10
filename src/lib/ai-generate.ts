@@ -60,7 +60,7 @@ export async function generateBlogContent(
     throw new Error(`AI生成APIエラー (${res.status}): ${errText.slice(0, 200)}`)
   }
 
-  const data = await res.json<any>()
+  const data = (await res.json()) as any
   const rawContent = data?.choices?.[0]?.message?.content
   if (!rawContent) {
     throw new Error('AI生成結果が空でした')

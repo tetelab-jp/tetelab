@@ -3,16 +3,9 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:sandbox": "wrangler pages dev dist --d1=hotpepper-automation-production --r2=STYLE_IMAGES --local --ip 0.0.0.0 --port 3000",
     "build:css": "tailwindcss -i ./src/tailwind-input.css -o ./public/static/tailwind.css --minify",
     "build": "npm run build:css && vite build",
-    "start": "node dist/index.js",
-    "preview": "wrangler pages dev",
-    "deploy": "npm run build && wrangler pages deploy",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
-    "db:migrate:local": "wrangler d1 migrations apply hotpepper-automation-production --local",
-    "db:migrate:prod": "wrangler d1 migrations apply hotpepper-automation-production --remote",
-    "db:console:local": "wrangler d1 execute hotpepper-automation-production --local"
+    "start": "node dist/index.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1106.0",
@@ -23,14 +16,12 @@
     "puppeteer": "^25.5.0"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260804.1",
     "@fortawesome/fontawesome-free": "^7.3.1",
     "@hono/vite-build": "^1.11.1",
     "@hono/vite-dev-server": "^0.26.1",
     "@tailwindcss/cli": "^4.3.3",
     "@types/pg": "^8.11.10",
     "tailwindcss": "^4.3.3",
-    "vite": "^8.1.4",
-    "wrangler": "^4.110.0"
+    "vite": "^8.1.4"
   }
 }
