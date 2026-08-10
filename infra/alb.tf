@@ -50,7 +50,7 @@ resource "aws_acm_certificate_validation" "app" {
 
 resource "aws_security_group" "alb" {
   name        = "${var.project_name}-alb"
-  description = "ALB用。80/443を全世界に公開"
+  description = "ALB - public 80/443"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {

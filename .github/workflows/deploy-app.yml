@@ -4,11 +4,12 @@ name: Deploy TETE AOUT app to ECS/Fargate
 # ECRへpushして、ECSタスク定義の新しいリビジョンを登録した上で、
 # 常時稼働のECSサービスへforce-new-deploymentする。
 #
-# 前提(infra/ のTerraformで作成される):
-#   - ECRリポジトリ(app用)
-#   - ECSクラスタ・タスク定義(初回リビジョン)・ECSサービス
-#   - deploy-worker.ymlと共用のOIDC IAMロール(ECRへのpush・ECSタスク定義登録・
-#     ECSサービス更新権限が必要)
+# 前提(infra/ のTerraformで作成済み):
+#   - ECRリポジトリ(app用)・ECSクラスタ・タスク定義(初回リビジョン)・ECSサービス
+#   - deploy-worker.ymlと共用のOIDC IAMロール(secrets.AWS_DEPLOY_ROLE_ARN、
+#     infra/のoutput "github_actions_deploy_role_arn"の値)
+# 下のenvはリソース名(非機密情報)なので、terraform applyの出力に合わせて
+# ここに直接書く(secretsにはAWS_DEPLOY_ROLE_ARNのみで足りる)。
 
 on:
   push:
@@ -25,6 +26,14 @@ on:
       - '.github/workflows/deploy-app.yml'
   workflow_dispatch: {}
 
+env:
+  AWS_REGION: ap-northeast-1
+  ECR_REPOSITORY: salonboard-worker-app
+  ECS_TASK_FAMILY: salonboard-worker-app
+  ECS_CONTAINER_NAME: app
+  ECS_CLUSTER: salonboard-worker
+  ECS_SERVICE: salonboard-worker-app
+
 permissions:
   id-token: write # OIDCでAWS認証するために必要
   contents: read
@@ -40,7 +49,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to Amazon ECR
         id: ecr-login
@@ -50,7 +59,6 @@ jobs:
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
-          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" .
@@ -61,7 +69,7 @@ jobs:
       - name: Download current task definition
         run: |
           aws ecs describe-task-definition \
-            --task-definition "${{ secrets.ECS_TASK_FAMILY }}" \
+            --task-definition "$ECS_TASK_FAMILY" \
             --query taskDefinition \
             > task-definition.json
 
@@ -70,7 +78,7 @@ jobs:
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: task-definition.json
-          container-name: ${{ secrets.ECS_CONTAINER_NAME }}
+          container-name: ${{ env.ECS_CONTAINER_NAME }}
           image: ${{ steps.build-image.outputs.image }}
 
       - name: Register new task definition revision
@@ -92,13 +100,13 @@ print(json.dumps(td))
       - name: Update ECS service
         run: |
           aws ecs update-service \
-            --cluster "${{ secrets.ECS_CLUSTER }}" \
-            --service "${{ secrets.ECS_SERVICE }}" \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
             --task-definition "${{ steps.register-task-def.outputs.task_definition_arn }}" \
             --force-new-deployment
 
       - name: Wait for service to stabilize
         run: |
           aws ecs wait services-stable \
-            --cluster "${{ secrets.ECS_CLUSTER }}" \
-            --services "${{ secrets.ECS_SERVICE }}"
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"

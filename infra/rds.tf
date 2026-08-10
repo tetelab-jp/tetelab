@@ -10,11 +10,11 @@ resource "aws_db_subnet_group" "main" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.project_name}-rds"
-  description = "RDS PostgreSQL。ECSタスク(app/worker)のSGからの5432のみ許可"
+  description = "RDS PostgreSQL - allow 5432 from app task SG only"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    description     = "アプリタスクからのみ許可"
+    description     = "Allow from app task SG only"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"

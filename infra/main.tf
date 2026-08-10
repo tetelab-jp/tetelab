@@ -1,14 +1,7 @@
-# SALON BOARD投稿ワーカー(AWS ECS/Fargate)のインフラ定義。
-#
-# 適用対象はPhase 0(要件資料参照)の手作業をコード化したもの:
-#   - ECRリポジトリ
-#   - ECSクラスタ・タスク定義(初回リビジョン。以降はGitHub Actionsが更新)
-#   - タスク実行ロール / タスクロール
-#   - Cloudflare(Workers)からECS RunTaskを呼ぶためのIAMユーザー
-#   - GitHub ActionsからECR push・タスク定義登録を行うためのOIDC IAMロール
-#
-# 適用はこのセッションでは実行できないため、AWS認証情報を持つ環境で
-# `terraform init && terraform apply` を実行すること。
+# TETE AOUT インフラ全体(アプリ本体+SALON BOARD投稿ワーカー)の定義。
+# 2026-08-10、AWSアカウント(102798329434, ap-northeast-1)へ実際にapply済み。
+# state は S3(salonboard-worker-tfstate-102798329434)で管理している。
+# 以後の変更は `terraform init && terraform plan/apply` を実行すること。
 
 terraform {
   required_version = ">= 1.5.0"
@@ -21,6 +14,13 @@ terraform {
       source  = "hashicorp/random"
       version = "~> 3.6"
     }
+  }
+
+  backend "s3" {
+    bucket  = "salonboard-worker-tfstate-102798329434"
+    key     = "salonboard-worker/terraform.tfstate"
+    region  = "ap-northeast-1"
+    encrypt = true
   }
 }
 

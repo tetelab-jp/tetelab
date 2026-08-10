@@ -15,11 +15,11 @@ data "aws_subnets" "default_public" {
 
 resource "aws_security_group" "worker_task" {
   name        = "${var.project_name}-task"
-  description = "SALON BOARD投稿ワーカー(Fargateタスク)用。受信は許可せず送信のみ許可する"
+  description = "Worker task SG - egress only, no ingress"
   vpc_id      = data.aws_vpc.default.id
 
   egress {
-    description = "アウトバウンド全許可(salonboard.com・Cloudflare PagesへのHTTPSアクセスに必要)"
+    description = "Allow all outbound (needed for salonboard.com and app API access)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

@@ -33,11 +33,11 @@ resource "aws_cloudwatch_log_group" "app" {
 
 resource "aws_security_group" "app_task" {
   name        = "${var.project_name}-app-task"
-  description = "アプリ本体(常時稼働)タスク用。ALBからの3000番のみ許可"
+  description = "App task SG - allow 3000 from ALB only"
   vpc_id      = data.aws_vpc.default.id
 
   ingress {
-    description     = "ALBからのみ許可"
+    description     = "Allow from ALB only"
     from_port       = 3000
     to_port         = 3000
     protocol        = "tcp"

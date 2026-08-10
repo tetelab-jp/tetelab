@@ -41,14 +41,14 @@ output "alb_dns_name" {
 }
 
 output "acm_certificate_validation_records" {
-  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なACM検証用CNAMEレコード"
-  value = [
-    for dvo in aws_acm_certificate.app.domain_validation_options : {
+  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なACM検証用CNAMEレコード(ドメイン未指定時は空)"
+  value = local.has_domain ? [
+    for dvo in aws_acm_certificate.app[0].domain_validation_options : {
       name  = dvo.resource_record_name
       type  = dvo.resource_record_type
       value = dvo.resource_record_value
     }
-  ]
+  ] : []
 }
 
 output "rds_endpoint" {
