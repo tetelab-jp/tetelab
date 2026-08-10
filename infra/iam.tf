@@ -94,7 +94,12 @@ data "aws_iam_policy_document" "github_actions_assume" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_repository}:*"]
+      # GitHubがsubクレームにowner/repoのID番号を埋め込む形式(リポジトリ名変更耐性のため)に
+      # 変更したため、旧来のプレーンな形式とID付き形式の両方を許可する。
+      values = [
+        "repo:${var.github_repository}:*",
+        "repo:${split("/", var.github_repository)[0]}@*/${split("/", var.github_repository)[1]}@*:*"
+      ]
     }
   }
 }
