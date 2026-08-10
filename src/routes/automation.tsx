@@ -196,7 +196,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
               <li class="flex items-start gap-2">
                 <span class={'mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ' + (LOG_STATUS_DOT[l.status] || 'bg-gray-400')}></span>
                 <div class="min-w-0">
-                  <p class="text-gray-700">
+                  <p class={'text-gray-700' + (l.message.length > 150 ? ' line-clamp-3' : '')}>
                     {l.execution_type && (
                       <span class="text-xs font-semibold text-gray-400 mr-1">
                         [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
@@ -210,6 +210,15 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                     {l.style_id ? ' — ' : ''}
                     {l.message}
                   </p>
+                  {l.message.length > 150 && (
+                    <button
+                      type="button"
+                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-3'); this.textContent = p.classList.contains('line-clamp-3') ? '続きを見る' : '閉じる'"
+                    >
+                      続きを見る
+                    </button>
+                  )}
                   <p class="text-xs text-gray-400">{formatJstDateTime(l.created_at)}</p>
                 </div>
               </li>
@@ -352,7 +361,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 
   const { style_id: styleId, user_id: userId } = job
   const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
-  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 1500)
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 2000)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
   if (body.step === 'login' && !body.success) {
