@@ -13,8 +13,16 @@
 //   - arrayBufferToBase64(): btoaではなくNode標準のBufferを使用
 // ============================================
 
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import type { Browser, Page } from 'puppeteer'
+import puppeteerExtra from 'puppeteer-extra'
+import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 export type { Browser, Page }
+
+// 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
+// Akamai系ボット対策を回避できないことが実機検証(プロキシでIPを変えても
+// 症状不変)で確認できたため、headless検知への対策として実績のある
+// puppeteer-extra-plugin-stealthを導入した。詳細はsrc/lib/salonboard-automation.ts参照。
+puppeteerExtra.use(StealthPlugin())
 
 export const SALONBOARD_BASE_URL = 'https://salonboard.com'
 
@@ -46,9 +54,18 @@ export type StylePostResult = {
  * リトライ制御(Cloudflare Browser Rendering版にあった429対応)は不要。
  */
 export async function launchBrowser(): Promise<Browser> {
-  return puppeteer.launch({
+  const args = ['--no-sandbox', '--disable-setuid-sandbox']
+
+  // SALON BOARD側のボット対策の検証用の一時的な迂回策。SALONBOARD_PROXY_SERVER
+  // (例: http://host:port)が設定されている場合のみプロキシ経由でアクセスする。
+  const proxyServer = process.env.SALONBOARD_PROXY_SERVER
+  if (proxyServer) {
+    args.push(`--proxy-server=${proxyServer}`)
+  }
+
+  return puppeteerExtra.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args
   })
 }
 
@@ -63,6 +80,12 @@ export async function launchBrowser(): Promise<Browser> {
  */
 export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
+
+  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
+  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
+  if (proxyUsername && proxyPassword) {
+    await page.authenticate({ username: proxyUsername, password: proxyPassword })
+  }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
   // ハンドラが無いと、Puppeteerはダイアログに応答できず固まり、
