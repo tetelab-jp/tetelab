@@ -66,6 +66,15 @@ export async function launchBrowser(): Promise<Browser> {
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
   if (proxyServer) {
     args.push(`--proxy-server=${proxyServer}`)
+
+    // 2026-08-11追記: 画像アップロード(doUpload、大きめのPOST)がプロキシ経由で
+    // net::ERR_EMPTY_RESPONSEで100%失敗する一方、同じプロキシでの軽いGET
+    // (ログイン・画面遷移)は安定して成功していた。ログイン等でも失敗しないなら
+    // salonboard.com側が一律不安定とは考えにくく、プロキシのCONNECTトンネル越しの
+    // HTTP/2で大きめのPOSTを送った場合に相性問題が起きている可能性を疑い、
+    // HTTP/2を無効化してHTTP/1.1を強制する(プロキシ経由通信でよくある既知の
+    // 回避策)。プロキシ未設定時(直接アクセス)には影響しない。
+    args.push('--disable-http2')
   }
 
   // 2026-08-10追記: headlessモードは一貫してSALON BOARD側のボット対策に
