@@ -423,54 +423,76 @@ async function uploadFrontImage(
     log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
     await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
 
-    // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
-    // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
-    // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
-    // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
-    const uploadEvents: string[] = []
-    const onRequestFinished = (req: any) => {
-      if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
-    }
-    const onResponse = async (res: any) => {
-      if (/doUpload/i.test(res.url())) {
-        let bodySnippet = ''
-        try {
-          bodySnippet = (await res.text()).slice(0, 300)
-        } catch {}
-        uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
+    // 2026-08-11追記: net::ERR_EMPTY_RESPONSE(プロキシ経由の大きめPOSTが
+    // レスポンス無しで切断される)が発生することを実機で確認した。ファイルは
+    // 既に<input>へ選択済み(CDP経由)で消えていないため、「登録する」ボタンの
+    // 再クリックだけで再送信されるはずと判断し、送信部分のみ最大3回リトライする。
+    const maxAttempts = 3
+    let lastError: Error | null = null
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
+      // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
+      // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
+      // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
+      const uploadEvents: string[] = []
+      const onRequestFinished = (req: any) => {
+        if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
+      }
+      const onResponse = async (res: any) => {
+        if (/doUpload/i.test(res.url())) {
+          let bodySnippet = ''
+          try {
+            bodySnippet = (await res.text()).slice(0, 300)
+          } catch {}
+          uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
+        }
+      }
+      const onRequestFailed = (req: any) => {
+        if (/doUpload/i.test(req.url())) {
+          uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
+        }
+      }
+      page.on('request', onRequestFinished)
+      page.on('response', onResponse)
+      page.on('requestfailed', onRequestFailed)
+
+      try {
+        await page.click('input.jscImageUploaderModalSubmitButton')
+
+        log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
+        await page.waitForFunction(
+          () => {
+            const el = document.getElementById('FRONT_IMG_ID_ID')
+            return !!el && !!el.textContent && el.textContent.trim().length > 0
+          },
+          { timeout: 45000 }
+        )
+        lastError = null
+        break
+      } catch {
+        const diag = uploadEvents.length > 0 ? uploadEvents.join(' / ') : '(doUploadへのリクエストが観測されませんでした)'
+        lastError = new Error(
+          '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
+            `45秒待っても検知できませんでした [診断] ${diag}`
+        )
+        if (attempt < maxAttempts) {
+          log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、再試行します... [診断] ${diag}`)
+          const stillActive = await page.$('input.jscImageUploaderModalSubmitButton.isActive')
+          if (!stillActive) {
+            lastError = new Error(
+              `画像アップロードのリトライ不可: 送信ボタンが非活性/消失していました(試行${attempt}回目) [診断] ${diag}`
+            )
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3000))
+        }
+      } finally {
+        page.off('request', onRequestFinished)
+        page.off('response', onResponse)
+        page.off('requestfailed', onRequestFailed)
       }
     }
-    const onRequestFailed = (req: any) => {
-      if (/doUpload/i.test(req.url())) {
-        uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
-      }
-    }
-    page.on('request', onRequestFinished)
-    page.on('response', onResponse)
-    page.on('requestfailed', onRequestFailed)
-
-    await page.click('input.jscImageUploaderModalSubmitButton')
-
-    log('アップロード完了の検知を待機中...')
-    try {
-      await page.waitForFunction(
-        () => {
-          const el = document.getElementById('FRONT_IMG_ID_ID')
-          return !!el && !!el.textContent && el.textContent.trim().length > 0
-        },
-        { timeout: 45000 }
-      )
-    } catch {
-      const diag = uploadEvents.length > 0 ? uploadEvents.join(' / ') : '(doUploadへのリクエストが観測されませんでした)'
-      throw new Error(
-        '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-          `45秒待っても検知できませんでした [診断] ${diag}`
-      )
-    } finally {
-      page.off('request', onRequestFinished)
-      page.off('response', onResponse)
-      page.off('requestfailed', onRequestFailed)
-    }
+    if (lastError) throw lastError
   } finally {
     await unlink(tmpPath).catch(() => {})
   }
