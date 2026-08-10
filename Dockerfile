@@ -13,7 +13,7 @@ USER root
 # ウィンドウ)でのみ正常動作」という結果が出ているため、Xvfb(仮想ディス
 # プレイ)を使い、実際には画面を表示しないサーバー上でも「画面あり」
 # モードのChromeを起動できるようにする。
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci && chown -R pptruser:pptruser /app

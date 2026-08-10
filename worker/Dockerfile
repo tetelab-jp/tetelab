@@ -9,7 +9,7 @@ WORKDIR /app
 USER root
 # 2026-08-10追記: 本体アプリ(../Dockerfile)と同じ理由でXvfb(仮想ディスプレイ)
 # を導入し、headlessではなく「画面あり」モードのChromeを起動できるようにする。
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci \
