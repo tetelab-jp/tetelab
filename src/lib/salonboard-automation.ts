@@ -133,24 +133,25 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
     await dialog.accept().catch(() => {})
   })
 
-  // 代表的なheadless検知ポイントを可能な範囲で偽装する
-  await page.evaluateOnNewDocument(() => {
-    Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-    // headless Chromeはnavigator.pluginsが空配列になりがちなので、それらしい値を入れる
-    Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] })
-    Object.defineProperty(navigator, 'languages', { get: () => ['ja-JP', 'ja', 'en-US', 'en'] })
-    // headless Chromeにはwindow.chromeオブジェクトが存在しないことが多い
-    if (!(window as any).chrome) {
-      ;(window as any).chrome = { runtime: {} }
-    }
-  })
-
-  // デフォルトのheadless Chrome User-Agentではなく、通常のデスクトップChromeを名乗る
-  await page.setUserAgent(
-    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-  )
-
-  // headless実行では省略されがちな一般的なデスクトップ解像度のviewportを明示的に設定
+  // 2026-08-10追記(重要な不整合を修正): 以前はここで手動のnavigator.*パッチと
+  // 固定User-Agent(Windows NT 10.0; Win64; x64)を設定していたが、これには
+  // 2つの問題があった。
+  //   1. 実行環境は常にLinux(Cloudflare Workers / AWS Fargateコンテナ)なのに
+  //      User-AgentだけWindowsを名乗っており、Chromeが自動送信する
+  //      Sec-CH-UA-Platform(Client Hints)ヘッダーやnavigator.userAgentData.platform
+  //      は実際のLinuxを報告し続けるため、「UAはWindows・他の信号はLinux」という
+  //      内部矛盾が常に発生していた。Akamai系ボット対策はこの種のクロスチェックを
+  //      典型的に見ているため、これ自体が検知要因になっていた可能性が高い。
+  //   2. navigator.pluginsに`[1, 2, 3, 4, 5]`という数値配列を入れていたが、
+  //      本物のPluginArrayとは似ても似つかない形状であり、詳しく調べられた場合
+  //      むしろ不自然さの証拠になっていた。
+  // puppeteer-extra-plugin-stealth(モジュール冒頭でuse()済み)は、
+  // navigator.webdriver・navigator.plugins(現実的な形状)・languages・
+  // chrome.runtime・WebGL vendor/renderer等をこれらの手動パッチより遥かに
+  // 精巧かつ実行環境と整合する形でカバーするため、重複する手動パッチは撤去し、
+  // stealthプラグインに委ねる。User-Agentも上書きせず、実際に起動している
+  // ブラウザ本体が生成する(実OS・実Chromeバージョンと矛盾しない)本物の値を
+  // そのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
   return page
