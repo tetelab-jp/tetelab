@@ -15,6 +15,13 @@ USER root
 # モードのChromeを起動できるようにする。
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
     && rm -rf /var/lib/apt/lists/*
+# 2026-08-10追記: pptruser(非root)でXvfbを起動すると、Xvfbが/tmp/.X11-unixを
+# 自前で作成しようとして「_XSERVTransmkdir: ERROR: euid != 0, directory
+# /tmp/.X11-unix will not be created.」で失敗し、ディスプレイが用意されない
+# まま(=Chromeがまともに動作しないまま)コンテナが起動し続けてしまう不具合が
+# 実機で発生した。root権限のあるこの時点で正しい権限(1777)で先に作成しておく
+# ことで、Xvfb自身によるchown/mkdirを不要にする。
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 COPY package.json package-lock.json ./
 RUN npm ci && chown -R pptruser:pptruser /app
 USER pptruser
