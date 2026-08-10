@@ -123,10 +123,22 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
   const page = await browser.newPage()
 
   // プロキシに認証が必要な場合(SALONBOARD_PROXY_USERNAME/PASSWORD設定時)のみ認証する。
+  //
+  // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)を導入したが、
+  // ユーザー名をそのまま使うと毎回同じ1つの出口IPに固定されてしまい、
+  // salonboard.com/Akamai側にそのIPをブロックされると即座に全滅する
+  // (実際に発生した障害)。Bright Dataは`ユーザー名-session-<任意の文字列>`という
+  // 形式に対応しており、session値を変えるたびにプール内の別IPが割り当てられる
+  // (ドキュメント: https://docs.brightdata.com/proxy-networks/isp/introduction)。
+  // ここでブラウザ起動のたびにランダムなsession値を付与することで、
+  // 明示的なIP管理なしにプール内のIPを自動的にローテーションさせる。
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
   const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
   if (proxyUsername && proxyPassword) {
-    await page.authenticate({ username: proxyUsername, password: proxyPassword })
+    const sessionId = Math.random().toString(36).slice(2, 10)
+    const sessionUsername = `${proxyUsername}-session-${sessionId}`
+    await page.authenticate({ username: sessionUsername, password: proxyPassword })
+    log?.(`[プロキシ] セッションID=${sessionId} で出口IPをローテーション`)
   }
 
   // 2026-08-09追記: ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への

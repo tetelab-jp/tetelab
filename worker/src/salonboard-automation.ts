@@ -89,10 +89,18 @@ export async function launchBrowser(): Promise<Browser> {
 export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
 
+  // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)のユーザー名に
+  // `-session-<任意の文字列>`を付与すると、session値ごとにプール内の別IPが
+  // 割り当てられる。ブラウザ起動のたびにランダムなsession値を付与し、
+  // 1つの出口IPがブロックされても他のIPへ自動的にローテーションされるようにする
+  // (src/lib/salonboard-automation.tsと同じ対応)。
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
   const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
   if (proxyUsername && proxyPassword) {
-    await page.authenticate({ username: proxyUsername, password: proxyPassword })
+    const sessionId = Math.random().toString(36).slice(2, 10)
+    const sessionUsername = `${proxyUsername}-session-${sessionId}`
+    await page.authenticate({ username: sessionUsername, password: proxyPassword })
+    log?.(`[プロキシ] セッションID=${sessionId} で出口IPをローテーション`)
   }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
