@@ -7,6 +7,10 @@ WORKDIR /app
 
 # 公式イメージは既定で非rootユーザー(pptruser)。/appの所有権を合わせる。
 USER root
+# 2026-08-10追記: 本体アプリ(../Dockerfile)と同じ理由でXvfb(仮想ディスプレイ)
+# を導入し、headlessではなく「画面あり」モードのChromeを起動できるようにする。
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci \
     && chown -R pptruser:pptruser /app
@@ -16,4 +20,4 @@ COPY --chown=pptruser:pptruser tsconfig.json ./
 COPY --chown=pptruser:pptruser src ./src
 RUN npm run build
 
-CMD ["node", "dist/index.js"]
+CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1920x1080x24", "node", "dist/index.js"]

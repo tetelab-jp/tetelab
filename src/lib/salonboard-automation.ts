@@ -87,8 +87,13 @@ export async function launchBrowser(): Promise<Browser> {
     args.push(`--proxy-server=${proxyServer}`)
   }
 
+  // 2026-08-10追記: headlessモードは一貫してSALON BOARD側のボット対策に
+  // 弾かれることを確認したため、非headless(画面ありモード)で起動する。
+  // コンテナには実ディスプレイが無いため、Dockerfile側でXvfb(仮想ディスプレイ)
+  // 経由(`xvfb-run`)で起動することが前提。ローカルの実ディスプレイがある
+  // 環境ではXvfb無しでもそのまま動作する。
   return puppeteerExtra.launch({
-    headless: true,
+    headless: false,
     args
   })
 }
