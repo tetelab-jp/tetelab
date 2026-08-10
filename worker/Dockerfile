@@ -11,6 +11,10 @@ USER root
 # を導入し、headlessではなく「画面あり」モードのChromeを起動できるようにする。
 RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
     && rm -rf /var/lib/apt/lists/*
+# 2026-08-10追記: 本体アプリ(../Dockerfile)と同じ理由(pptruser非rootでの
+# Xvfb起動が/tmp/.X11-unix作成に失敗する不具合)で、root権限のあるこの時点で
+# 正しい権限(1777)で先に作成しておく。
+RUN mkdir -p /tmp/.X11-unix && chmod 1777 /tmp/.X11-unix
 COPY package.json package-lock.json ./
 RUN npm ci \
     && chown -R pptruser:pptruser /app
