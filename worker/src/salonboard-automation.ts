@@ -479,8 +479,19 @@ async function uploadFrontImage(
           log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、再試行します... [診断] ${diag}`)
           const stillActive = await page.$('input.jscImageUploaderModalSubmitButton.isActive')
           if (!stillActive) {
+            // 2026-08-11追記(診断用): 送信ボタン非活性で単純な再クリックが
+            // できないことが判明したため、次回の対策検討用にモーダルの
+            // 実際の表示内容(エラーメッセージ・ファイル選択状態等)を記録する。
+            const modalState = await page
+              .evaluate(() => {
+                const modal = document.querySelector('.imageUploaderModalInner')
+                if (!modal) return '(.imageUploaderModalInnerが見つかりません。モーダル自体が閉じた可能性)'
+                return (modal as HTMLElement).innerText?.replace(/\s+/g, ' ').trim().slice(0, 500) ?? '(テキストなし)'
+              })
+              .catch((e) => `(取得失敗: ${e})`)
             lastError = new Error(
-              `画像アップロードのリトライ不可: 送信ボタンが非活性/消失していました(試行${attempt}回目) [診断] ${diag}`
+              `画像アップロードのリトライ不可: 送信ボタンが非活性/消失していました(試行${attempt}回目) ` +
+                `[診断] ${diag} [モーダル状態] ${modalState}`
             )
             break
           }
