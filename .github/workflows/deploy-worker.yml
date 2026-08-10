@@ -75,14 +75,6 @@ jobs:
 
       - name: Register new task definition revision
         run: |
-          aws ecs register-task-definition \
-            --cli-input-json file://<(
-              python3 -c "
-import json
-with open('${{ steps.render-task-def.outputs.task-definition }}') as f:
-    td = json.load(f)
-for key in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy']:
-    td.pop(key, None)
-print(json.dumps(td))
-"
-            )
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            "${{ steps.render-task-def.outputs.task-definition }}" > clean-task-definition.json
+          aws ecs register-task-definition --cli-input-json file://clean-task-definition.json
