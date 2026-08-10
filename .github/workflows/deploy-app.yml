@@ -84,17 +84,10 @@ jobs:
       - name: Register new task definition revision
         id: register-task-def
         run: |
-          NEW_ARN=$(aws ecs register-task-definition \
-            --cli-input-json file://<(
-              python3 -c "
-import json
-with open('${{ steps.render-task-def.outputs.task-definition }}') as f:
-    td = json.load(f)
-for key in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy']:
-    td.pop(key, None)
-print(json.dumps(td))
-"
-            ) --query 'taskDefinition.taskDefinitionArn' --output text)
+          jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' \
+            "${{ steps.render-task-def.outputs.task-definition }}" > clean-task-definition.json
+          NEW_ARN=$(aws ecs register-task-definition --cli-input-json file://clean-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
           echo "task_definition_arn=$NEW_ARN" >> "$GITHUB_OUTPUT"
 
       - name: Update ECS service
