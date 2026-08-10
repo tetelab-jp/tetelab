@@ -13,9 +13,12 @@
 //   - arrayBufferToBase64(): btoaではなくNode標準のBufferを使用
 // ============================================
 
-import type { Browser, Page } from 'puppeteer'
+import type { Browser, ElementHandle, Page } from 'puppeteer'
 import puppeteerExtra from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
+import { writeFile, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 export type { Browser, Page }
 
 // 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
@@ -354,23 +357,31 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 /**
  * 写真アップロード処理。
  *
- * UI操作(プレースホルダークリック→モーダル内file inputへの注入→「登録する」
- * ボタンクリック→完了検知のポーリング)は経由せず、アップロードエンドポイントを
- * fetch()で直接呼び出す方式。
+ * 2026-08-10追記(fetch方式から本物のファイル選択方式へ全面変更):
+ * 従来はアップロードエンドポイントをfetch()で直接呼び出す自作multipart方式
+ * だったが、レジデンシャルプロキシ経由で「Failed to fetch」(接続自体の
+ * 失敗、3回リトライしても100%再現)が発生することを実機で確認した。
+ * 自作fetch()はSALON BOARD本来の(hidden field・CSRF・multipart構造を
+ * 含む)アップロード導線から外れた不自然なリクエストであり、Akamai系の
+ * ボット対策がこれを検知して接続自体を切っている可能性が高いと判断した。
  *
- * リクエスト仕様:
- *   POST https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true
- *   Content-Type: multipart/form-data
- *   フィールド: formFile(画像バイナリ), setImgId="FRONT_IMG_ID", dataKey="",
- *     targetActionId="ABNKD3600_FRONT",
- *     org.apache.struts.taglib.html.TOKEN(CSRFトークン、ページ内の同名隠し
- *     フィールドから取得)、STORE_ID(同じくページ内の隠しフィールドから取得)、
- *     modified="0", pubManageId="undefined"。
+ * 旧実装がfetch()方式を選んだ理由は「Cloudflare Workers環境にはファイル
+ * システムが無く、Puppeteer標準のuploadFile()(CDPのDOM.setFileInputFiles、
+ * 実ファイルパスが必須)が原理的に使えなかったため」だが、AWS Fargate
+ * (Node標準puppeteer)には実ファイルシステムがあり、この制約は既に
+ * 解消している。そのため、本来のUI導線(プレースホルダークリック→
+ * モーダル内file inputへの実ファイル注入→「登録する」ボタンクリック→
+ * 完了検知)に戻す。
  *
- * レスポンスはモーダルHTML片。隠しフィールドとして imageId(B+9桁)等が
- * 埋め込まれており、パース後にページ上の window.setUploadImage(...) を
- * そのまま呼び出すことで、サイト本来の更新ロジック(サムネイル表示・
- * 隠しフィールド更新等)を適用させる。
+ * 確定済みの実DOM構造(docs/salonboard-real-html-findings.md参照):
+ *   - プレースホルダー: <img id="FRONT_IMG_ID_IMG"> クリックで
+ *     img_upload_modal_view(...)が発火しモーダルが動的挿入される
+ *   - file input: <input type="file" id="formFile"> (#imageUploaderModalBody
+ *     という要素は実在しない、旧実装の推測ミス)
+ *   - 登録ボタン: <input type="button" class="jscImageUploaderModalSubmitButton">
+ *     (ファイル選択後にisActiveクラスが付与され活性化する)
+ *   - 完了検知: <span id="FRONT_IMG_ID_ID"> のtextContent(隠しinputでは
+ *     なくspanタグ、IDも FRONT_IMG_ID ではなく FRONT_IMG_ID_ID)
  */
 async function uploadFrontImage(
   page: Page,
@@ -378,123 +389,51 @@ async function uploadFrontImage(
   fileName: string,
   log: AutomationLogger
 ): Promise<void> {
-  log('画像をfetch()で直接アップロード中...(UI操作を経由しません)')
+  log('画像アップロードモーダルを開いています...')
+  await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
+  await page.click('#FRONT_IMG_ID_IMG')
 
-  const base64 = arrayBufferToBase64(imageBuffer)
-  const result = await page.evaluate(
-    async (base64Data: string, name: string) => {
-      const tokenEl = document.querySelector(
-        'input[name="org.apache.struts.taglib.html.TOKEN"]'
-      ) as HTMLInputElement | null
-      const storeIdEl = document.querySelector('input[name="STORE_ID"]') as HTMLInputElement | null
-      if (!tokenEl || !storeIdEl) {
-        return { success: false, error: 'CSRFトークンまたはSTORE_IDがページ内に見つかりませんでした', imageId: null }
-      }
-
-      const byteChars = atob(base64Data)
-      const byteNumbers = new Array(byteChars.length)
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i)
-      const byteArray = new Uint8Array(byteNumbers)
-      const blob = new Blob([byteArray], { type: 'image/jpeg' })
-
-      const formData = new FormData()
-      formData.append('formFile', blob, name)
-      formData.append('setImgId', 'FRONT_IMG_ID')
-      formData.append('dataKey', '')
-      formData.append('targetActionId', 'ABNKD3600_FRONT')
-      formData.append('org.apache.struts.taglib.html.TOKEN', tokenEl.value)
-      formData.append('STORE_ID', storeIdEl.value)
-      formData.append('modified', '0')
-      formData.append('pubManageId', 'undefined')
-
-      // 2026-08-10追記: レジデンシャルプロキシ経由だと、画像バイナリを含む
-      // 大きめのPOST通信が「Failed to fetch」(接続自体の失敗)で不安定に
-      // なることを実機で確認した。プロキシ側の一時的な接続断の可能性を
-      // 考慮し、最大3回まで間隔を空けてリトライする。
-      let resText: string | undefined
-      let resStatus: number | undefined
-      let lastFetchErr: any
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        try {
-          const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
-            method: 'POST',
-            body: formData,
-            credentials: 'include'
-          })
-          resStatus = res.status
-          resText = await res.text()
-          lastFetchErr = null
-          break
-        } catch (fetchErr: any) {
-          lastFetchErr = fetchErr
-          if (attempt < 3) await new Promise((r) => setTimeout(r, 2000))
-        }
-      }
-      if (lastFetchErr || resText === undefined) {
-        return {
-          success: false,
-          error: `fetch自体が3回とも失敗しました: ${String(lastFetchErr?.message || lastFetchErr)}`,
-          imageId: null
-        }
-      }
-
-      const doc = new DOMParser().parseFromString(resText, 'text/html')
-      const val = (id: string) => (doc.getElementById(id) as HTMLInputElement | null)?.value ?? null
-
-      const userErrorFlg = val('userErrorFlg')
-      const imageId = val('imageId')
-      const elementName = val('elementName')
-      const meetStandardFlg = val('meetStandardFlg')
-      const lengthSizeOrg = val('lengthSizeOrg')
-      const sideSizeOrg = val('sideSizeOrg')
-      const resolutionOrg = val('resolutionOrg')
-      const imageFilePath = val('imageFilePath')
-
-      if (userErrorFlg !== '0' || !imageId || !/^B\d{9}$/.test(imageId)) {
-        // 2026-08-10追記: userErrorFlg/imageIdが両方nullになる不具合の原因調査のため、
-        // 実際のレスポンス本文(先頭500文字)を診断情報として残す。想定外のHTML
-        // (ログイン切れ・エラーページ等)が返っている可能性を切り分けるため。
-        return {
-          success: false,
-          error:
-            `アップロードレスポンスが想定外でした(status=${resStatus}, userErrorFlg=${userErrorFlg}, imageId=${imageId}) ` +
-            `レスポンス冒頭500文字: ${resText.replace(/\s+/g, ' ').trim().slice(0, 500)}`,
-          imageId: null
-        }
-      }
-
-      if (typeof (window as any).setUploadImage !== 'function') {
-        return { success: false, error: 'window.setUploadImage関数がページ内に見つかりませんでした', imageId: null }
-      }
-      ;(window as any).setUploadImage(
-        imageId,
-        elementName,
-        meetStandardFlg,
-        lengthSizeOrg,
-        sideSizeOrg,
-        resolutionOrg,
-        imageFilePath
-      )
-
-      return { success: true, error: null, imageId }
-    },
-    base64,
-    fileName
-  )
-
-  if (!result.success) {
-    throw new Error(`画像アップロードに失敗しました(fetch方式): ${result.error}`)
+  const fileInput = (await page.waitForSelector('#formFile', { timeout: 15000 })) as ElementHandle<HTMLInputElement> | null
+  if (!fileInput) {
+    throw new Error('画像アップロードに失敗しました(ファイル選択方式): #formFile が見つかりませんでした')
   }
 
-  log(`画像アップロード成功(fetch方式): imageId=${result.imageId}`)
+  // 画像を一時ファイルに書き出し、実ファイルとしてuploadFile()に渡す
+  // (CDPのDOM.setFileInputFilesは実ファイルパスが必須のため)。
+  const tmpPath = join(tmpdir(), `salonboard-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
+  await writeFile(tmpPath, Buffer.from(imageBuffer))
+  try {
+    await fileInput.uploadFile(tmpPath)
+  } finally {
+    await unlink(tmpPath).catch(() => {})
+  }
+
+  log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
+  await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+  await page.click('input.jscImageUploaderModalSubmitButton')
+
+  log('アップロード完了の検知を待機中...')
+  try {
+    await page.waitForFunction(
+      () => {
+        const el = document.getElementById('FRONT_IMG_ID_ID')
+        return !!el && !!el.textContent && el.textContent.trim().length > 0
+      },
+      { timeout: 45000 }
+    )
+  } catch {
+    throw new Error(
+      '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
+        '45秒待っても検知できませんでした'
+    )
+  }
+
+  const imageId = await page.evaluate(() => document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() ?? '')
+  log(`画像アップロード成功(ファイル選択方式): imageId=${imageId}`)
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function arrayBufferToBase64(buf: ArrayBuffer): string {
-  return Buffer.from(buf).toString('base64')
 }
 
 /**
