@@ -39,9 +39,15 @@ resource "aws_iam_user" "cloudflare_caller" {
 
 data "aws_iam_policy_document" "cloudflare_caller" {
   statement {
-    sid       = "RunStylePostTask"
-    actions   = ["ecs:RunTask"]
-    resources = [aws_ecs_task_definition.worker.arn_without_revision]
+    sid     = "RunStylePostTask"
+    actions = ["ecs:RunTask"]
+    # 2026-08-10追記: arn_without_revisionだけ(末尾のリビジョン番号なし)を
+    # Resourceに指定すると、実際のRunTask呼び出し時のリソースARN(必ず
+    # task-definition/salonboard-worker:6のようにリビジョン番号付き)とは
+    # 文字列として一致せず、IAMのARNマッチングはワイルドカード無指定では
+    # 完全一致のみのため、常にAccessDeniedになっていた(実機で確認済みの不具合)。
+    # 末尾に:*を付け、任意のリビジョンを許可するよう修正。
+    resources = ["${aws_ecs_task_definition.worker.arn_without_revision}:*"]
     condition {
       test     = "ArnEquals"
       variable = "ecs:cluster"

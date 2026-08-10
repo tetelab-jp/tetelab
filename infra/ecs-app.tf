@@ -64,9 +64,11 @@ data "aws_iam_policy_document" "app_task" {
     resources = ["${aws_s3_bucket.style_images.arn}/*"]
   }
   statement {
-    sid       = "RunStylePostTask"
-    actions   = ["ecs:RunTask"]
-    resources = [aws_ecs_task_definition.worker.arn_without_revision]
+    sid     = "RunStylePostTask"
+    actions = ["ecs:RunTask"]
+    # infra/iam.tf の cloudflare_caller ポリシーと同じ理由(リビジョン番号なしの
+    # ARNは実際のRunTask呼び出しと一致せず常にAccessDeniedになる)で:*を付与。
+    resources = ["${aws_ecs_task_definition.worker.arn_without_revision}:*"]
     condition {
       test     = "ArnEquals"
       variable = "ecs:cluster"
