@@ -407,18 +407,35 @@ async function uploadFrontImage(
       formData.append('modified', '0')
       formData.append('pubManageId', 'undefined')
 
-      let resText: string
-      let resStatus: number
-      try {
-        const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
-          method: 'POST',
-          body: formData,
-          credentials: 'include'
-        })
-        resStatus = res.status
-        resText = await res.text()
-      } catch (fetchErr: any) {
-        return { success: false, error: `fetch自体が失敗しました: ${String(fetchErr?.message || fetchErr)}`, imageId: null }
+      // 2026-08-10追記: レジデンシャルプロキシ経由だと、画像バイナリを含む
+      // 大きめのPOST通信が「Failed to fetch」(接続自体の失敗)で不安定に
+      // なることを実機で確認した。プロキシ側の一時的な接続断の可能性を
+      // 考慮し、最大3回まで間隔を空けてリトライする。
+      let resText: string | undefined
+      let resStatus: number | undefined
+      let lastFetchErr: any
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
+            method: 'POST',
+            body: formData,
+            credentials: 'include'
+          })
+          resStatus = res.status
+          resText = await res.text()
+          lastFetchErr = null
+          break
+        } catch (fetchErr: any) {
+          lastFetchErr = fetchErr
+          if (attempt < 3) await new Promise((r) => setTimeout(r, 2000))
+        }
+      }
+      if (lastFetchErr || resText === undefined) {
+        return {
+          success: false,
+          error: `fetch自体が3回とも失敗しました: ${String(lastFetchErr?.message || lastFetchErr)}`,
+          imageId: null
+        }
       }
 
       const doc = new DOMParser().parseFromString(resText, 'text/html')
