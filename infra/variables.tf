@@ -74,13 +74,15 @@ variable "db_username" {
 }
 
 variable "app_task_cpu" {
-  type    = string
-  default = "512"
+  description = "appタスクのCPU。sync/import機能がPuppeteer(Chromium)をworkerと同じ経路で起動するため、通常のWebサーバー用サイズではなくworkerと同等の値にしている。"
+  type        = string
+  default     = "1024"
 }
 
 variable "app_task_memory" {
-  type    = string
-  default = "1024"
+  description = "appタスクのメモリ。理由はapp_task_cpuと同じ(Puppeteer/Chromium用)。"
+  type        = string
+  default     = "3072"
 }
 
 variable "app_desired_count" {
