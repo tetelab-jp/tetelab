@@ -1,43 +1,35 @@
 // ============================================
 // style-post-runner.ts
-// 「auto_post_enabled_flag=1 かつ ready状態のスタイルを全件投稿する」
-// 1回分の実行ロジック。手動実行（automation.tsx）と
-// 外部Cronトリガー（同route）の両方から呼ばれる。
+// 「auto_post_enabled_flag=1 かつ ready状態のスタイルを対象に投稿する」
+// ロジック。手動実行（automation.tsx）と外部Cronトリガー（同route）の
+// 両方から呼ばれる。
 //
-// docs/phase3-mvp-design.md 5-5「投稿実行フロー」に対応。
-// 「登録」「反映申請」を別ステップとして扱い、それぞれの結果を
-// styles.salonboard_register_status / reflection_request_status に記録する。
-// 5-6「再実行フロー」に対応する retryStylePost() も提供する。
+// 2026-08-10変更: Cloudflare Browser Renderingにファイルシステムが無く
+// 標準的なファイルアップロードAPIが使えない制約のため、実際のPuppeteer
+// 実行はAWS ECS/Fargateのワーカー(worker/)に切り出した。この関数群の
+// 役割は「対象スタイルを判定し、AWS側にジョブを1件投入する」ところまでで、
+// 実際の成否(登録/反映申請の結果)は、Fargateタスクからの非同期コールバック
+// (POST /api/automation/jobs/:id/result、automation.tsx側)で
+// styles / execution_logs に反映される。そのため本ファイル内では
+// 「ジョブを何件投入できたか」までしか分からず、最終結果は含まれない。
 // ============================================
 
 import type { Bindings } from '../types'
-import { decryptSecret } from './crypto'
-import {
-  launchBrowser,
-  newAutomationPage,
-  loginToSalonBoard,
-  draftRegisterStyle,
-  submitReflectApplication,
-  ReflectionBlockedError,
-  type StylePostInput,
-  type Page
-} from './salonboard-automation'
+import { runStylePostTask } from './aws-ecs'
 
-// TETE AOUT側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない。
-// docs/phase3-mvp-design.md 4-7参照。毎朝7:00からこの件数まで順次投稿する）
+// TETE AOUT側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
 
 export type RunSummary = {
   runId: number
   totalImages: number
-  successCount: number
-  failureCount: number
-  blockedCount: number
-  status: 'done' | 'failed'
+  dispatchedCount: number
+  failedToDispatchCount: number
+  status: 'dispatched' | 'failed'
   errorMessage?: string
 }
 
-type ReadyStyleRow = {
+export type ReadyStyleRow = {
   id: number
   title: string | null
   comment: string | null
@@ -51,125 +43,7 @@ type ReadyStyleRow = {
   front_file_name: string | null
 }
 
-type StyleOutcome = 'success' | 'failed' | 'blocked'
-
-/**
- * 1件のスタイルについて「登録(下書き保存)」→「反映申請(公開)」を実行し、
- * 結果をstyles/execution_logsへ記録する。runStyleAutomationForUser()の
- * バッチ実行・retryStylePost()の単体再実行の両方から共有される。
- */
-async function processStyleRow(
-  page: Page,
-  env: Bindings,
-  userId: number,
-  row: ReadyStyleRow
-): Promise<StyleOutcome> {
-  let input: StylePostInput
-  try {
-    if (!row.front_r2_key) throw new Error('FRONT画像が未登録です')
-
-    const object = await env.STYLE_IMAGES.get(row.front_r2_key)
-    if (!object) throw new Error(`R2から画像が見つかりません（key: ${row.front_r2_key}）`)
-    const imageBuffer = await object.arrayBuffer()
-
-    input = {
-      styleImageId: row.id,
-      imageBuffer,
-      imageFileName: row.front_file_name || `style-${row.id}.jpg`,
-      styleName: (row.title || `スタイル${row.id}`).slice(0, 60),
-      stylistSelectValue: row.stylist_select_value || '',
-      stylistComment: row.comment || '',
-      categoryCd: (row.category_value as 'SG01' | 'SG02') || 'SG01',
-      hairLengthValue: row.length_value || '',
-      menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
-      menuDetailText: row.menu_detail_text || '',
-      couponSelectValue: row.coupon_select_value || undefined
-    }
-  } catch (imgErr: any) {
-    const message = String(imgErr?.message || imgErr).slice(0, 500)
-    await env.DB.prepare(`UPDATE styles SET salonboard_register_status = 'failed', last_error = ? WHERE id = ?`)
-      .bind(message, row.id)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
-    )
-      .bind(userId, row.id, `スタイル投稿失敗: ${message}`)
-      .run()
-    return 'failed'
-  }
-
-  // ---- 登録(下書き保存) ----
-  // 2026-08-09追記: draftRegisterStyle()内部には送信前セルフチェック等の
-  // 有用な診断ログがあるが、以前はlogコールバックを空関数にしていたため
-  // 全て握りつぶされていた。収集してfailure時のメッセージに含める。
-  const registerLogLines: string[] = []
-  try {
-    await draftRegisterStyle(page, input, (msg) => registerLogLines.push(msg))
-    await env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'success', reflection_request_status = 'pending', last_error = NULL WHERE id = ?`
-    )
-      .bind(row.id)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'success', ?)`
-    )
-      .bind(userId, row.id, `スタイル登録成功: ${input.styleName}`)
-      .run()
-  } catch (registerErr: any) {
-    const errorMessage = String(registerErr?.message || registerErr)
-    const diagnostics = registerLogLines.length > 0 ? ` / 診断ログ: ${registerLogLines.join(' | ')}` : ''
-    const message = (errorMessage + diagnostics).slice(0, 1500)
-    await env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(message, row.id)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
-    )
-      .bind(userId, row.id, `スタイル登録失敗: ${message}`)
-      .run()
-    return 'failed'
-  }
-
-  // ---- 反映申請(公開) ----
-  try {
-    await submitReflectApplication(page, () => {})
-    await env.DB.prepare(
-      `UPDATE styles SET reflection_request_status = 'success', last_executed_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`
-    )
-      .bind(row.id)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', 'success', ?)`
-    )
-      .bind(userId, row.id, `反映申請成功: ${input.styleName}`)
-      .run()
-    return 'success'
-  } catch (reflectErr: any) {
-    const message = String(reflectErr?.message || reflectErr).slice(0, 500)
-    const isBlocked = reflectErr instanceof ReflectionBlockedError
-    const newStatus = isBlocked ? 'blocked' : 'failed'
-    await env.DB.prepare(
-      `UPDATE styles SET reflection_request_status = ?, last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(newStatus, message, row.id)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', ?, ?)`
-    )
-      .bind(userId, row.id, isBlocked ? 'blocked' : 'failure', `反映申請${isBlocked ? 'ブロック' : '失敗'}: ${message}`)
-      .run()
-    return isBlocked ? 'blocked' : 'failed'
-  }
-}
-
-const READY_STYLE_SELECT = `
+export const READY_STYLE_SELECT = `
   SELECT
     s.id, s.title, s.comment, s.category_value, s.length_value,
     s.menu_values_json, s.menu_detail_text,
@@ -182,41 +56,110 @@ const READY_STYLE_SELECT = `
   LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
 `
 
+/** ジョブ取得API(GET /api/automation/jobs/:id)がスタイルの中身を組み立てる際に使う */
+export async function getStyleRowForJob(env: Bindings, styleId: number): Promise<ReadyStyleRow | null> {
+  return env.DB.prepare(`${READY_STYLE_SELECT} WHERE s.id = ?`).bind(styleId).first<ReadyStyleRow>()
+}
+
+function randomJobToken(): string {
+  const bytes = new Uint8Array(32)
+  crypto.getRandomValues(bytes)
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
+}
+
+/**
+ * 1件のスタイルについて、AWS ECS/Fargateへ投稿ジョブを1件投入する。
+ * style_post_jobsへレコードを作成し、ECS RunTaskでタスクを起動する。
+ * 実際のログイン・登録・反映申請はFargateタスク側で行われ、結果は
+ * 後で /api/automation/jobs/:id/result へのコールバックとして届く。
+ */
+async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number): Promise<void> {
+  if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
+  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY || !env.AWS_REGION) {
+    throw new Error('AWSの認証情報(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION)が未設定です')
+  }
+  if (!env.ECS_CLUSTER || !env.ECS_TASK_DEFINITION || !env.ECS_CONTAINER_NAME) {
+    throw new Error('ECSクラスタ/タスク定義/コンテナ名が未設定です')
+  }
+  if (!env.ECS_SUBNET_IDS || !env.ECS_SECURITY_GROUP_IDS) {
+    throw new Error('ECSのサブネット/セキュリティグループが未設定です')
+  }
+
+  const jobToken = randomJobToken()
+  const jobInsert = await env.DB.prepare(
+    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status) VALUES (?, ?, ?, 'pending')`
+  )
+    .bind(styleId, userId, jobToken)
+    .run()
+  const jobId = Number(jobInsert.meta.last_row_id)
+
+  try {
+    const { taskArn } = await runStylePostTask({
+      awsAccessKeyId: env.AWS_ACCESS_KEY_ID,
+      awsSecretAccessKey: env.AWS_SECRET_ACCESS_KEY,
+      awsRegion: env.AWS_REGION,
+      cluster: env.ECS_CLUSTER,
+      taskDefinition: env.ECS_TASK_DEFINITION,
+      containerName: env.ECS_CONTAINER_NAME,
+      subnetIds: env.ECS_SUBNET_IDS.split(',').map((s) => s.trim()).filter(Boolean),
+      securityGroupIds: env.ECS_SECURITY_GROUP_IDS.split(',').map((s) => s.trim()).filter(Boolean),
+      jobApiBase: env.APP_BASE_URL,
+      jobId,
+      jobToken
+    })
+    await env.DB.prepare(`UPDATE style_post_jobs SET status = 'running', ecs_task_arn = ? WHERE id = ?`)
+      .bind(taskArn, jobId)
+      .run()
+  } catch (err: any) {
+    const message = String(err?.message || err).slice(0, 500)
+    await env.DB.prepare(
+      `UPDATE style_post_jobs SET status = 'failed', result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(message, jobId)
+      .run()
+    await env.DB.prepare(`UPDATE styles SET salonboard_register_status = 'failed', last_error = ? WHERE id = ?`)
+      .bind(`ジョブ起動に失敗しました: ${message}`, styleId)
+      .run()
+    await env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+    )
+      .bind(userId, styleId, `ジョブ起動失敗: ${message}`)
+      .run()
+    throw err
+  }
+}
+
+async function requireCredentialsConfigured(env: Bindings, userId: number): Promise<void> {
+  const cred = await env.DB.prepare('SELECT user_id FROM salon_credentials WHERE user_id = ?')
+    .bind(userId)
+    .first<{ user_id: number }>()
+  if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
+  if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
+}
+
 export async function runStyleAutomationForUser(
   env: Bindings,
   userId: number,
   scheduledTimeLabel: string
 ): Promise<RunSummary> {
-  // ---- 事前チェック: 連携情報・対象スタイル ----
-  const cred = await env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
-  )
-    .bind(userId)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+  await requireCredentialsConfigured(env, userId)
 
-  if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
-  if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
-
-  // 2026-08-09追記: 従来'blocked'を対象から除外していたため、一度ブロック判定
-  // されたスタイルは専用の「再実行」ボタンからしか再試行できなかった。
-  // ブロック判定自体が誤検知だったケース(その5〜9で判明した「要確認」の
-  // 誤検知等)もあるため、通常の手動実行・自動投稿でも対象に含めるようにした。
   const { results } = await env.DB.prepare(
-    `${READY_STYLE_SELECT}
+    `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
        AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT ${DAILY_POST_LIMIT}`
   )
     .bind(userId)
-    .all<ReadyStyleRow>()
+    .all<{ id: number }>()
 
   const targets = results || []
   if (targets.length === 0) {
     throw new Error('投稿対象（自動投稿ON・入力完了済み）のスタイルがありません')
   }
 
-  // ---- 実行履歴レコードを作成 ----
   const runInsert = await env.DB.prepare(
     `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
      VALUES (?, ?, ?, 'processing')`
@@ -225,61 +168,31 @@ export async function runStyleAutomationForUser(
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
-  let successCount = 0
-  let failureCount = 0
-  let blockedCount = 0
-  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
-
-  try {
-    const loginId = await decryptSecret(cred.salonboard_login_id_enc, env.ENCRYPTION_KEY)
-    const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
-
-    browser = await launchBrowser(env)
-    const page = await newAutomationPage(browser)
-
-    // ログはpasswordを絶対に含めない
-    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
-
-    for (const row of targets) {
-      const outcome = await processStyleRow(page, env, userId, row)
-      if (outcome === 'success') successCount++
-      else if (outcome === 'blocked') blockedCount++
-      else failureCount++
+  let dispatchedCount = 0
+  let failedToDispatchCount = 0
+  for (const t of targets) {
+    try {
+      await dispatchStylePostJob(env, userId, t.id)
+      dispatchedCount++
+    } catch {
+      failedToDispatchCount++
     }
+  }
 
-    // 1件でも成功していれば実行全体は'done'(部分成功)とし、内訳はsuccessCount/failureCount/
-    // blockedCountで表現する。全滅した場合のみ'failed'とする。
-    const finalStatus: 'done' | 'failed' = successCount > 0 ? 'done' : 'failed'
+  // 各ジョブの最終結果(成功/失敗/ブロック)はFargateからの非同期コールバックで
+  // 個別に反映される。ここでは「何件投入できたか」までしか分からないため、
+  // style_post_runs.status は 'processing' のまま残す(集計の確定は行わない)。
+  const runStatus = dispatchedCount > 0 ? 'processing' : 'failed'
+  await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(runStatus, runId)
+    .run()
 
-    await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(finalStatus, runId)
-      .run()
-
-    return { runId, totalImages: targets.length, successCount, failureCount, blockedCount, status: finalStatus }
-  } catch (err: any) {
-    const message = String(err?.message || err).slice(0, 500)
-    await env.DB.prepare(
-      `UPDATE style_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(message, runId)
-      .run()
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, status, message) VALUES (NULL, ?, 'failure', ?)`
-    )
-      .bind(userId, `実行全体が失敗: ${message}`)
-      .run()
-
-    return {
-      runId,
-      totalImages: targets.length,
-      successCount,
-      failureCount,
-      blockedCount,
-      status: 'failed',
-      errorMessage: message
-    }
-  } finally {
-    if (browser) await browser.close().catch(() => {})
+  return {
+    runId,
+    totalImages: targets.length,
+    dispatchedCount,
+    failedToDispatchCount,
+    status: dispatchedCount > 0 ? 'dispatched' : 'failed'
   }
 }
 
@@ -295,9 +208,8 @@ function jstMinutesOfDay(nowLabel: string): number {
 /**
  * 「7:00〜24:00の間に均等に分散して投稿する」ための判定。
  * 残り時間と残り対象件数から理想の投稿間隔を毎回動的に算出し、
- * 本日最後に投稿した時刻からその間隔以上経過していれば次の1件を
- * 投稿してよいと判定する。固定スロットを持たないため、新規追加・
- * 失敗による対象件数の増減にも自動で追従する。
+ * 本日最後に投稿(ジョブ投入)した時刻からその間隔以上経過していれば
+ * 次の1件を投入してよいと判定する。
  */
 async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: string): Promise<boolean> {
   const nowMinutes = jstMinutesOfDay(nowLabel)
@@ -323,7 +235,6 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
 
   const idealIntervalMinutes = remainingMinutes / remainingCount
 
-  // 本日(JST)すでに投稿(登録/反映申請の試行)した最後の時刻
   const lastRow = await env.DB.prepare(
     `SELECT MAX(last_executed_at) as last_at FROM styles
      WHERE user_id = ? AND last_executed_at IS NOT NULL
@@ -332,7 +243,7 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
     .bind(userId)
     .first<{ last_at: string | null }>()
 
-  if (!lastRow?.last_at) return true // 本日まだ1件も投稿していなければ即投稿してよい
+  if (!lastRow?.last_at) return true
 
   const lastAtMs = new Date(lastRow.last_at.replace(' ', 'T') + 'Z').getTime()
   const minutesSinceLastPost = (Date.now() - lastAtMs) / 60000
@@ -342,10 +253,7 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
 
 /**
  * 「7:00〜24:00の間に均等に分散して投稿する」方式で、1回の呼び出しにつき
- * 最大1件のスタイルのみを処理する。外部Cronから数分間隔で呼ばれる想定
- * (ユーザー要望により、固定時刻での一括投稿から変更)。
- * 投稿すべきタイミングでない場合・対象が無い場合はnullを返す
- * (呼び出し側はスキップ扱いとする)。
+ * 最大1件のスタイルのみジョブ投入する。外部Cronから1分間隔で呼ばれる想定。
  */
 export async function runNextStyleForUser(
   env: Bindings,
@@ -355,24 +263,17 @@ export async function runNextStyleForUser(
   const shouldPost = await shouldPostNextStyle(env, userId, scheduledTimeLabel)
   if (!shouldPost) return null
 
-  const cred = await env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
-  )
-    .bind(userId)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
-
-  if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
-  if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
+  await requireCredentialsConfigured(env, userId)
 
   const row = await env.DB.prepare(
-    `${READY_STYLE_SELECT}
+    `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
        AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT 1`
   )
     .bind(userId)
-    .first<ReadyStyleRow>()
+    .first<{ id: number }>()
 
   if (!row) return null
 
@@ -384,30 +285,9 @@ export async function runNextStyleForUser(
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
-  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
   try {
-    const loginId = await decryptSecret(cred.salonboard_login_id_enc, env.ENCRYPTION_KEY)
-    const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
-
-    browser = await launchBrowser(env)
-    const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
-
-    const outcome = await processStyleRow(page, env, userId, row)
-    const finalStatus: 'done' | 'failed' = outcome === 'success' ? 'done' : 'failed'
-
-    await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(finalStatus, runId)
-      .run()
-
-    return {
-      runId,
-      totalImages: 1,
-      successCount: outcome === 'success' ? 1 : 0,
-      failureCount: outcome === 'failed' ? 1 : 0,
-      blockedCount: outcome === 'blocked' ? 1 : 0,
-      status: finalStatus
-    }
+    await dispatchStylePostJob(env, userId, row.id)
+    return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
     await env.DB.prepare(
@@ -418,57 +298,74 @@ export async function runNextStyleForUser(
     return {
       runId,
       totalImages: 1,
-      successCount: 0,
-      failureCount: 1,
-      blockedCount: 0,
+      dispatchedCount: 0,
+      failedToDispatchCount: 1,
       status: 'failed',
       errorMessage: message
     }
-  } finally {
-    if (browser) await browser.close().catch(() => {})
   }
 }
 
-export type RetryResult = { outcome: StyleOutcome }
+export type RetryResult = { outcome: 'dispatched' | 'failed' }
 
 /**
- * 失敗/ブロックされた1件のスタイルのみを再実行する(docs/phase3-mvp-design.md 5-6)。
- * internal_save_status='ready'であることのみ要求し、現在のsalonboard_register_status/
- * reflection_request_statusは問わない(failed/blocked問わず再実行可能)。
+ * 失敗/ブロックされた1件のスタイルのみを再実行する(ジョブ投入)。
+ * internal_save_status='ready'であることのみ要求する。
  */
 export async function retryStylePost(env: Bindings, userId: number, styleId: number): Promise<RetryResult> {
-  const cred = await env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
-  )
-    .bind(userId)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
-
-  if (!cred) throw new Error('サロンボードのログイン情報が未登録です')
-  if (!env.ENCRYPTION_KEY) throw new Error('ENCRYPTION_KEYが未設定です')
+  await requireCredentialsConfigured(env, userId)
 
   const row = await env.DB.prepare(
-    `${READY_STYLE_SELECT}
-     WHERE s.id = ? AND s.user_id = ? AND s.internal_save_status = 'ready'`
+    `SELECT id FROM styles WHERE id = ? AND user_id = ? AND internal_save_status = 'ready'`
   )
     .bind(styleId, userId)
-    .first<ReadyStyleRow>()
+    .first<{ id: number }>()
 
   if (!row) throw new Error('対象のスタイルが見つからないか、入力が未完了(ready状態でない)です')
 
-  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
   try {
-    const loginId = await decryptSecret(cred.salonboard_login_id_enc, env.ENCRYPTION_KEY)
-    const password = await decryptSecret(cred.salonboard_password_enc, env.ENCRYPTION_KEY)
-
-    browser = await launchBrowser(env)
-    const page = await newAutomationPage(browser)
-    await loginToSalonBoard(page, loginId, password, () => {}, env, userId)
-
-    const outcome = await processStyleRow(page, env, userId, row)
-    return { outcome }
-  } finally {
-    if (browser) await browser.close().catch(() => {})
+    await dispatchStylePostJob(env, userId, styleId)
+    return { outcome: 'dispatched' }
+  } catch {
+    return { outcome: 'failed' }
   }
+}
+
+/**
+ * 一定時間(10分)以上結果コールバックが届かないジョブをタイムアウト扱いにする。
+ * cron-trigger-workerの1分間隔の呼び出しの中で、次のジョブ投入前に実行する。
+ */
+export async function sweepStaleJobs(env: Bindings): Promise<number> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, style_id, user_id FROM style_post_jobs
+     WHERE status IN ('pending', 'running') AND created_at < datetime('now', '-10 minutes')`
+  ).all<{ id: number; style_id: number; user_id: number }>()
+
+  const staleJobs = results || []
+  for (const j of staleJobs) {
+    await env.DB.prepare(
+      `UPDATE style_post_jobs SET status = 'timeout',
+         result_message = 'タイムアウト(10分以内に結果コールバックがありませんでした)',
+         completed_at = CURRENT_TIMESTAMP
+       WHERE id = ?`
+    )
+      .bind(j.id)
+      .run()
+    await env.DB.prepare(
+      `UPDATE styles SET salonboard_register_status = 'failed',
+         last_error = 'Fargateジョブがタイムアウトしました(10分以内に応答がありませんでした)'
+       WHERE id = ?`
+    )
+      .bind(j.style_id)
+      .run()
+    await env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
+    )
+      .bind(j.user_id, j.style_id)
+      .run()
+  }
+  return staleJobs.length
 }
 
 /** 現在時刻をJST(UTC+9) "HH:MM" 形式で返す */

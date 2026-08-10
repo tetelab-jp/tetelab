@@ -1,9 +1,27 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
-import { runStyleAutomationForUser, runNextStyleForUser, retryStylePost, currentJstTimeLabel } from '../lib/style-post-runner'
+import {
+  runStyleAutomationForUser,
+  runNextStyleForUser,
+  retryStylePost,
+  currentJstTimeLabel,
+  getStyleRowForJob,
+  sweepStaleJobs
+} from '../lib/style-post-runner'
+import { decryptSecret } from '../lib/crypto'
 import { formatJstDateTime } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
+
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
@@ -77,6 +95,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
         <i class="fas fa-triangle-exclamation mr-2"></i>
         手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
         サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
+        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次下の実行履歴に反映されます（数十秒〜数分かかります）。
       </div>
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -212,10 +231,9 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
   try {
     const summary = await runStyleAutomationForUser(c.env, user.id, 'manual-test')
     return c.json({
-      success: summary.successCount > 0,
-      successCount: summary.successCount,
-      failureCount: summary.failureCount,
-      blockedCount: summary.blockedCount,
+      success: summary.dispatchedCount > 0,
+      dispatchedCount: summary.dispatchedCount,
+      failedToDispatchCount: summary.failedToDispatchCount,
       status: summary.status
     })
   } catch (err: any) {
@@ -230,10 +248,191 @@ automation.post('/api/style/:id/retry', requireAuth, async (c) => {
   const styleId = Number(c.req.param('id'))
   try {
     const result = await retryStylePost(c.env, user.id, styleId)
-    return c.json({ success: result.outcome === 'success', outcome: result.outcome })
+    return c.json({ success: result.outcome === 'dispatched', outcome: result.outcome })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
   }
+})
+
+// ---------- AWS Fargateワーカー向けジョブAPI ----------
+// Bearer認証はユーザーセッションではなく、style_post_jobs.job_token
+// (ジョブ発行時に生成される使い捨てシークレット)で行う。
+
+automation.get('/api/automation/jobs/:id', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, style_id, user_id, job_token, status FROM style_post_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
+
+  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ error: 'job already completed' }, 409)
+  }
+
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(job.user_id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+  if (!cred || !c.env.ENCRYPTION_KEY) {
+    return c.json({ error: 'credentials not available' }, 500)
+  }
+
+  const row = await getStyleRowForJob(c.env, job.style_id)
+  if (!row || !row.front_r2_key) {
+    return c.json({ error: 'style not available' }, 500)
+  }
+
+  const object = await c.env.STYLE_IMAGES.get(row.front_r2_key)
+  if (!object) {
+    return c.json({ error: 'image not found' }, 500)
+  }
+  const imageBuffer = await object.arrayBuffer()
+
+  const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+  const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+  await c.env.DB.prepare(`UPDATE style_post_jobs SET status = 'running' WHERE id = ? AND status = 'pending'`)
+    .bind(jobId)
+    .run()
+
+  return c.json({
+    loginId,
+    password,
+    style: {
+      styleImageId: row.id,
+      imageBase64: arrayBufferToBase64(imageBuffer),
+      imageFileName: row.front_file_name || `style-${row.id}.jpg`,
+      styleName: (row.title || `スタイル${row.id}`).slice(0, 30),
+      stylistSelectValue: row.stylist_select_value || '',
+      stylistComment: row.comment || '',
+      categoryCd: (row.category_value as 'SG01' | 'SG02') || 'SG01',
+      hairLengthValue: row.length_value || '',
+      menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
+      menuDetailText: row.menu_detail_text || '',
+      couponSelectValue: row.coupon_select_value || undefined
+    }
+  })
+})
+
+type JobResultBody = {
+  success: boolean
+  step: 'login' | 'navigate' | 'draft_register' | 'image_upload' | 'reflect' | 'done'
+  message: string
+  blocked: boolean
+  logs: string[]
+}
+
+automation.post('/api/automation/jobs/:id/result', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, style_id, user_id, job_token, status FROM style_post_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
+
+  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  // 既に結果を受信済み(二重コールバック・タイムアウト後の遅延コールバック等)は冪等に無視する
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ ok: true, alreadyCompleted: true })
+  }
+
+  const body = await c.req.json<JobResultBody>().catch(() => null)
+  if (!body) return c.json({ error: 'invalid body' }, 400)
+
+  const { style_id: styleId, user_id: userId } = job
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 1500)
+
+  // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
+  if (body.step === 'login' && !body.success) {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'failed', last_error = ? WHERE user_id = ?`)
+      .bind(body.message.slice(0, 500), userId)
+      .run()
+      .catch(() => {})
+  } else {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'success', last_error = NULL WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  let jobStatus: string
+  if (body.success) {
+    await c.env.DB.prepare(
+      `UPDATE styles SET salonboard_register_status = 'success', reflection_request_status = 'success',
+         last_executed_at = CURRENT_TIMESTAMP, last_error = NULL WHERE id = ?`
+    )
+      .bind(styleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+    )
+      .bind(userId, styleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'request_reflection', 'success', '反映申請成功')`
+    )
+      .bind(userId, styleId)
+      .run()
+    jobStatus = 'success'
+  } else if (body.step === 'reflect') {
+    // 登録(下書き保存)自体は成功していたが、反映申請で失敗/ブロックされた
+    const reflectStatus = body.blocked ? 'blocked' : 'failed'
+    await c.env.DB.prepare(
+      `UPDATE styles SET salonboard_register_status = 'success', reflection_request_status = ?,
+         last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(reflectStatus, messageWithDiagnostics, styleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+    )
+      .bind(userId, styleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'request_reflection', ?, ?)`
+    )
+      .bind(userId, styleId, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
+      .run()
+    jobStatus = reflectStatus
+  } else {
+    // login/navigate/draft_register/image_upload段階での失敗 = 登録自体が失敗
+    await c.env.DB.prepare(
+      `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(messageWithDiagnostics, styleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
+       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+    )
+      .bind(userId, styleId, `スタイル登録失敗: ${messageWithDiagnostics}`)
+      .run()
+    jobStatus = 'failed'
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE style_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+  )
+    .bind(jobStatus, body.step, messageWithDiagnostics, jobId)
+    .run()
+
+  return c.json({ ok: true })
 })
 
 // ---------- 外部Cronトリガー用エンドポイント ----------
@@ -250,6 +449,10 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   }
 
   const nowLabel = currentJstTimeLabel()
+
+  // Fargateタスクが結果コールバックを返さないまま停止した場合の掃除
+  // (タスク自体のクラッシュ、ネットワーク断等)。次のジョブ投入前に行う。
+  await sweepStaleJobs(c.env).catch(() => {})
 
   // 「7:00〜24:00の間に均等に分散して投稿する」方式(ユーザー要望により、
   // 固定時刻での一括投稿から変更)。外部Cronは数分間隔でこのエンドポイントを

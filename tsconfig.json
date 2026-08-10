@@ -12,5 +12,5 @@
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx"
   },
-  "exclude": ["node_modules", "dist", "cron-trigger-worker"]
+  "exclude": ["node_modules", "dist", "cron-trigger-worker", "worker", "infra"]
 }

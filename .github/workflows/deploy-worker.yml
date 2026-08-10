@@ -1,0 +1,81 @@
+name: Deploy SALON BOARD worker to ECS/Fargate
+
+# worker/ 配下(SALON BOARD投稿を実行するFargateワーカー)が変更されたときだけ、
+# Dockerイメージをビルドし、ECRへpushして、ECSタスク定義の新しいリビジョンを登録する。
+# タスク定義はfamily名(リビジョン固定ではない)でCloudflare側から参照される
+# 想定のため、ここで新しいリビジョンをACTIVEにするだけでCloudflare側の変更は不要。
+#
+# 前提(infra/ のTerraformで作成される、またはPhase 0で手動作成する):
+#   - ECRリポジトリ
+#   - ECSクラスタ・タスク定義(初回リビジョン)
+#   - このワークフロー用のOIDC IAMロール(ECRへのpush・ECSタスク定義登録権限のみ)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+  workflow_dispatch: {}
+
+permissions:
+  id-token: write # OIDCでAWS認証するために必要
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" -t "$ECR_REGISTRY/$ECR_REPOSITORY:latest" worker/
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:latest"
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "${{ secrets.ECS_TASK_FAMILY }}" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render new task definition with the built image
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ secrets.ECS_CONTAINER_NAME }}
+          image: ${{ steps.build-image.outputs.image }}
+
+      - name: Register new task definition revision
+        run: |
+          aws ecs register-task-definition \
+            --cli-input-json file://<(
+              python3 -c "
+import json
+with open('${{ steps.render-task-def.outputs.task-definition }}') as f:
+    td = json.load(f)
+for key in ['taskDefinitionArn', 'revision', 'status', 'requiresAttributes', 'compatibilities', 'registeredAt', 'registeredBy']:
+    td.pop(key, None)
+print(json.dumps(td))
+"
+            )

@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.2.0",
+    "aws4fetch": "^1.0.20",
     "hono": "^4.12.33"
   },
   "devDependencies": {
