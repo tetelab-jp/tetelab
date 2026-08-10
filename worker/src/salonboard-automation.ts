@@ -54,7 +54,9 @@ export type StylePostResult = {
  * リトライ制御(Cloudflare Browser Rendering版にあった429対応)は不要。
  */
 export async function launchBrowser(): Promise<Browser> {
-  const args = ['--no-sandbox', '--disable-setuid-sandbox']
+  // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
+  // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
+  const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 
   // SALON BOARD側のボット対策の検証用の一時的な迂回策。SALONBOARD_PROXY_SERVER
   // (例: http://host:port)が設定されている場合のみプロキシ経由でアクセスする。

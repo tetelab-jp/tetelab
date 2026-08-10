@@ -13,7 +13,7 @@ USER root
 # ウィンドウ)でのみ正常動作」という結果が出ているため、Xvfb(仮想ディス
 # プレイ)を使い、実際には画面を表示しないサーバー上でも「画面あり」
 # モードのChromeを起動できるようにする。
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth \
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb \
     && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 RUN npm ci && chown -R pptruser:pptruser /app
@@ -25,4 +25,13 @@ RUN npm run build
 ENV PORT=3000
 EXPOSE 3000
 
-CMD ["xvfb-run", "--auto-servernum", "--server-args=-screen 0 1920x1080x24", "node", "dist/index.js"]
+# 2026-08-10追記: `xvfb-run`(自動ディスプレイ番号採番)がFargate環境で
+# 起動に失敗/ハングし、node自体の起動(=ALBヘルスチェック応答)まで
+# ブロックしてしまう不具合が発生した。Xvfbの起動をnodeの起動と分離し
+# (バックグラウンドで並行起動・待ち合わせしない)、HTTPサーバーが
+# Xvfbの準備を待たずに即座に応答できるようにする。DISPLAY環境変数は
+# 実際にPuppeteerがブラウザを起動する時点(ユーザー操作時)までに
+# Xvfbが用意されていれば良いため、この並行起動で問題ない。
+# `-ac`でアクセス制御を無効化しxauth連携を不要にしている
+# (コンテナ内に他プロセスがいない前提のため許容できる簡略化)。
+CMD ["/bin/sh", "-c", "Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp & DISPLAY=:99 exec node dist/index.js"]
