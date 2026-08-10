@@ -391,6 +391,63 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
  *   - 完了検知: <span id="FRONT_IMG_ID_ID"> のtextContent(隠しinputでは
  *     なくspanタグ、IDも FRONT_IMG_ID ではなく FRONT_IMG_ID_ID)
  */
+
+/**
+ * 2026-08-11追記(診断用): 画像アップロードがプロキシ経由(net::ERR_EMPTY_RESPONSE)で
+ * 失敗した際、「同じCookie・同じfile input方式・プロキシなし」で同じアップロードを
+ * 試すとどうなるかを自動で比較する。プロキシありのブラウザで取得済みのCookieを
+ * プロキシなしの別ブラウザに引き継ぐことで、再ログインなしに同一セッションのまま
+ * 経路だけを変えた比較ができる。結果はジョブの成否には影響させず、診断ログにのみ残す。
+ */
+async function diagnoseUploadWithoutProxy(
+  proxiedPage: Page,
+  imageBuffer: ArrayBuffer,
+  fileName: string
+): Promise<string> {
+  const cookies = await proxiedPage.cookies().catch(() => [])
+  const currentUrl = proxiedPage.url()
+  let diagBrowser: Browser | null = null
+  try {
+    diagBrowser = await puppeteerExtra.launch({
+      headless: false,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    })
+    const diagPage = await diagBrowser.newPage()
+    await diagPage.setViewport({ width: 1920, height: 1080 })
+    if (cookies.length > 0) await diagPage.setCookie(...(cookies as any))
+    await diagPage.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
+
+    await diagPage.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 10000 })
+    await diagPage.click('#FRONT_IMG_ID_IMG')
+    const fileInput = (await diagPage.waitForSelector('#formFile', { timeout: 10000 })) as ElementHandle<HTMLInputElement> | null
+    if (!fileInput) {
+      return '[診断:プロキシなし比較] 失敗: #formFileが見つかりませんでした(Cookie流用でのログイン状態再現に失敗した可能性)'
+    }
+
+    const tmpPath = join(tmpdir(), `salonboard-diag-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
+    await writeFile(tmpPath, Buffer.from(imageBuffer))
+    try {
+      await fileInput.uploadFile(tmpPath)
+      await diagPage.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 10000 })
+      await diagPage.click('input.jscImageUploaderModalSubmitButton')
+      await diagPage.waitForFunction(
+        () => {
+          const el = document.getElementById('FRONT_IMG_ID_ID')
+          return !!el && !!el.textContent && el.textContent.trim().length > 0
+        },
+        { timeout: 20000 }
+      )
+      return '[診断:プロキシなし比較] 成功(同じCookie・同じ手順でプロキシを外したら通った → プロキシ経由アップロードが原因の濃厚な証拠)'
+    } finally {
+      await unlink(tmpPath).catch(() => {})
+    }
+  } catch (err: any) {
+    return `[診断:プロキシなし比較] 失敗: ${String(err?.message || err)} (プロキシ以外の要因の可能性、または比較テスト自体の不備)`
+  } finally {
+    await diagBrowser?.close().catch(() => {})
+  }
+}
+
 async function uploadFrontImage(
   page: Page,
   imageBuffer: ArrayBuffer,
@@ -502,6 +559,14 @@ async function uploadFrontImage(
         page.off('response', onResponse)
         page.off('requestfailed', onRequestFailed)
       }
+    }
+    if (lastError && process.env.SALONBOARD_PROXY_SERVER) {
+      log('[診断] プロキシなしでの比較テストを実行します(結果はこのジョブの成否には影響しません)...')
+      const comparisonResult = await diagnoseUploadWithoutProxy(page, imageBuffer, fileName).catch(
+        (e) => `[診断:プロキシなし比較] 比較テスト自体が例外で失敗: ${String(e)}`
+      )
+      log(comparisonResult)
+      lastError = new Error(`${lastError.message} ${comparisonResult}`)
     }
     if (lastError) throw lastError
   } finally {
