@@ -13,7 +13,7 @@ export default defineConfig({
       // 参照(pgのオプショナルpg-native require、puppeteerの同梱Chromium
       // パス解決等)を含むため、バンドルせずnode_modules経由でrequireさせる。
       // Dockerイメージにはnpm ciでnode_modulesを含めるため実行時に解決できる。
-      external: ['pg', 'pg-native', 'puppeteer', 'puppeteer-extra', 'puppeteer-extra-plugin-stealth', '@aws-sdk/client-s3', '@hono/node-server', '@hono/node-server/serve-static']
+      external: ['pg', 'pg-native', 'puppeteer', 'puppeteer-extra', 'puppeteer-extra-plugin-stealth', '@aws-sdk/client-s3', '@aws-sdk/client-ecs', '@aws-sdk/credential-provider-http', '@hono/node-server', '@hono/node-server/serve-static']
     }),
     devServer({
       entry: 'src/index.tsx'

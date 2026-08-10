@@ -8,10 +8,10 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@aws-sdk/client-ecs": "^3.1106.0",
     "@aws-sdk/client-s3": "^3.1106.0",
     "@aws-sdk/credential-provider-http": "^3.972.69",
     "@hono/node-server": "^1.13.7",
-    "aws4fetch": "^1.0.20",
     "hono": "^4.12.33",
     "pg": "^8.23.0",
     "puppeteer": "^25.5.0",
