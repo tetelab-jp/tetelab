@@ -365,15 +365,20 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
     const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
 
+    console.log(`[sync-stylists-coupons] user=${user.id} ブラウザ起動開始`)
     browser = await launchBrowser()
     const page = await newAutomationPage(browser)
+    console.log(`[sync-stylists-coupons] user=${user.id} ログイン開始`)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+    console.log(`[sync-stylists-coupons] user=${user.id} ログイン成功、同期開始`)
 
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
     const couponCount = await syncCoupons(page, c.env, user.id, () => {})
+    console.log(`[sync-stylists-coupons] user=${user.id} 完了 stylists=${stylistCount} coupons=${couponCount}`)
 
     return c.json({ success: true, stylistCount, couponCount })
   } catch (err: any) {
+    console.error(`[sync-stylists-coupons] user=${user.id} エラー:`, err?.stack || err)
     return c.json({ success: false, error: String(err?.message || err) }, 400)
   } finally {
     if (browser) await browser.close().catch(() => {})
