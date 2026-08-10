@@ -77,7 +77,7 @@ export async function runStylePostTask(params: RunStylePostTaskParams): Promise<
     body: JSON.stringify(body)
   })
 
-  const json = await res.json<any>()
+  const json = (await res.json()) as any
 
   if (!res.ok) {
     throw new Error(`ECS RunTaskの呼び出しに失敗しました(status=${res.status}): ${JSON.stringify(json)}`)

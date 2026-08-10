@@ -8,9 +8,9 @@
     "lib": [
       "ESNext"
     ],
-    "types": ["vite/client", "@cloudflare/workers-types"],
+    "types": ["vite/client"],
     "jsx": "react-jsx",
     "jsxImportSource": "hono/jsx"
   },
-  "exclude": ["node_modules", "dist", "cron-trigger-worker", "worker", "infra"]
+  "exclude": ["node_modules", "dist", "worker", "infra"]
 }
