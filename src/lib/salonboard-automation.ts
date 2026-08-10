@@ -213,18 +213,43 @@ async function diagnoseOutboundConnectivity(page: Page, log: AutomationLogger): 
   }
 
   // ---- Puppeteer(Chromium)経由での疎通確認 ----
+  // 2026-08-10追記: 従来はgoto()が例外を投げなければ「成功」としていたが、
+  // Chromeはプロキシ接続失敗時もgoto()自体は例外を投げず、内部エラーページ
+  // (chrome-error://chromewebdata/)へ遷移するだけで完了してしまうことが
+  // 判明した。これでは「プロキシが壊れている」ことを検知できないため、
+  // requestfailedイベントで実際のネットワークエラー(net::ERR_...)を捕捉し、
+  // 到達URLがchrome-error://の場合は明確に失敗として扱うよう修正した。
   const gotoStart = Date.now()
+  const failedRequests: string[] = []
+  const onRequestFailed = (req: any) => {
+    try {
+      failedRequests.push(`${req.url?.()} -> ${req.failure?.()?.errorText ?? '不明'}`)
+    } catch {}
+  }
+  page.on('requestfailed', onRequestFailed)
   try {
     await page.goto(testUrl, { waitUntil: 'domcontentloaded', timeout: 15000 })
     const elapsed = Date.now() - gotoStart
-    const msg = `[診断] Chromium page.goto()での${testUrl}疎通確認: 成功 (${elapsed}ms, 到達URL=${page.url()})`
-    console.log(msg)
+    const reachedUrl = page.url()
+    const isErrorPage = reachedUrl.startsWith('chrome-error://')
+    const failureDetail = failedRequests.length > 0 ? ` / ネットワークエラー: ${failedRequests.join(', ')}` : ''
+    const msg = isErrorPage
+      ? `[診断] Chromium page.goto()での${testUrl}疎通確認: 失敗(内部エラーページに到達) ` +
+        `(${elapsed}ms, 到達URL=${reachedUrl})${failureDetail}`
+      : `[診断] Chromium page.goto()での${testUrl}疎通確認: 成功 (${elapsed}ms, 到達URL=${reachedUrl})`
+    if (isErrorPage) console.error(msg)
+    else console.log(msg)
     log(msg)
   } catch (err: any) {
     const elapsed = Date.now() - gotoStart
-    const msg = `[診断] Chromium page.goto()での${testUrl}疎通確認: 失敗 (${elapsed}ms経過) - ${String(err?.message || err)}`
+    const failureDetail = failedRequests.length > 0 ? ` / ネットワークエラー: ${failedRequests.join(', ')}` : ''
+    const msg =
+      `[診断] Chromium page.goto()での${testUrl}疎通確認: 失敗 (${elapsed}ms経過) - ${String(err?.message || err)}` +
+      failureDetail
     console.error(msg)
     log(msg)
+  } finally {
+    page.off('requestfailed', onRequestFailed)
   }
 }
 
