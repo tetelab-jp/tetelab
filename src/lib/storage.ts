@@ -12,6 +12,7 @@
 // ============================================
 
 import { S3Client, GetObjectCommand, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
+import { fromHttp } from '@aws-sdk/credential-provider-http'
 import { Readable } from 'node:stream'
 
 export type R2LikeObject = {
@@ -73,5 +74,13 @@ export class S3Storage {
 }
 
 export function createStorage(bucket: string, region: string): S3Storage {
-  return new S3Storage(new S3Client({ region }), bucket)
+  // ECS RunTask署名専用のAWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY(この
+  // アプリのタスク実行ロールとは別の、ecs:RunTask権限のみを持つIAMユーザーの
+  // アクセスキー、src/lib/style-post-runner.ts参照)がプロセスのenvに存在すると、
+  // AWS SDKの標準クレデンシャルチェーンはS3クライアント作成時にもそれを
+  // 拾ってしまい、S3権限が無いためAccessDeniedになる(実際に画像アップロードで
+  // 発生した不具合)。ECSタスクロール(このバケットへのS3権限を持つ、
+  // infra/ecs-app.tf の app_task ロール)の認証情報を明示的に使うことで、
+  // 上記の意図しない資格情報の混線を避ける。
+  return new S3Storage(new S3Client({ region, credentials: fromHttp() }), bucket)
 }
