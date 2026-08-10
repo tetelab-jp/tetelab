@@ -444,7 +444,7 @@ style.get('/style/image/:id', async (c) => {
 
 // ---------- 既存スタイル取り込み(docs/phase3-mvp-design.md 5-2) ----------
 // ⚠️ salonboard-import.tsの各関数は実HTML未確認のベストエフォート実装。
-// Cloudflare Browser Renderingが必要なため、本番/リモート環境でのみ動作確認可能。
+// 実ブラウザ(Puppeteer)経由のアクセスが必要なため、本番/リモート環境でのみ動作確認可能。
 
 style.get('/style/import', async (c) => {
   const user = c.get('user')

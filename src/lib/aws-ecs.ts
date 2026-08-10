@@ -1,14 +1,20 @@
 // ============================================
 // aws-ecs.ts
-// Cloudflare Pages Functions(Workers)からAWS ECSのRunTask APIを直接呼び出す。
+// AWS ECSのRunTask APIを呼び出し、SALON BOARD投稿ジョブ1件分の
+// Fargateタスクを起動する。
 //
-// AWS SDKは使わず、Web Crypto APIベースの軽量ライブラリ aws4fetch で
-// SigV4署名したfetchを行う(Workers環境で動作確認済みの定番手法)。
+// 2026-08-10追記: 元はCloudflare Pages Functions(Workers)からの呼び出しを
+// 想定し、Workersでは使えない重量級のAWS SDKを避けてWeb Crypto APIベースの
+// 軽量ライブラリaws4fetchで手動SigV4署名していたが、AWS ECS/Fargate(Node
+// 常駐サーバー)へ移行済みのため、その制約はもう無い。型安全・保守性の
+// 高い公式SDK(@aws-sdk/client-ecs、既存のstorage.tsの@aws-sdk/client-s3と
+// 同じ方針)に置き換えた。
+//
 // 呼び出すIAMユーザーは ecs:RunTask と対象ロールへの iam:PassRole のみに
 // 絞った権限で作成すること(HANDOFF/要件資料参照)。
 // ============================================
 
-import { AwsClient } from 'aws4fetch'
+import { ECSClient, RunTaskCommand } from '@aws-sdk/client-ecs'
 
 export type RunStylePostTaskParams = {
   awsAccessKeyId: string
@@ -35,57 +41,46 @@ export type RunStylePostTaskResult = {
  * コールバックする(POST /api/automation/jobs/:id/result)。
  */
 export async function runStylePostTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
-  const aws = new AwsClient({
-    accessKeyId: params.awsAccessKeyId,
-    secretAccessKey: params.awsSecretAccessKey,
+  const client = new ECSClient({
     region: params.awsRegion,
-    service: 'ecs'
-  })
-
-  const body = {
-    cluster: params.cluster,
-    taskDefinition: params.taskDefinition,
-    launchType: 'FARGATE',
-    count: 1,
-    networkConfiguration: {
-      awsvpcConfiguration: {
-        subnets: params.subnetIds,
-        securityGroups: params.securityGroupIds,
-        assignPublicIp: 'ENABLED'
-      }
-    },
-    overrides: {
-      containerOverrides: [
-        {
-          name: params.containerName,
-          environment: [
-            { name: 'JOB_API_BASE', value: params.jobApiBase },
-            { name: 'JOB_ID', value: String(params.jobId) },
-            { name: 'JOB_TOKEN', value: params.jobToken }
-          ]
-        }
-      ]
+    credentials: {
+      accessKeyId: params.awsAccessKeyId,
+      secretAccessKey: params.awsSecretAccessKey
     }
-  }
-
-  const res = await aws.fetch(`https://ecs.${params.awsRegion}.amazonaws.com/`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-amz-json-1.1',
-      'X-Amz-Target': 'AmazonEC2ContainerServiceV20141113.RunTask'
-    },
-    body: JSON.stringify(body)
   })
 
-  const json = (await res.json()) as any
+  const result = await client.send(
+    new RunTaskCommand({
+      cluster: params.cluster,
+      taskDefinition: params.taskDefinition,
+      launchType: 'FARGATE',
+      count: 1,
+      networkConfiguration: {
+        awsvpcConfiguration: {
+          subnets: params.subnetIds,
+          securityGroups: params.securityGroupIds,
+          assignPublicIp: 'ENABLED'
+        }
+      },
+      overrides: {
+        containerOverrides: [
+          {
+            name: params.containerName,
+            environment: [
+              { name: 'JOB_API_BASE', value: params.jobApiBase },
+              { name: 'JOB_ID', value: String(params.jobId) },
+              { name: 'JOB_TOKEN', value: params.jobToken }
+            ]
+          }
+        ]
+      }
+    })
+  )
 
-  if (!res.ok) {
-    throw new Error(`ECS RunTaskの呼び出しに失敗しました(status=${res.status}): ${JSON.stringify(json)}`)
-  }
-  if (Array.isArray(json.failures) && json.failures.length > 0) {
-    throw new Error(`ECS RunTaskがタスクを起動できませんでした: ${JSON.stringify(json.failures)}`)
+  if (result.failures && result.failures.length > 0) {
+    throw new Error(`ECS RunTaskがタスクを起動できませんでした: ${JSON.stringify(result.failures)}`)
   }
 
-  const taskArn: string | null = json.tasks?.[0]?.taskArn ?? null
+  const taskArn = result.tasks?.[0]?.taskArn ?? null
   return { taskArn }
 }

@@ -121,7 +121,7 @@ dashboard.get('/dashboard', async (c) => {
         <ul class="text-sm text-gray-600 space-y-1 list-disc list-inside">
           <li>✅ Phase 1: ログイン・サロンボードID/Pass登録</li>
           <li>✅ Phase 2: スタイル画像ライブラリ・自動投稿スケジュール、ブログ基本設定・AI生成</li>
-          <li>⏳ Phase 3: Cloudflare Browser Renderingによる自動投稿の実行</li>
+          <li>⏳ Phase 3: AWS Fargate上のPuppeteerによる自動投稿の実行</li>
         </ul>
       </div>
     </PageLayout>,

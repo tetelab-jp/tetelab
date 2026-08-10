@@ -90,7 +90,7 @@ async function postResult(apiBase: string, jobId: string, jobToken: string, resu
       body: JSON.stringify(result)
     })
   } catch (err) {
-    // コールバック自体が失敗した場合、Cloudflare側はジョブを「stale」として
+    // コールバック自体が失敗した場合、アプリ側はジョブを「stale」として
     // 一定時間後にタイムアウト扱いにする(automation.tsx側のクリーンアップ処理)。
     console.error('結果の送信に失敗しました:', err)
   }
