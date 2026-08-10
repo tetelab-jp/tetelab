@@ -67,9 +67,19 @@ export type StylePostResult = {
  * 無くなったため不要になった。
  */
 export async function launchBrowser(): Promise<Browser> {
+  const args = ['--no-sandbox', '--disable-setuid-sandbox']
+
+  // SALON BOARD側のボット対策がAWSのIPをブロックしているかを検証するための
+  // 一時的な迂回策。SALONBOARD_PROXY_SERVER(例: http://host:port)が設定されて
+  // いる場合のみプロキシ経由でアクセスする。未設定時は従来通り直接アクセス。
+  const proxyServer = process.env.SALONBOARD_PROXY_SERVER
+  if (proxyServer) {
+    args.push(`--proxy-server=${proxyServer}`)
+  }
+
   return puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox']
+    args
   })
 }
 
@@ -87,6 +97,13 @@ export async function launchBrowser(): Promise<Browser> {
  */
 export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
+
+  // プロキシに認証が必要な場合(SALONBOARD_PROXY_USERNAME/PASSWORD設定時)のみ認証する。
+  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
+  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
+  if (proxyUsername && proxyPassword) {
+    await page.authenticate({ username: proxyUsername, password: proxyPassword })
+  }
 
   // 2026-08-09追記: ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
   // ハンドラが無かった。もしサロンボードが登録時等に確認ダイアログを出す仕様の場合、
