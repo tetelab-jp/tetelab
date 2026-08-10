@@ -462,25 +462,6 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 /**
  * 写真アップロード処理。
  *
- * docs/phase3-mvp-design.md 9章で確定済みの情報:
- * - `.img_new_no_photo`（`#FRONT_IMG_ID_IMG`が該当）クリックで
- *   `img_upload_modal_view('FRONT_IMG_ID', 'ABNKD3600_FRONT', dataKey, false, 'styleEditForm')`
- *   が発火し、`#imageUploaderModalBody`にモーダル内容がJSで動的挿入される
- * - アップロード完了コールバック`setUploadImage(...)`が隠しフィールド`#FRONT_IMG_ID`に
- *   画像ID(B+9桁形式)をセットする → これを完了検知の主条件として使う
- *
- * 2026-08-09追記: ユーザーが実際にモーダルを開いた状態のDevTools画面を確認し、
- * 実際の`<input type=file>`セレクタを確定した。
- *   <label class="imageUploaderModalInput">
- *     ファイルを選択
- *     <input type="file" name="formFile" id="formFile" class="jscImageUploaderModalInput">
- *   </label>
- * `#imageUploaderModalBody`という要素は実際には存在せず(旧実装の推測が誤りだった)、
- * 直接`#formFile`(またはinput[name="formFile"])を使う。
- */
-/**
- * 写真アップロード処理。
- *
  * 2026-08-09追記(全面的な方式変更): ユーザーがDevTools NetworkタブでdoUpload
  * リクエスト・レスポンスの実内容を直接キャプチャしてくれたことにより、
  * UI操作(プレースホルダークリック→モーダル内file inputへの注入→「登録する」
@@ -517,91 +498,182 @@ async function uploadFrontImage(
   fileName: string,
   log: AutomationLogger
 ): Promise<void> {
-  log('画像をfetch()で直接アップロード中...(UI操作を経由しません)')
-
-  const base64 = arrayBufferToBase64(imageBuffer)
-  const result = await page.evaluate(
-    async (base64Data: string, name: string) => {
-      const tokenEl = document.querySelector(
-        'input[name="org.apache.struts.taglib.html.TOKEN"]'
-      ) as HTMLInputElement | null
-      const storeIdEl = document.querySelector('input[name="STORE_ID"]') as HTMLInputElement | null
-      if (!tokenEl || !storeIdEl) {
-        return { success: false, error: 'CSRFトークンまたはSTORE_IDがページ内に見つかりませんでした', imageId: null }
-      }
-
-      const byteChars = atob(base64Data)
-      const byteNumbers = new Array(byteChars.length)
-      for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i)
-      const byteArray = new Uint8Array(byteNumbers)
-      const blob = new Blob([byteArray], { type: 'image/jpeg' })
-
-      const formData = new FormData()
-      formData.append('formFile', blob, name)
-      formData.append('setImgId', 'FRONT_IMG_ID')
-      formData.append('dataKey', '')
-      formData.append('targetActionId', 'ABNKD3600_FRONT')
-      formData.append('org.apache.struts.taglib.html.TOKEN', tokenEl.value)
-      formData.append('STORE_ID', storeIdEl.value)
-      formData.append('modified', '0')
-      formData.append('pubManageId', 'undefined')
-
-      let resText: string
-      try {
-        const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
-          method: 'POST',
-          body: formData,
-          credentials: 'include'
-        })
-        resText = await res.text()
-      } catch (fetchErr: any) {
-        return { success: false, error: `fetch自体が失敗しました: ${String(fetchErr?.message || fetchErr)}`, imageId: null }
-      }
-
-      const doc = new DOMParser().parseFromString(resText, 'text/html')
-      const val = (id: string) => (doc.getElementById(id) as HTMLInputElement | null)?.value ?? null
-
-      const userErrorFlg = val('userErrorFlg')
-      const imageId = val('imageId')
-      const elementName = val('elementName')
-      const meetStandardFlg = val('meetStandardFlg')
-      const lengthSizeOrg = val('lengthSizeOrg')
-      const sideSizeOrg = val('sideSizeOrg')
-      const resolutionOrg = val('resolutionOrg')
-      const imageFilePath = val('imageFilePath')
-
-      if (userErrorFlg !== '0' || !imageId || !/^B\d{9}$/.test(imageId)) {
-        return {
-          success: false,
-          error: `アップロードレスポンスが想定外でした(userErrorFlg=${userErrorFlg}, imageId=${imageId})`,
-          imageId: null
-        }
-      }
-
-      if (typeof (window as any).setUploadImage !== 'function') {
-        return { success: false, error: 'window.setUploadImage関数がページ内に見つかりませんでした', imageId: null }
-      }
-      ;(window as any).setUploadImage(
-        imageId,
-        elementName,
-        meetStandardFlg,
-        lengthSizeOrg,
-        sideSizeOrg,
-        resolutionOrg,
-        imageFilePath
-      )
-
-      return { success: true, error: null, imageId }
-    },
-    base64,
-    fileName
-  )
-
-  if (!result.success) {
-    throw new Error(`画像アップロードに失敗しました(fetch方式): ${result.error}`)
+  // 2026-08-09追記(その21): 本番で「Protocol error (Runtime.callFunctionOn):
+  // Target closed」が発生した。doUploadが送信される前か後か、setUploadImage
+  // 呼び出しの前か後かを切り分けるため、以下の診断情報を強化する:
+  //   - Node側: page.on('request'/'response'/...)でdoUploadの実発生と
+  //     ページクラッシュ・close イベントを観測
+  //   - browser側: page.evaluate内で各ステップの到達点を trace 配列に記録
+  // 両方の情報を、失敗時のErrorメッセージにも埋め込み(processStyleRow側の
+  // logコレクションと二重化)、実行履歴から確実に原因位置を特定できるようにする。
+  const diagnostics: string[] = []
+  const push = (msg: string) => {
+    diagnostics.push(msg)
+    log(`[アップロード診断] ${msg}`)
   }
 
-  log(`画像アップロード成功(fetch方式): imageId=${result.imageId}`)
+  const onRequest = (req: any) => {
+    try {
+      if (req.url?.().includes('doUpload')) push(`req開始: ${req.method?.()} ${req.url?.()}`)
+    } catch {}
+  }
+  const onResponse = (res: any) => {
+    try {
+      if (res.url?.().includes('doUpload')) {
+        const len = res.headers?.()?.['content-length'] ?? '?'
+        push(`res受信: status=${res.status?.()} content-length=${len}`)
+      }
+    } catch {}
+  }
+  const onRequestFailed = (req: any) => {
+    try {
+      if (req.url?.().includes('doUpload')) {
+        push(`req失敗: ${req.url?.()} err=${req.failure?.()?.errorText ?? '?'}`)
+      }
+    } catch {}
+  }
+  const onPageError = (err: any) => push(`pageerror: ${String(err?.message || err)}`)
+  const onError = (err: any) => push(`page.error: ${String(err?.message || err)}`)
+  const onClose = () => push('page.close発生(ターゲットが閉じた)')
+
+  page.on('request', onRequest)
+  page.on('response', onResponse)
+  page.on('requestfailed', onRequestFailed)
+  page.on('pageerror', onPageError)
+  page.on('error', onError)
+  page.on('close', onClose)
+
+  try {
+    push(`開始: imageBufferサイズ=${imageBuffer.byteLength}バイト, fileName=${fileName}`)
+    const base64 = arrayBufferToBase64(imageBuffer)
+    push(`base64エンコード完了: 長さ=${base64.length}`)
+
+    push('page.evaluate開始(fetch方式)')
+    const result = await page.evaluate(
+      async (base64Data: string, name: string) => {
+        const trace: string[] = []
+        try {
+          trace.push('eval:START')
+          const tokenEl = document.querySelector(
+            'input[name="org.apache.struts.taglib.html.TOKEN"]'
+          ) as HTMLInputElement | null
+          const storeIdEl = document.querySelector('input[name="STORE_ID"]') as HTMLInputElement | null
+          if (!tokenEl || !storeIdEl) {
+            return { success: false, error: 'CSRFトークンまたはSTORE_IDがページ内に見つかりませんでした', imageId: null, trace }
+          }
+          trace.push('eval:TOKEN/STORE_ID取得OK')
+
+          const byteChars = atob(base64Data)
+          const byteNumbers = new Array(byteChars.length)
+          for (let i = 0; i < byteChars.length; i++) byteNumbers[i] = byteChars.charCodeAt(i)
+          const byteArray = new Uint8Array(byteNumbers)
+          const blob = new Blob([byteArray], { type: 'image/jpeg' })
+          trace.push(`eval:Blob作成OK size=${blob.size}`)
+
+          const formData = new FormData()
+          formData.append('formFile', blob, name)
+          formData.append('setImgId', 'FRONT_IMG_ID')
+          formData.append('dataKey', '')
+          formData.append('targetActionId', 'ABNKD3600_FRONT')
+          formData.append('org.apache.struts.taglib.html.TOKEN', tokenEl.value)
+          formData.append('STORE_ID', storeIdEl.value)
+          formData.append('modified', '0')
+          formData.append('pubManageId', 'undefined')
+          trace.push('eval:FormData構築OK')
+
+          let resText: string
+          let resStatus: number
+          try {
+            trace.push('eval:fetch開始')
+            const res = await fetch('https://salonboard.com/CNB/imgreg/imgUpload/doUpload?wFlg=true', {
+              method: 'POST',
+              body: formData,
+              credentials: 'include'
+            })
+            resStatus = res.status
+            trace.push(`eval:fetchレスポンス受信 status=${resStatus}`)
+            resText = await res.text()
+            trace.push(`eval:レスポンスtext読み取り完了 長さ=${resText.length}`)
+          } catch (fetchErr: any) {
+            return { success: false, error: `fetch自体が失敗: ${String(fetchErr?.message || fetchErr)}`, imageId: null, trace }
+          }
+
+          const doc = new DOMParser().parseFromString(resText, 'text/html')
+          const val = (id: string) => (doc.getElementById(id) as HTMLInputElement | null)?.value ?? null
+
+          const userErrorFlg = val('userErrorFlg')
+          const imageId = val('imageId')
+          const elementName = val('elementName')
+          const meetStandardFlg = val('meetStandardFlg')
+          const lengthSizeOrg = val('lengthSizeOrg')
+          const sideSizeOrg = val('sideSizeOrg')
+          const resolutionOrg = val('resolutionOrg')
+          const imageFilePath = val('imageFilePath')
+          trace.push(`eval:パース結果 userErrorFlg=${userErrorFlg} imageId=${imageId}`)
+
+          if (userErrorFlg !== '0' || !imageId || !/^B\d{9}$/.test(imageId)) {
+            return {
+              success: false,
+              error: `アップロードレスポンスが想定外(status=${resStatus}, userErrorFlg=${userErrorFlg}, imageId=${imageId})`,
+              imageId: null,
+              trace
+            }
+          }
+
+          if (typeof (window as any).setUploadImage !== 'function') {
+            return { success: false, error: 'window.setUploadImage関数が見つからない', imageId, trace }
+          }
+          trace.push('eval:setUploadImage呼び出し直前')
+          ;(window as any).setUploadImage(
+            imageId,
+            elementName,
+            meetStandardFlg,
+            lengthSizeOrg,
+            sideSizeOrg,
+            resolutionOrg,
+            imageFilePath
+          )
+          trace.push('eval:setUploadImage呼び出し完了')
+
+          return { success: true, error: null, imageId, trace }
+        } catch (evalErr: any) {
+          trace.push(`eval:例外 ${String(evalErr?.message || evalErr)}`)
+          return { success: false, error: `evaluate内例外: ${String(evalErr?.message || evalErr)}`, imageId: null, trace }
+        }
+      },
+      base64,
+      fileName
+    )
+    push(`page.evaluate完了 success=${result.success}`)
+    if (result.trace && result.trace.length > 0) {
+      log(`[アップロード内部トレース] ${result.trace.join(' | ')}`)
+    }
+
+    if (!result.success) {
+      throw new Error(
+        `画像アップロードに失敗しました(fetch方式): ${result.error}` +
+          ` [内部trace: ${(result.trace ?? []).join(' | ')}]` +
+          ` [外側診断: ${diagnostics.join(' | ')}]`
+      )
+    }
+
+    log(`画像アップロード成功(fetch方式): imageId=${result.imageId}`)
+  } catch (outerErr: any) {
+    // Target closed等、page.evaluate自体がrejectした場合はここに来る。
+    // 内部traceは失われるが、外側の診断ログ(request/responseイベント)は
+    // 残っているはずなので、それをErrorメッセージに含める。
+    const msg = String(outerErr?.message || outerErr)
+    log(`[アップロード診断] 外側catchで例外: ${msg}`)
+    throw new Error(`画像アップロード中に例外: ${msg} [外側診断: ${diagnostics.join(' | ')}]`)
+  } finally {
+    // pageが既に閉じている場合の removeListener 失敗を握りつぶす
+    try { page.off('request', onRequest) } catch {}
+    try { page.off('response', onResponse) } catch {}
+    try { page.off('requestfailed', onRequestFailed) } catch {}
+    try { page.off('pageerror', onPageError) } catch {}
+    try { page.off('error', onError) } catch {}
+    try { page.off('close', onClose) } catch {}
+  }
 }
 
 function sleep(ms: number): Promise<void> {
