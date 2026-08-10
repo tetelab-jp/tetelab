@@ -73,8 +73,8 @@ resource "aws_iam_access_key" "cloudflare_caller" {
 # 同一URLのプロバイダは1つしか作成できない)。
 
 resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
+  url            = "https://token.actions.githubusercontent.com"
+  client_id_list = ["sts.amazonaws.com"]
   # GitHubの証明書ローテーションに備え、旧・新2つのルートCA thumbprintを両方登録する
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
 }
