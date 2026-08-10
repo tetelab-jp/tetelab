@@ -77,7 +77,9 @@ export type StylePostResult = {
  * 無くなったため不要になった。
  */
 export async function launchBrowser(): Promise<Browser> {
-  const args = ['--no-sandbox', '--disable-setuid-sandbox']
+  // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
+  // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
+  const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 
   // SALON BOARD側のボット対策がAWSのIPをブロックしているかを検証するための
   // 一時的な迂回策。SALONBOARD_PROXY_SERVER(例: http://host:port)が設定されて
