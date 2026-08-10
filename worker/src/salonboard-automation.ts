@@ -474,19 +474,32 @@ async function uploadFrontImage(
   // 一連の処理全体が終わった後に行うよう修正する。
   const tmpPath = join(tmpdir(), `salonboard-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
   await writeFile(tmpPath, Buffer.from(imageBuffer))
+  log(`アップロード画像サイズ: ${(imageBuffer.byteLength / 1024).toFixed(1)}KB`)
   try {
-    await fileInput.uploadFile(tmpPath)
-
-    log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
-    await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
-
-    // 2026-08-11追記: net::ERR_EMPTY_RESPONSE(プロキシ経由の大きめPOSTが
-    // レスポンス無しで切断される)が発生することを実機で確認した。ファイルは
-    // 既に<input>へ選択済み(CDP経由)で消えていないため、「登録する」ボタンの
-    // 再クリックだけで再送信されるはずと判断し、送信部分のみ最大3回リトライする。
+    // 2026-08-11修正(重大バグ): net::ERR_EMPTY_RESPONSE失敗時、モーダルの
+    // 実際の表示内容を確認したところ、失敗後はモーダルがファイル未選択の
+    // 初期状態(「ここにファイルをドラッグ&ドロップ...」)にリセットされて
+    // いることが判明した。従来は「登録する」ボタンを再クリックするだけの
+    // リトライだったため、ファイルが選択されていない状態でクリックしても
+    // 何も起きず(ボタンは非活性のまま)、即座にリトライ不可と判定していた。
+    // ファイル選択(uploadFile)からやり直す必要があるため、選択〜送信〜
+    // 完了検知までの一連の流れ全体を最大3回リトライするよう修正する。
     const maxAttempts = 3
     let lastError: Error | null = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      const currentFileInput =
+        attempt === 1
+          ? fileInput
+          : ((await page.waitForSelector('#formFile', { timeout: 15000 })) as ElementHandle<HTMLInputElement> | null)
+      if (!currentFileInput) {
+        lastError = new Error(`画像アップロードのリトライ不可: #formFile が再取得できませんでした(試行${attempt}回目)`)
+        break
+      }
+      await currentFileInput.uploadFile(tmpPath)
+
+      log(`ファイル選択完了。「登録する」ボタンの活性化を待機中...(試行${attempt}/${maxAttempts})`)
+      await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+
       // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
       // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
       // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
@@ -533,25 +546,7 @@ async function uploadFrontImage(
             `45秒待っても検知できませんでした [診断] ${diag}`
         )
         if (attempt < maxAttempts) {
-          log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、再試行します... [診断] ${diag}`)
-          const stillActive = await page.$('input.jscImageUploaderModalSubmitButton.isActive')
-          if (!stillActive) {
-            // 2026-08-11追記(診断用): 送信ボタン非活性で単純な再クリックが
-            // できないことが判明したため、次回の対策検討用にモーダルの
-            // 実際の表示内容(エラーメッセージ・ファイル選択状態等)を記録する。
-            const modalState = await page
-              .evaluate(() => {
-                const modal = document.querySelector('.imageUploaderModalInner')
-                if (!modal) return '(.imageUploaderModalInnerが見つかりません。モーダル自体が閉じた可能性)'
-                return (modal as HTMLElement).innerText?.replace(/\s+/g, ' ').trim().slice(0, 500) ?? '(テキストなし)'
-              })
-              .catch((e) => `(取得失敗: ${e})`)
-            lastError = new Error(
-              `画像アップロードのリトライ不可: 送信ボタンが非活性/消失していました(試行${attempt}回目) ` +
-                `[診断] ${diag} [モーダル状態] ${modalState}`
-            )
-            break
-          }
+          log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、ファイル再選択から再試行します... [診断] ${diag}`)
           await new Promise((resolve) => setTimeout(resolve, 3000))
         }
       } finally {
