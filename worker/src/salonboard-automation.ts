@@ -526,6 +526,35 @@ async function uploadFrontImage(
       page.on('response', onResponse)
       page.on('requestfailed', onRequestFailed)
 
+      // 2026-08-11追記(診断用): Puppeteerの高レベルAPI(requestfailed)だけでは
+      // net::ERR_EMPTY_RESPONSEの詳細(プロキシのトンネル自体が張れなかったのか、
+      // 張った後に応答が来なかったのか)が分からない。CDPのNetwork.loadingFailedは
+      // blockedReason/corsErrorStatus等の追加情報を持つことがあるため、生のCDP
+      // イベントも合わせて記録する。
+      const cdpRequestUrls = new Map<string, string>()
+      let cdpClient: any = null
+      const onCdpRequestWillBeSent = (params: any) => {
+        cdpRequestUrls.set(params.requestId, params.request?.url ?? '')
+      }
+      const onCdpLoadingFailed = (params: any) => {
+        const url = cdpRequestUrls.get(params.requestId) ?? ''
+        if (/doUpload/i.test(url)) {
+          uploadEvents.push(
+            `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
+              `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
+          )
+        }
+      }
+      try {
+        const client = await page.target().createCDPSession()
+        await client.send('Network.enable')
+        client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
+        client.on('Network.loadingFailed', onCdpLoadingFailed)
+        cdpClient = client as any
+      } catch (e: any) {
+        uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+      }
+
       try {
         await page.click('input.jscImageUploaderModalSubmitButton')
 
@@ -553,6 +582,11 @@ async function uploadFrontImage(
         page.off('request', onRequestFinished)
         page.off('response', onResponse)
         page.off('requestfailed', onRequestFailed)
+        if (cdpClient) {
+          cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
+          cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
+          await cdpClient.detach().catch(() => {})
+        }
       }
     }
     if (lastError && process.env.SALONBOARD_PROXY_SERVER) {
