@@ -22,18 +22,19 @@ variable "task_memory" {
   default     = "3072"
 }
 
-# 初回のタスク定義登録に使うイメージ。ECRにまだ何もpushしていない段階では
-# 実在しないタグでも登録自体はできる(RunTaskで実際に使われるイメージは、
-# GitHub Actionsが新しいリビジョンを登録した後のものになるため)。
-# 例: "<repository_url>:init" のようなダミータグを指定してよい。
+# 初回のタスク定義登録に使うイメージ。ECRにまだ何もpushしていない段階なので、
+# 実在する公開ダミーイメージを既定値にしておく(RunTaskで実際に使われる
+# イメージは、GitHub Actionsが新しいリビジョンを登録した後のものになるため)。
 variable "initial_image" {
   description = "タスク定義の初回登録時に使うコンテナイメージ"
   type        = string
+  default     = "public.ecr.aws/docker/library/hello-world:latest"
 }
 
 variable "github_repository" {
   description = "GitHub ActionsのOIDC信頼関係を許可するリポジトリ(例: tetelab-jp/tetelab)"
   type        = string
+  default     = "tetelab-jp/tetelab"
 }
 
 variable "cloudflare_iam_user_name" {
@@ -45,8 +46,9 @@ variable "cloudflare_iam_user_name" {
 # ---- アプリ本体(常時稼働サービス)関連 ----
 
 variable "domain_name" {
-  description = "アプリを公開するホスト名(例: app.example.com)。ACM証明書とALBのリスナーに使う。"
+  description = "アプリを公開するホスト名(例: app.example.com)。空文字のままならACM証明書は作らず、ALBのHTTP(80番)を直接使うテスト構成になる。"
   type        = string
+  default     = ""
 }
 
 variable "route53_zone_name" {
@@ -86,15 +88,18 @@ variable "app_desired_count" {
   default = 1
 }
 
-# 初回のアプリタスク定義登録に使うイメージ(initial_imageと同様、ダミータグでよい)
+# 初回のアプリタスク定義登録に使うイメージ(initial_imageと同様、ダミーでよい)
 variable "app_initial_image" {
-  type = string
+  type    = string
+  default = "public.ecr.aws/docker/library/hello-world:latest"
 }
 
-# 移行前にCloudflare Pages側で使っていたENCRYPTION_KEYと同じ値を渡すこと。
-# 異なる値にすると、既存のsalon_credentials(暗号化済みID/パスワード)が
-# 復号できなくなる。
+# 移行前にCloudflare Pages側で本番運用していた場合は、そのときの
+# ENCRYPTION_KEYと同じ値を渡すこと(異なる値にすると既存のsalon_credentials
+# (暗号化済みID/パスワード)が復号できなくなる)。空文字のままなら
+# Terraformが新しい鍵を自動生成する(まだ本番データが無いテスト環境向け)。
 variable "encryption_key" {
   type      = string
   sensitive = true
+  default   = ""
 }

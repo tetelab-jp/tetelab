@@ -1,10 +1,19 @@
+# ドメイン未指定(var.domain_name == "")の場合は、ACM証明書・Route53は
+# 作成せず、ALBのHTTPリスナー(80番)だけで動かす。テスト用途向けの構成。
+# ドメインを用意できたら var.domain_name を設定してapplyし直すことで、
+# ACM証明書・HTTPSリスナー・独自ドメインへの向き先が自動的に追加される。
+locals {
+  has_domain = var.domain_name != ""
+}
+
 data "aws_route53_zone" "primary" {
-  count        = var.manage_dns_in_route53 ? 1 : 0
+  count        = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
   name         = var.route53_zone_name
   private_zone = false
 }
 
 resource "aws_acm_certificate" "app" {
+  count             = local.has_domain ? 1 : 0
   domain_name       = var.domain_name
   validation_method = "DNS"
 
@@ -14,8 +23,8 @@ resource "aws_acm_certificate" "app" {
 }
 
 resource "aws_route53_record" "cert_validation" {
-  for_each = var.manage_dns_in_route53 ? {
-    for dvo in aws_acm_certificate.app.domain_validation_options : dvo.domain_name => {
+  for_each = local.has_domain && var.manage_dns_in_route53 ? {
+    for dvo in aws_acm_certificate.app[0].domain_validation_options : dvo.domain_name => {
       name  = dvo.resource_record_name
       type  = dvo.resource_record_type
       value = dvo.resource_record_value
@@ -30,8 +39,8 @@ resource "aws_route53_record" "cert_validation" {
 }
 
 resource "aws_acm_certificate_validation" "app" {
-  count                   = var.manage_dns_in_route53 ? 1 : 0
-  certificate_arn         = aws_acm_certificate.app.arn
+  count                   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
+  certificate_arn         = aws_acm_certificate.app[0].arn
   validation_record_fqdns = [for r in aws_route53_record.cert_validation : r.fqdn]
 }
 
@@ -89,12 +98,14 @@ resource "aws_lb_target_group" "app" {
   }
 }
 
+# ドメインありの場合のみHTTPS(443)を開き、HTTP(80)はHTTPSへリダイレクトする。
 resource "aws_lb_listener" "https" {
+  count             = local.has_domain ? 1 : 0
   load_balancer_arn = aws_lb.app.arn
   port              = 443
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
-  certificate_arn   = aws_acm_certificate.app.arn
+  certificate_arn   = aws_acm_certificate.app[0].arn
 
   default_action {
     type             = "forward"
@@ -105,6 +116,7 @@ resource "aws_lb_listener" "https" {
 }
 
 resource "aws_lb_listener" "http_redirect" {
+  count             = local.has_domain ? 1 : 0
   load_balancer_arn = aws_lb.app.arn
   port              = 80
   protocol          = "HTTP"
@@ -119,8 +131,29 @@ resource "aws_lb_listener" "http_redirect" {
   }
 }
 
+# ドメイン未指定時は、HTTP(80)からアプリへ直接フォワードする
+# (テスト用途。secureでないCookieになるため本番運用では使わない)。
+resource "aws_lb_listener" "http_direct" {
+  count             = local.has_domain ? 0 : 1
+  load_balancer_arn = aws_lb.app.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+}
+
+# アプリ自身の公開URL。APP_BASE_URL(Fargateワーカーへのコールバック先)や
+# EventBridge Schedulerの呼び出し先に使う。ドメイン未指定時はALBのDNS名を
+# HTTPで使う(テスト用途)。
+locals {
+  app_public_url = local.has_domain ? "https://${var.domain_name}" : "http://${aws_lb.app.dns_name}"
+}
+
 resource "aws_route53_record" "app" {
-  count   = var.manage_dns_in_route53 ? 1 : 0
+  count   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
   zone_id = data.aws_route53_zone.primary[0].zone_id
   name    = var.domain_name
   type    = "A"

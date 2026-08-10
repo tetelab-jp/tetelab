@@ -32,7 +32,7 @@ resource "aws_cloudwatch_event_connection" "cron" {
 
 resource "aws_cloudwatch_event_api_destination" "cron" {
   name                = "${var.project_name}-cron-target"
-  invocation_endpoint = "https://${var.domain_name}/api/cron/run-style-posts"
+  invocation_endpoint = "${local.app_public_url}/api/cron/run-style-posts"
   http_method         = "POST"
   connection_arn      = aws_cloudwatch_event_connection.cron.arn
 }

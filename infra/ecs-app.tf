@@ -105,7 +105,7 @@ resource "aws_ecs_task_definition" "app" {
       environment = [
         { name = "AWS_REGION", value = var.aws_region },
         { name = "STYLE_IMAGES_BUCKET", value = aws_s3_bucket.style_images.bucket },
-        { name = "APP_BASE_URL", value = "https://${var.domain_name}" },
+        { name = "APP_BASE_URL", value = local.app_public_url },
         { name = "ECS_CLUSTER", value = aws_ecs_cluster.worker.name },
         { name = "ECS_TASK_DEFINITION", value = aws_ecs_task_definition.worker.family },
         { name = "ECS_CONTAINER_NAME", value = "worker" },

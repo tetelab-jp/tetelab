@@ -6,6 +6,17 @@ resource "random_id" "cron_secret" {
   byte_length = 24
 }
 
+# encryption_key変数が空(まだ本番データが無いテスト環境)の場合のみ
+# 新しい鍵を生成する。crypto.ts(AES-GCM, 32byte鍵をbase64で保持)と
+# 同じ形式に合わせている。
+resource "random_bytes" "encryption_key" {
+  length = 32
+}
+
+locals {
+  encryption_key = var.encryption_key != "" ? var.encryption_key : random_bytes.encryption_key.base64
+}
+
 resource "aws_secretsmanager_secret" "database_url" {
   name = "${var.project_name}/database-url"
 }
@@ -30,7 +41,7 @@ resource "aws_secretsmanager_secret" "encryption_key" {
 }
 resource "aws_secretsmanager_secret_version" "encryption_key" {
   secret_id     = aws_secretsmanager_secret.encryption_key.id
-  secret_string = var.encryption_key
+  secret_string = local.encryption_key
 }
 
 resource "aws_secretsmanager_secret" "cron_secret" {
