@@ -570,15 +570,30 @@ async function uploadFrontImage(
         // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
         // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
         // 画像IDが表示される。自動化のクリックが本当に同じ登録動作を引き起こして
-        // いるか(閉じるボタン等を誤ってクリックしていないか、通信が始まっている
-        // ように見えるか)を目視確認するため、クリック直後の画面をスクリーンショット
-        // として診断ログに残す。ログ肥大化を避けるためJPEG低品質・base64で記録する。
+        // いるかを確認するため、当初はクリック直後のスクリーンショットをbase64で
+        // 記録していたが、実行履歴画面での表示・コピー時に長すぎる文字列が途中で
+        // 切れてしまい、しかもそれ以降(試行2・3回目分)のログまで一緒に失われる
+        // 実害が確認された。そのため画像ではなく、短いテキストで済むDOM状態の
+        // チェックに変更する。
         try {
           await new Promise((resolve) => setTimeout(resolve, 500))
-          const screenshotBase64 = await page.screenshot({ type: 'jpeg', quality: 40, encoding: 'base64' })
-          log(`[診断:スクショ](試行${attempt}/${maxAttempts}) クリック約0.5秒後の画面(jpeg/base64): ${screenshotBase64}`)
+          const domSnapshot = await page.evaluate(() => {
+            const loadingLike = Array.from(document.querySelectorAll('[class*="load" i], [class*="spinner" i], [class*="progress" i]'))
+              .map((el) => el.className)
+              .filter((c) => typeof c === 'string' && c.length > 0)
+              .slice(0, 5)
+            const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
+            const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
+            return {
+              loadingLikeClasses: loadingLike,
+              submitButtonStillInDom: !!submitButton,
+              submitButtonDisabled: submitButton ? submitButton.disabled : null,
+              completionSpanText: completionSpan ? completionSpan.textContent : null
+            }
+          })
+          log(`[診断:DOM状態](試行${attempt}/${maxAttempts}) クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
         } catch (e: any) {
-          log(`[診断:スクショ] 撮影失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+          log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
         }
 
         log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
