@@ -9,6 +9,8 @@ import {
   getMiddleAreas,
   getSmallAreas,
   getSalonOptions,
+  getAreaCounts,
+  crawlAllAreas,
   type AreaOption
 } from '../lib/ranking-areas'
 import type { Bindings, AppUser } from '../types'
@@ -715,6 +717,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
   const enabled = sched?.enabled === 1
   const frequency = sched?.frequency || 'daily'
   const runTime = sched?.run_time || '09:00'
+  const areaCounts = await getAreaCounts(c.env)
 
   return c.render(
     <PageLayout active="ranking-schedule" salonName={user.salon_name} title="定期測定設定">
@@ -763,8 +766,36 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
           </div>
         </form>
       </div>
+
+      {/* エリアマスター(全国エリアの一括取得) */}
+      <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
+        <p class="font-semibold mb-2">エリアマスター</p>
+        <p class="text-sm text-gray-500 mb-3">
+          「計測」画面のエリア選択肢に使う全国エリア（中/小）を一括取得します。
+          数分かかります。取得後にページを再読み込みすると件数が更新されます。
+        </p>
+        <p class="text-sm text-gray-700 mb-3">
+          現在：中エリア <b>{areaCounts.middle}</b> 件 ／ 小エリア <b>{areaCounts.small}</b> 件
+        </p>
+        <button
+          type="button"
+          id="area-refresh-btn"
+          class="border border-gray-300 hover:border-pink-400 text-gray-700 font-semibold px-5 py-2 rounded-lg text-sm disabled:opacity-50"
+        >
+          <i class="fas fa-cloud-arrow-down mr-1"></i>全国エリアを一括取得
+        </button>
+        <p id="area-refresh-status" class="text-sm text-gray-500 mt-3"></p>
+      </div>
+
+      <script src="/static/ranking.js"></script>
     </PageLayout>
   )
+})
+
+// 全国エリアの一括クロール(バックグラウンド起動)
+ranking.post('/ranking/areas/refresh', requireAuth, async (c) => {
+  void crawlAllAreas(c.env, { force: true }).catch((e) => console.error('crawlAllAreas failed:', e))
+  return c.json({ success: true })
 })
 
 ranking.post('/ranking/schedule', requireAuth, async (c) => {

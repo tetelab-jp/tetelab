@@ -194,4 +194,26 @@
       if (form) form.submit()
     })
   }
+
+  // 「全国エリアを一括取得」ボタン(定期測定設定ページ)
+  var areaRefreshBtn = document.getElementById('area-refresh-btn')
+  var areaRefreshStatus = document.getElementById('area-refresh-status')
+  if (areaRefreshBtn) {
+    areaRefreshBtn.addEventListener('click', async function () {
+      areaRefreshBtn.disabled = true
+      areaRefreshStatus.textContent =
+        '取得を開始しました。数分かかります。完了後にこのページを再読み込みすると件数が更新されます...'
+      try {
+        var res = await fetch('/ranking/areas/refresh', { method: 'POST' })
+        var data = await res.json()
+        if (!data.success) {
+          areaRefreshStatus.textContent = 'エラー: ' + (data.error || '失敗')
+          areaRefreshBtn.disabled = false
+        }
+      } catch (e) {
+        areaRefreshStatus.textContent = '通信エラーが発生しました'
+        areaRefreshBtn.disabled = false
+      }
+    })
+  }
 })()

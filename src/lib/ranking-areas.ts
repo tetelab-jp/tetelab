@@ -107,3 +107,61 @@ export async function getSalonOptions(env: Bindings, userId: number, fallbackNam
 export function buildAreaLabel(serviceAreaName: string, middleName?: string | null, smallName?: string | null): string {
   return [serviceAreaName, middleName || undefined, smallName || undefined].filter(Boolean).join(' > ')
 }
+
+// --------------------------------------------
+// 全国エリアの一括クロール(網羅)。
+// getMiddleAreas / getSmallAreas は「未取得なら取得して保存」するので、
+// 全大エリア→全中エリア→各中エリアの小エリア、と一巡すれば全国が揃う。
+// 実行は本番(HPBに到達できる環境)で。数分かかる。
+// --------------------------------------------
+
+let crawlingAll = false
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** ranking_areas の中/小エリア件数 */
+export async function getAreaCounts(env: Bindings): Promise<{ middle: number; small: number }> {
+  const m = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ranking_areas WHERE level = 2`).first<{ n: number }>()
+  const s = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ranking_areas WHERE level = 3`).first<{ n: number }>()
+  return { middle: m?.n || 0, small: s?.n || 0 }
+}
+
+/** 一括クロールが実行中か */
+export function isCrawlingAll(): boolean {
+  return crawlingAll
+}
+
+/**
+ * 全国の大/中/小エリアをまとめて取得・保存する。
+ * force=true のときは既存の ranking_areas を消してから取り直す。
+ * 二重起動は無視する(実行中は即return)。
+ */
+export async function crawlAllAreas(
+  env: Bindings,
+  opts: { force?: boolean } = {}
+): Promise<{ middle: number; small: number }> {
+  if (crawlingAll) return getAreaCounts(env)
+  crawlingAll = true
+  try {
+    if (opts.force) {
+      await env.DB.prepare(`DELETE FROM ranking_areas`).run()
+    }
+    for (const region of SERVICE_AREAS) {
+      const middles = await getMiddleAreas(env, region.cd) // 未取得なら取得して保存
+      for (const m of middles) {
+        try {
+          await getSmallAreas(env, region.cd, m.code)
+        } catch (e) {
+          console.error(`crawlAllAreas small failed ${region.cd}/${m.code}:`, e)
+        }
+        await sleep(800) // サイトに優しい間隔
+      }
+      await sleep(800)
+    }
+    return getAreaCounts(env)
+  } finally {
+    crawlingAll = false
+  }
+}
