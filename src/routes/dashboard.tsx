@@ -54,22 +54,20 @@ dashboard.get('/dashboard', async (c) => {
     <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
-          <div class="flex items-center justify-between gap-3 flex-wrap">
-            <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードを同期する</p>
-            <button
-              id="sync-stylists-coupons-btn"
-              type="button"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              サロンボードと同期する
-            </button>
-          </div>
+          <p class="font-semibold hidden md:block"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードを同期する</p>
           <p class="text-sm text-gray-500 leading-relaxed">
             作業開始の前にこちらから同期をしてください。
             <br />
             サロンボードに登録されているスタイリスト・クーポンの一覧を取得し、このアプリのスタイル投稿フォームで選べるようにします。
             スタイリストやクーポンを追加・変更した場合は再度同期してください。
           </p>
+          <button
+            id="sync-stylists-coupons-btn"
+            type="button"
+            class="w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            サロンボードと同期する
+          </button>
           <div class="grid grid-cols-2 gap-3 text-sm">
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">スタイリスト</p>
