@@ -72,7 +72,7 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
 
 function MobileNavPanel({ active }: { active: NavKey }) {
   return (
-    <div class="absolute left-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
+    <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div class="space-y-4">
         {NAV_GROUPS.filter((group) => group.key !== 'main' && group.key !== 'settings').map((group) => (
           <div>
@@ -113,16 +113,19 @@ function MobileNavPanel({ active }: { active: NavKey }) {
 export function TopBar({ title, active }: { title: string; active: NavKey }) {
   return (
     <header class="sticky top-0 z-20 border-b border-gray-100 bg-white">
-      <div class="flex items-center gap-3 px-4 py-3 md:px-6 md:py-4">
-        <details class="md:hidden relative">
-          <summary class="list-none cursor-pointer w-9 h-9 -ml-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
-            <i class="fas fa-bars text-lg"></i>
+      <div class="md:hidden grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
+        <div></div>
+        <a href="/dashboard" class="justify-self-center flex items-center">
+          <img src="/static/logo-combined.png" alt="SalonMotion" class="h-7 w-auto" />
+        </a>
+        <details class="relative justify-self-end">
+          <summary class="list-none cursor-pointer w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
+            <i class="fas fa-bars text-xl"></i>
           </summary>
           <MobileNavPanel active={active} />
         </details>
-        <a href="/dashboard" class="md:hidden flex items-center">
-          <img src="/static/logo-combined.png" alt="SalonMotion" class="h-6 w-auto" />
-        </a>
+      </div>
+      <div class="hidden md:flex items-center gap-3 px-6 py-4">
         <h1 class="text-lg font-bold text-gray-900">{title}</h1>
       </div>
     </header>
