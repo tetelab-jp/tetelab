@@ -115,7 +115,10 @@ export function extractMiddleAreas(html: string, serviceAreaCd: string): AreaLin
     const m = href.match(re)
     if (!m) return
     const code = m[1]
-    const name = $(el).text().replace(/\s+/g, ' ').trim()
+    const $el = $(el)
+    // 中エリア名は <br> 区切りの複合名(例 青山・表参道<br>原宿)。空白に変換して連結する
+    $el.find('br').replaceWith(' ')
+    const name = $el.text().replace(/\s+/g, ' ').trim()
     if (!name) return
     if (!byCode.has(code)) {
       byCode.set(code, {
@@ -150,7 +153,9 @@ export function extractSmallAreas(
     const m = href.match(re)
     if (!m) return
     const code = m[1]
-    const name = $(el).text().replace(/\s+/g, ' ').trim()
+    const $el = $(el)
+    $el.find('br').replaceWith(' ')
+    const name = $el.text().replace(/\s+/g, ' ').trim()
     if (!name) return
     if (!byCode.has(code)) {
       byCode.set(code, {
