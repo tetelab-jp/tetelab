@@ -89,6 +89,80 @@ export function parseSearchResultPage(html: string): ParsedSearchPage {
   }
 }
 
+// --------------------------------------------
+// エリアマスター用パース(大エリアページ svc{XX}/ から中エリアを抽出 等)
+// --------------------------------------------
+
+export type AreaLink = {
+  /** 中エリアCd(例 'AD') or 小エリアCd。パス接尾辞から抽出 */
+  code: string
+  name: string
+  url: string
+}
+
+/**
+ * 大エリアページ(例 https://beauty.hotpepper.jp/svcSA/ )のHTMLから
+ * 配下の中エリア一覧を抽出する。
+ * 中エリアは `/svc{SA}/mac{XX}/` 形式のリンクで並んでいる(末尾/salon/は付かない)。
+ * @param serviceAreaCd 対象の大エリアCd(例 'SA')
+ */
+export function extractMiddleAreas(html: string, serviceAreaCd: string): AreaLink[] {
+  const $ = cheerio.load(html)
+  const re = new RegExp(`/svc${serviceAreaCd}/mac([A-Za-z0-9]+)/(?:\\?[^"']*)?$`)
+  const byCode = new Map<string, AreaLink>()
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') || ''
+    const m = href.match(re)
+    if (!m) return
+    const code = m[1]
+    const name = $(el).text().replace(/\s+/g, ' ').trim()
+    if (!name) return
+    if (!byCode.has(code)) {
+      byCode.set(code, {
+        code,
+        name,
+        url: href.startsWith('http') ? href : `https://beauty.hotpepper.jp${href}`
+      })
+    }
+  })
+  return [...byCode.values()]
+}
+
+/**
+ * 中エリアページ(例 https://beauty.hotpepper.jp/svcSA/macAD/ )のHTMLから
+ * 配下の小エリア一覧を抽出する。小エリアのリンク形式はサンプル入手後に確定する。
+ * 現状は `/svc{SA}/mac{XX}/smc{YYY}/` 形式を拾う(存在しなければ空配列)。
+ * @param serviceAreaCd 大エリアCd(例 'SA')
+ * @param middleAreaCd 中エリアCd(例 'AD')
+ */
+export function extractSmallAreas(
+  html: string,
+  serviceAreaCd: string,
+  middleAreaCd: string
+): AreaLink[] {
+  const $ = cheerio.load(html)
+  const re = new RegExp(
+    `/svc${serviceAreaCd}/mac${middleAreaCd}/smc([A-Za-z0-9]+)/(?:salon/)?(?:\\?[^"']*)?$`
+  )
+  const byCode = new Map<string, AreaLink>()
+  $('a[href]').each((_, el) => {
+    const href = $(el).attr('href') || ''
+    const m = href.match(re)
+    if (!m) return
+    const code = m[1]
+    const name = $(el).text().replace(/\s+/g, ' ').trim()
+    if (!name) return
+    if (!byCode.has(code)) {
+      byCode.set(code, {
+        code,
+        name,
+        url: href.startsWith('http') ? href : `https://beauty.hotpepper.jp${href}`
+      })
+    }
+  })
+  return [...byCode.values()]
+}
+
 /**
  * 1ページ分のHTMLから、対象サロンの順位を探す。
  * - オーガニック枠(cstt有り)だけを数えるので PR/広告枠でズレない
