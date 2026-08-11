@@ -11,12 +11,18 @@ import { crawlMiddleAreas, crawlSmallAreas } from './ranking-scraper'
 
 export type ServiceArea = { cd: string; name: string }
 
-// 確認済みの大エリア。デザインHTMLの全リストを受領し次第ここを拡張する。
+// 大エリア(HPBの地域一覧)。並び順はHPBのエリア選択と同じ。
 // value = serviceAreaCd(検索URLの serviceAreaCd / パスの svc{XX} 接尾辞)。
 export const SERVICE_AREAS: ServiceArea[] = [
   { cd: 'SA', name: '関東' },
   { cd: 'SB', name: '関西' },
-  { cd: 'SC', name: '東海' }
+  { cd: 'SC', name: '東海' },
+  { cd: 'SD', name: '北海道' },
+  { cd: 'SE', name: '東北' },
+  { cd: 'SH', name: '北信越' },
+  { cd: 'SF', name: '中国' },
+  { cd: 'SI', name: '四国' },
+  { cd: 'SG', name: '九州・沖縄' }
 ]
 
 export function serviceAreaName(cd: string): string {
