@@ -13,8 +13,8 @@ export const renderer = jsxRenderer(({ children, title }) => {
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>{title ? `${title} | SalonMotion` : 'SalonMotion'}</title>
-        <link href="/static/logo-icon.svg" rel="icon" type="image/svg+xml" />
-        <link href="/static/logo-icon.svg" rel="apple-touch-icon" />
+        <link href="/static/logo-icon.png" rel="icon" type="image/png" />
+        <link href="/static/logo-icon.png" rel="apple-touch-icon" />
         <link href="/static/tailwind.css" rel="stylesheet" />
         <link href="/static/fontawesome/css/all.min.css" rel="stylesheet" />
         <link href="/static/style.css" rel="stylesheet" />
