@@ -287,7 +287,7 @@ style.get('/style/library', async (c) => {
         </p>
         <div class="flex items-center gap-3">
           <span class="text-sm text-gray-600">
-            自動投稿対象:{' '}
+            投稿対象:{' '}
             <span id="selected-count" class="font-bold text-pink-600">
               {selectedCount}
             </span>{' '}
