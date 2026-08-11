@@ -63,6 +63,29 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       created_at: string
     }>()
 
+  // 実行履歴に「どのスタイルが対象だったか」を表示するため、対象runIdに
+  // 紐づくジョブ(style_post_jobs.run_id)からスタイルのID・名前を取得する。
+  const runIds = (runs || []).map((r) => r.id)
+  const stylesByRunId = new Map<number, { id: number; title: string | null }[]>()
+  if (runIds.length > 0) {
+    const placeholders = runIds.map(() => '?').join(',')
+    const { results: runStyles } = await c.env.DB.prepare(
+      `SELECT j.run_id, s.id AS style_id, s.title
+       FROM style_post_jobs j
+       JOIN styles s ON s.id = j.style_id
+       WHERE j.run_id IN (${placeholders})
+       ORDER BY j.id ASC`
+    )
+      .bind(...runIds)
+      .all<{ run_id: number; style_id: number; title: string | null }>()
+
+    for (const row of runStyles || []) {
+      const list = stylesByRunId.get(row.run_id) || []
+      list.push({ id: row.style_id, title: row.title })
+      stylesByRunId.set(row.run_id, list)
+    }
+  }
+
   const { results: logs } = await c.env.DB.prepare(
     `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.created_at, s.title AS style_title
      FROM execution_logs l
@@ -160,6 +183,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
               <tr class="text-left text-gray-400 border-b border-gray-100">
                 <th class="py-2">実行時刻区分</th>
                 <th class="py-2">対象枚数</th>
+                <th class="py-2">対象スタイル</th>
                 <th class="py-2">ステータス</th>
                 <th class="py-2">エラー</th>
                 <th class="py-2">実行日時</th>
@@ -170,6 +194,11 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                 <tr class="border-b border-gray-50">
                   <td class="py-2">{r.scheduled_time}</td>
                   <td class="py-2">{r.total_images}</td>
+                  <td class="py-2 text-xs text-gray-500 max-w-xs truncate">
+                    {(stylesByRunId.get(r.id) || [])
+                      .map((s) => `No.${s.id} ${s.title || '(無題)'}`)
+                      .join(', ') || '-'}
+                  </td>
                   <td class="py-2">
                     <span
                       class={
