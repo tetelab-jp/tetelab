@@ -38,6 +38,13 @@ const LOG_STATUS_DOT: Record<string, string> = {
   failure: 'bg-red-500'
 }
 
+const RUN_STATUS_LABEL: Record<string, string> = {
+  processing: '処理中',
+  done: '完了',
+  failed: '失敗',
+  partial_failure: '一部失敗'
+}
+
 automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
@@ -171,10 +178,12 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                           ? 'bg-green-50 text-green-600'
                           : r.status === 'failed'
                           ? 'bg-red-50 text-red-600'
+                          : r.status === 'partial_failure'
+                          ? 'bg-amber-50 text-amber-600'
                           : 'bg-gray-50 text-gray-500')
                       }
                     >
-                      {r.status}
+                      {RUN_STATUS_LABEL[r.status] || r.status}
                     </span>
                   </td>
                   <td class="py-2 text-xs text-gray-400 max-w-xs truncate">{r.error_message || '-'}</td>
@@ -350,10 +359,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, job_token, status, run_id FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
+    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string; run_id: number | null }>()
 
   if (!job || authHeader !== `Bearer ${job.job_token}`) {
     return c.json({ error: 'unauthorized' }, 401)
@@ -461,6 +470,37 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   )
     .bind(jobStatus, body.step, messageWithDiagnostics, jobId)
     .run()
+
+  // 2026-08-11追記(不具合修正): 実行履歴(style_post_runs)一覧のステータスが
+  // 各ジョブの結果を集計せず常に'processing'のまま表示され続けていた。
+  // このジョブが属するrunに紐づく全ジョブが完了(pending/running以外)に
+  // なった時点で、run全体のステータスを確定させる。
+  if (job.run_id) {
+    const { results: pendingJobs } = await c.env.DB.prepare(
+      `SELECT id FROM style_post_jobs WHERE run_id = ? AND status IN ('pending', 'running')`
+    )
+      .bind(job.run_id)
+      .all<{ id: number }>()
+
+    if (!pendingJobs || pendingJobs.length === 0) {
+      const { results: finishedJobs } = await c.env.DB.prepare(
+        `SELECT status FROM style_post_jobs WHERE run_id = ?`
+      )
+        .bind(job.run_id)
+        .all<{ status: string }>()
+
+      const statuses = (finishedJobs || []).map((j) => j.status)
+      const runStatus = statuses.every((s) => s === 'success')
+        ? 'done'
+        : statuses.every((s) => s !== 'success')
+        ? 'failed'
+        : 'partial_failure'
+
+      await c.env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(runStatus, job.run_id)
+        .run()
+    }
+  }
 
   return c.json({ ok: true })
 })

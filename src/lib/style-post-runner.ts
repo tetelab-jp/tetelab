@@ -73,7 +73,7 @@ function randomJobToken(): string {
  * 実際のログイン・登録・反映申請はFargateタスク側で行われ、結果は
  * 後で /api/automation/jobs/:id/result へのコールバックとして届く。
  */
-async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number): Promise<void> {
+async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number, runId?: number): Promise<void> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY || !env.AWS_REGION) {
     throw new Error('AWSの認証情報(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION)が未設定です')
@@ -87,9 +87,9 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
 
   const jobToken = randomJobToken()
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status) VALUES (?, ?, ?, 'pending')`
+    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id) VALUES (?, ?, ?, 'pending', ?)`
   )
-    .bind(styleId, userId, jobToken)
+    .bind(styleId, userId, jobToken, runId ?? null)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -172,7 +172,7 @@ export async function runStyleAutomationForUser(
   let failedToDispatchCount = 0
   for (const t of targets) {
     try {
-      await dispatchStylePostJob(env, userId, t.id)
+      await dispatchStylePostJob(env, userId, t.id, runId)
       dispatchedCount++
     } catch {
       failedToDispatchCount++
@@ -290,7 +290,7 @@ export async function runNextStyleForUser(
   const runId = Number(runInsert.meta.last_row_id)
 
   try {
-    await dispatchStylePostJob(env, userId, row.id)
+    await dispatchStylePostJob(env, userId, row.id, runId)
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
