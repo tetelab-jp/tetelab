@@ -343,24 +343,46 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 
   if (!registeredStyleId) {
     const currentUrl = page.url()
+    // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
+    // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
+    // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
+    // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
+    // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
+    // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
+    // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
+    // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
+    // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
+    // 可能性の傍証)を診断ログに残すのみとする。
+    const isStyleListPage = /styleList/i.test(currentUrl)
     const diag = await page
-      .evaluate(() => {
-        const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
-        const errorEls = Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
-          .map((el) => el.textContent?.trim())
-          .filter((t) => t)
-          .slice(0, 3)
-        return {
-          styleIdElExists: !!styleIdEl,
-          styleIdElValue: styleIdEl?.value ?? null,
-          errorTexts: errorEls
-        }
-      })
+      .evaluate(
+        (styleName: string, isListPage: boolean) => {
+          const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+          const errorEls = isListPage
+            ? []
+            : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+                .map((el) => el.textContent?.trim())
+                .filter((t) => t)
+                .slice(0, 3)
+          const nameMatchCount =
+            isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
+          return {
+            styleIdElExists: !!styleIdEl,
+            styleIdElValue: styleIdEl?.value ?? null,
+            errorTexts: errorEls,
+            isStyleListPage: isListPage,
+            nameMatchCount
+          }
+        },
+        input.styleName.slice(0, 30),
+        isStyleListPage
+      )
       .catch(() => null)
     const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
     log(
-      `登録確認失敗時の詳細: url=${currentUrl} #styleId存在=${diag?.styleIdElExists ?? '不明'} ` +
-        `値=${diag?.styleIdElValue ?? '(なし)'} エラー表示候補=${errorSummary}`
+      `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
+        `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
+        `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
     )
     throw new Error(
       'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
