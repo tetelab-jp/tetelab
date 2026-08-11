@@ -32,8 +32,8 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
   ]
   return (
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
-      <div class="mb-8 px-1">
-        <img src="/static/logo-combined.png" alt="SalonMotion" class="h-9 w-auto" />
+      <div class="mb-8 text-center">
+        <img src="/static/logo-combined.png" alt="SalonMotion" class="inline-block h-9 w-auto" />
       </div>
 
       {groups.map((group) => (
