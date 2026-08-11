@@ -496,6 +496,18 @@ async function uploadFrontImage(
     const maxAttempts = 3
     let lastError: Error | null = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // 2026-08-11修正(重大バグ): 失敗後のクリックが"Node is either not
+      // clickable or not an Element"で失敗する原因を実機のDOM状態(要素の
+      // offsetParentがnull、座標が全て0)で特定した。モーダルは「ファイル
+      // 未選択状態にリセット」されるのではなく、実際には非表示(モーダルごと
+      // 閉じた状態)になっていた。#formFileの要素自体はDOMに残るためセレクタ
+      // には一致するが、非表示のモーダル内にあるためクリック不可能だった。
+      // プレースホルダー(#FRONT_IMG_ID_IMG)を再クリックしてモーダルを
+      // 明示的に開き直してから、ファイル選択をやり直す。
+      if (attempt > 1) {
+        await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
+        await page.click('#FRONT_IMG_ID_IMG')
+      }
       const currentFileInput =
         attempt === 1
           ? fileInput
