@@ -11,8 +11,17 @@ export type NavKey =
   | 'style-test-run'
   | 'blog-master'
   | 'blog-posts'
+  | 'ranking-measure'
+  | 'ranking-registry'
+  | 'ranking-schedule'
 
-const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' }[] = [
+const NAV_ITEMS: {
+  key: NavKey
+  href: string
+  icon: string
+  label: string
+  group: 'main' | 'style' | 'blog' | 'ranking'
+}[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '画像ライブラリ', group: 'style' },
@@ -21,14 +30,18 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿スケジュール', group: 'style' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: '手動実行・実行履歴', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
-  { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' }
+  { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
+  { key: 'ranking-measure', href: '/ranking', icon: 'fa-magnifying-glass-chart', label: '計測', group: 'ranking' },
+  { key: 'ranking-registry', href: '/ranking/registry', icon: 'fa-list-check', label: '計測情報登録設定', group: 'ranking' },
+  { key: 'ranking-schedule', href: '/ranking/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' }
 ]
 
 export function Sidebar({ active, salonName }: { active: NavKey; salonName: string | null }) {
-  const groups: { title: string; key: 'main' | 'style' | 'blog' }[] = [
+  const groups: { title: string; key: 'main' | 'style' | 'blog' | 'ranking' }[] = [
     { title: '', key: 'main' },
     { title: 'スタイル投稿', key: 'style' },
-    { title: 'ブログ投稿', key: 'blog' }
+    { title: 'ブログ投稿', key: 'blog' },
+    { title: '順位計測', key: 'ranking' }
   ]
   return (
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">

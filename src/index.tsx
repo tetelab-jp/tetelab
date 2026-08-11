@@ -6,6 +6,7 @@ import dashboard from './routes/dashboard'
 import style from './routes/style'
 import blog from './routes/blog'
 import automation from './routes/automation'
+import ranking from './routes/ranking'
 import { SESSION_COOKIE_NAME } from './lib/auth-middleware'
 import { verifyJwt } from './lib/jwt'
 import { createDb } from './lib/db'
@@ -33,6 +34,7 @@ const bindings: Bindings = {
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   CRON_SECRET: process.env.CRON_SECRET,
+  RANKING_PROXY_URL: process.env.RANKING_PROXY_URL,
   APP_BASE_URL: process.env.APP_BASE_URL,
   AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
   AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
@@ -76,5 +78,6 @@ app.route('/', automation)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
+app.route('/', ranking)
 
 export default app
