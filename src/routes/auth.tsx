@@ -24,8 +24,8 @@ function AuthLayout({ children }: { children: any }) {
     <div class="min-h-screen flex items-center justify-center px-4">
       <div class="w-full max-w-md">
         <div class="text-center mb-6">
-          <img src="/static/logo-icon.png" alt="SalonMotion" class="inline-block w-14 h-14 rounded-2xl mb-4" />
-          <img src="/static/logo-wordmark.png" alt="SalonMotion" class="block mx-auto h-10 w-auto" />
+          <img src="/static/logo-icon.png" alt="SalonMotion" class="inline-block w-16 h-16 rounded-2xl mb-4" />
+          <img src="/static/logo-wordmark.png" alt="SalonMotion" class="block mx-auto h-12 w-auto" />
           <p class="text-sm text-gray-500 mt-2">ホットペッパービューティー連携SaaS</p>
         </div>
         <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">{children}</div>
