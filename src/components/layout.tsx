@@ -33,12 +33,10 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
   return (
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
       <div class="flex items-center gap-2 mb-8 px-1">
-        <img src="/static/logo-icon.svg" alt="SalonMotion" class="w-9 h-9 rounded-xl" />
+        <img src="/static/logo-icon.png" alt="SalonMotion" class="w-9 h-9 rounded-xl" />
         <div>
-          <p class="font-bold text-sm leading-tight">
-            Salon<span class="font-medium text-gray-400">Motion</span>
-          </p>
-          <p class="text-xs text-gray-400 leading-tight">{salonName || 'マイページ'}</p>
+          <img src="/static/logo-wordmark.png" alt="SalonMotion" class="h-4 w-auto" />
+          <p class="text-xs text-gray-400 leading-tight mt-0.5">{salonName || 'マイページ'}</p>
         </div>
       </div>
 
