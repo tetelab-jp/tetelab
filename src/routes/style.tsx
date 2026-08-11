@@ -347,7 +347,7 @@ style.get('/style/library', async (c) => {
           </p>
         ) : (
           <>
-            <div class="flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
+            <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
               <span class="w-8 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0"></span>
               <span class="w-20 flex-shrink-0">画像</span>
@@ -356,11 +356,11 @@ style.get('/style/library', async (c) => {
             </div>
             <div id="style-list" class="divide-y divide-gray-100">
             {styles.map((s, idx) => (
-              <div class="flex items-center gap-4 py-3" data-image-id={s.id}>
-                <span class="w-8 flex-shrink-0 text-center text-xs text-gray-400">{idx + 1}</span>
+              <div class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3" data-image-id={s.id}>
+                <span class="hidden md:block w-8 flex-shrink-0 text-center text-xs text-gray-400">{idx + 1}</span>
                 <input
                   type="checkbox"
-                  class="style-checkbox w-5 h-5 accent-pink-500 cursor-pointer flex-shrink-0"
+                  class="style-checkbox w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0"
                   checked={s.auto_post_enabled_flag === 1}
                   data-image-id={s.id}
                 />
@@ -368,11 +368,11 @@ style.get('/style/library', async (c) => {
                   {s.front_style_image_id ? (
                     <img
                       src={`/style/image/${s.front_style_image_id}`}
-                      class="w-20 h-28 object-contain bg-gray-50 rounded-lg border border-gray-200"
+                      class="w-10 h-14 md:w-20 md:h-28 object-contain bg-gray-50 rounded-lg border border-gray-200"
                       loading="lazy"
                     />
                   ) : (
-                    <div class="w-20 h-28 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300">
+                    <div class="w-10 h-14 md:w-20 md:h-28 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300">
                       <i class="fas fa-image text-xl"></i>
                     </div>
                   )}
@@ -387,20 +387,22 @@ style.get('/style/library', async (c) => {
                     {statusBadge(s.reflection_request_status, 'reflection')}
                   </div>
                 </div>
-                <div class="flex items-center gap-2 flex-shrink-0">
+                <div class="flex items-center gap-1 md:gap-2 flex-shrink-0">
                   <a
                     href={`/style/${s.id}/edit`}
-                    class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
+                    class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"
                   >
-                    <i class="fas fa-pen mr-1"></i>編集
+                    <i class="fas fa-pen md:mr-1"></i>
+                    <span class="hidden md:inline">編集</span>
                   </a>
                   <button
                     type="button"
-                    class="delete-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5"
+                    class="delete-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"
                     data-image-id={s.id}
                     title="削除"
                   >
-                    <i class="fas fa-xmark mr-1"></i>削除
+                    <i class="fas fa-xmark md:mr-1"></i>
+                    <span class="hidden md:inline">削除</span>
                   </button>
                 </div>
               </div>
