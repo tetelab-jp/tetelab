@@ -285,10 +285,15 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
+       FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+    }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -314,6 +319,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   return c.json({
     loginId,
     password,
+    preferredProxySessionId: cred.last_successful_proxy_session_id || undefined,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -336,6 +342,7 @@ type JobResultBody = {
   message: string
   blocked: boolean
   logs: string[]
+  proxySessionId?: string | null
 }
 
 automation.post('/api/automation/jobs/:id/result', async (c) => {
@@ -372,6 +379,20 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   } else {
     await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'success', last_error = NULL WHERE user_id = ?`)
       .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  // 2026-08-11追記: ログインに成功した(CAPTCHA等を回避できた)プロキシセッション
+  // IDを記録し、次回以降のジョブで優先的に使い回す(出口IPを固定する)ために
+  // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
+  // のnewAutomationPage/index.tsのrunJob参照)。
+  if (body.proxySessionId) {
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`
+    )
+      .bind(body.proxySessionId, userId)
       .run()
       .catch(() => {})
   }

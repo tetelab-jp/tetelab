@@ -95,21 +95,37 @@ export async function launchBrowser(): Promise<Browser> {
  * headlessで動かす都合上、典型的なheadless検知ポイント(navigator.webdriver・
  * User-Agent・viewport等)を可能な範囲でごまかす。
  */
-export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
+export type NewAutomationPageResult = {
+  page: Page
+  proxySessionId: string | null
+}
+
+export async function newAutomationPage(
+  browser: Browser,
+  log?: AutomationLogger,
+  preferredProxySessionId?: string | null
+): Promise<NewAutomationPageResult> {
   const page = await browser.newPage()
 
   // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)のユーザー名に
   // `-session-<任意の文字列>`を付与すると、session値ごとにプール内の別IPが
-  // 割り当てられる。ブラウザ起動のたびにランダムなsession値を付与し、
-  // 1つの出口IPがブロックされても他のIPへ自動的にローテーションされるようにする
-  // (src/lib/salonboard-automation.tsと同じ対応)。
+  // 割り当てられる。当初はブラウザ起動のたびにランダムなsession値を付与して
+  // いたが、同一サロンアカウントへのログイン元IPが毎回変わることが、逆に
+  // ボット対策側から見て不自然(短時間のIP変動)に映っている可能性がある。
+  // 直近ログイン成功実績のあるセッションID(preferredProxySessionId)が
+  // あればそれを優先的に使い回し(=出口IPを固定)、指定が無い場合のみ
+  // 新規にランダムなセッションIDを発行する。
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
   const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
+  let proxySessionId: string | null = null
   if (proxyUsername && proxyPassword) {
-    const sessionId = Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${sessionId}`
+    proxySessionId = preferredProxySessionId || Math.random().toString(36).slice(2, 10)
+    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
     await page.authenticate({ username: sessionUsername, password: proxyPassword })
-    log?.(`[プロキシ] セッションID=${sessionId} で出口IPをローテーション`)
+    log?.(
+      `[プロキシ] セッションID=${proxySessionId} で出口IPを` +
+        `${preferredProxySessionId ? '固定(前回成功実績あり)' : '新規発行'}`
+    )
   }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
@@ -132,7 +148,7 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
   // User-Agentも上書きせず本物の値をそのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
-  return page
+  return { page, proxySessionId }
 }
 
 /**
