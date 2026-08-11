@@ -58,6 +58,16 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(salon_credentials拡張列)に失敗しました:', err)
   }
+  try {
+    // 実行履歴(style_post_runs)の一覧ステータスが常に'processing'のまま
+    // 更新されない不具合の修正用: どのジョブがどの実行(run)に属するかを
+    // 記録できるようにする(詳細はmigrations-pg/0003_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS run_id INTEGER REFERENCES style_post_runs(id) ON DELETE SET NULL`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_post_jobs.run_id)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {
