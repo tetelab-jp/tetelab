@@ -579,6 +579,35 @@ async function uploadFrontImage(
             break
           } catch (e: any) {
             clickError = e
+            // 2026-08-11追記(診断用): 待機+リトライを追加してもなお
+            // "not clickable"が解消しないケースが実機で確認された。単純な
+            // アニメーションタイミングの問題ではない可能性があるため、
+            // クリック失敗時の実際のDOM状態(表示状態・座標・一致要素数)を
+            // 記録し、原因特定に使う。
+            try {
+              const buttonState = await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
+                return buttons.map((btn) => {
+                  const el = btn as HTMLInputElement
+                  const rect = el.getBoundingClientRect()
+                  const style = window.getComputedStyle(el)
+                  return {
+                    isActiveClass: el.classList.contains('isActive'),
+                    disabled: el.disabled,
+                    offsetParentIsNull: el.offsetParent === null,
+                    display: style.display,
+                    visibility: style.visibility,
+                    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                  }
+                })
+              })
+              log(
+                `[診断:クリック失敗詳細](試行${attempt}/${maxAttempts}, クリック試行${clickAttempt}/3) ` +
+                  `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
+              )
+            } catch (evalErr: any) {
+              log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
+            }
             await new Promise((resolve) => setTimeout(resolve, 500))
           }
         }
