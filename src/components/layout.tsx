@@ -34,7 +34,6 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
       <div class="mb-8 px-1">
         <img src="/static/logo-combined.png" alt="SalonMotion" class="h-9 w-auto" />
-        <p class="text-xs text-gray-400 leading-tight mt-1">{salonName || 'マイページ'}</p>
       </div>
 
       {groups.map((group) => (
@@ -76,6 +75,21 @@ export function TopBar({ title }: { title: string }) {
   )
 }
 
+function MobileLogoutBar() {
+  return (
+    <div class="md:hidden fixed bottom-0 inset-x-0 z-10 bg-white border-t border-gray-100 px-4 py-2">
+      <form method="post" action="/logout">
+        <button
+          type="submit"
+          class="w-full flex items-center justify-center gap-2 py-2 text-sm text-gray-500 hover:text-gray-700"
+        >
+          <i class="fas fa-arrow-right-from-bracket"></i> ログアウト
+        </button>
+      </form>
+    </div>
+  )
+}
+
 export function PageLayout({
   active,
   salonName,
@@ -92,8 +106,9 @@ export function PageLayout({
       <Sidebar active={active} salonName={salonName} />
       <div class="flex-1 min-w-0">
         <TopBar title={title} />
-        <main class="p-6 space-y-6">{children}</main>
+        <main class="p-6 pb-20 md:pb-6 space-y-6">{children}</main>
       </div>
+      <MobileLogoutBar />
     </div>
   )
 }
