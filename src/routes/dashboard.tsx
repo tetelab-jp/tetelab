@@ -55,13 +55,13 @@ dashboard.get('/dashboard', async (c) => {
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
           <div class="flex items-center justify-between gap-3 flex-wrap">
-            <p class="font-semibold">サロンボードを同期する</p>
+            <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードを同期する</p>
             <button
               id="sync-stylists-coupons-btn"
               type="button"
               class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              <i class="fas fa-rotate mr-2"></i>サロンボードと同期する
+              サロンボードと同期する
             </button>
           </div>
           <p class="text-sm text-gray-500 leading-relaxed">
