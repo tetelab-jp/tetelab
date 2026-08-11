@@ -132,11 +132,13 @@ export function extractMiddleAreas(html: string, serviceAreaCd: string): AreaLin
 }
 
 /**
- * 中エリアページ(例 https://beauty.hotpepper.jp/svcSA/macAD/ )のHTMLから
- * 配下の小エリア一覧を抽出する。小エリアのリンク形式はサンプル入手後に確定する。
- * 現状は `/svc{SA}/mac{XX}/smc{YYY}/` 形式を拾う(存在しなければ空配列)。
+ * 中エリアページ(例 https://beauty.hotpepper.jp/svcSA/macJR/ )のHTMLから
+ * 配下の小エリア一覧を抽出する。
+ * 小エリアは「エリア絞り込み」の `class="jscAreaConditionLink"` 要素で、
+ * `id` 属性に smallAreaCd(Xで始まる。例 X566)を持つ。
+ * 検索URLでは smallAreaCd=X566 として使う。
  * @param serviceAreaCd 大エリアCd(例 'SA')
- * @param middleAreaCd 中エリアCd(例 'AD')
+ * @param middleAreaCd 中エリアCd(例 'JR')
  */
 export function extractSmallAreas(
   html: string,
@@ -144,24 +146,26 @@ export function extractSmallAreas(
   middleAreaCd: string
 ): AreaLink[] {
   const $ = cheerio.load(html)
-  const re = new RegExp(
-    `/svc${serviceAreaCd}/mac${middleAreaCd}/smc([A-Za-z0-9]+)/(?:salon/)?(?:\\?[^"']*)?$`
-  )
   const byCode = new Map<string, AreaLink>()
-  $('a[href]').each((_, el) => {
-    const href = $(el).attr('href') || ''
-    const m = href.match(re)
-    if (!m) return
-    const code = m[1]
+  $('.jscAreaConditionLink').each((_, el) => {
     const $el = $(el)
+    const id = ($el.attr('id') || '').trim()
+    if (!/^X/i.test(id)) return // 小エリアCdはXで始まる
+    // 「エリア変更」モーダル(全国のエリア一覧)内のリンクは除外し、
+    // 現在の中エリア直下の小エリア(searchConditionLinkList)だけを取る
+    if ($el.closest('.jscConditionModal, #conditionAreaChangeTarget').length > 0) return
     $el.find('br').replaceWith(' ')
-    const name = $el.text().replace(/\s+/g, ' ').trim()
+    let name = $el.text().replace(/\s+/g, ' ').trim()
+    // 末尾に件数「(123)」「（123）」が付く場合は除去して地名だけにする
+    name = name.replace(/[（(]\s*[\d,]+\s*[)）]\s*$/, '').trim()
     if (!name) return
-    if (!byCode.has(code)) {
-      byCode.set(code, {
-        code,
+    if (!byCode.has(id)) {
+      byCode.set(id, {
+        code: id,
         name,
-        url: href.startsWith('http') ? href : `https://beauty.hotpepper.jp${href}`
+        url:
+          'https://beauty.hotpepper.jp/CSP/bt/salonSearch/search/' +
+          `?serviceAreaCd=${serviceAreaCd}&middleAreaCd=${middleAreaCd}&smallAreaCd=${id}`
       })
     }
   })
