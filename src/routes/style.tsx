@@ -1288,7 +1288,7 @@ style.get('/style/template', async (c) => {
   const templates = results || []
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="投稿テンプレート設定">
+    <PageLayout active="style-template" salonName={user.salon_name} title="投稿テンプレート作成">
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1337,7 +1337,7 @@ style.get('/style/template', async (c) => {
         )}
       </div>
     </PageLayout>,
-    { title: '投稿テンプレート設定' }
+    { title: '投稿テンプレート作成' }
   )
 })
 
