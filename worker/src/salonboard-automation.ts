@@ -565,7 +565,24 @@ async function uploadFrontImage(
       }
 
       try {
-        await page.click('input.jscImageUploaderModalSubmitButton')
+        // 2026-08-11修正(重大バグ): 実機ログで試行2・3回目に"Node is either
+        // not clickable or not an Element"というクリック失敗が確認された。
+        // isActive検知直後はモーダル内のDOM遷移(ファイル再選択後の再描画等)が
+        // まだ収まっていない可能性があるため、少し待ってからクリックし、
+        // それでも失敗する場合は短い間隔で数回リトライする。
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        let clickError: any = null
+        for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
+          try {
+            await page.click('input.jscImageUploaderModalSubmitButton')
+            clickError = null
+            break
+          } catch (e: any) {
+            clickError = e
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+        }
+        if (clickError) throw clickError
 
         // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
         // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
