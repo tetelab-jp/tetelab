@@ -112,10 +112,10 @@ dashboard.get('/dashboard', async (c) => {
             <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
           </p>
           <p class="text-sm text-gray-600 mb-3">
-            画像ライブラリに事前登録し、チェックした画像のみ自動投稿されます。
+            登録スタイルに事前登録し、チェックした画像のみ自動投稿されます。
           </p>
           <a href="/style/library" class="text-sm font-semibold text-pink-600 hover:underline">
-            画像ライブラリを開く <i class="fas fa-arrow-right ml-1"></i>
+            登録スタイルを開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
