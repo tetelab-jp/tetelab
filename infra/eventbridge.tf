@@ -5,20 +5,20 @@
 # ドメイン未指定(HTTPのみ)のテスト構成では作成しない。ドメインを設定して
 # 再度applyすると自動的に作成される。それまでは「手動実行する」ボタンで
 # 動作確認する。
+#
+# ⚠️ EventBridge Scheduler(aws_scheduler_schedule)はAPI Destinationを
+# 直接ターゲットにできない(ValidationException: Provided Arn is not in
+# correct format)ため、API Destinationを公式にサポートしているEventBridge
+# ルール(aws_cloudwatch_event_rule/aws_cloudwatch_event_target)を使う。
 
-resource "aws_scheduler_schedule_group" "app" {
+resource "aws_iam_role" "cron_invoke" {
   count = local.has_domain ? 1 : 0
-  name  = "${var.project_name}-cron"
-}
-
-resource "aws_iam_role" "scheduler" {
-  count = local.has_domain ? 1 : 0
-  name  = "${var.project_name}-scheduler"
+  name  = "${var.project_name}-cron-invoke"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
       Effect    = "Allow"
-      Principal = { Service = "scheduler.amazonaws.com" }
+      Principal = { Service = "events.amazonaws.com" }
       Action    = "sts:AssumeRole"
     }]
   })
@@ -46,10 +46,10 @@ resource "aws_cloudwatch_event_api_destination" "cron" {
   connection_arn      = aws_cloudwatch_event_connection.cron[0].arn
 }
 
-resource "aws_iam_role_policy" "scheduler_invoke" {
+resource "aws_iam_role_policy" "cron_invoke" {
   count = local.has_domain ? 1 : 0
-  name  = "${var.project_name}-scheduler-invoke"
-  role  = aws_iam_role.scheduler[0].id
+  name  = "${var.project_name}-cron-invoke"
+  role  = aws_iam_role.cron_invoke[0].id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -60,18 +60,15 @@ resource "aws_iam_role_policy" "scheduler_invoke" {
   })
 }
 
-resource "aws_scheduler_schedule" "cron" {
-  count      = local.has_domain ? 1 : 0
-  name       = "${var.project_name}-run-style-posts"
-  group_name = aws_scheduler_schedule_group.app[0].name
-
-  flexible_time_window {
-    mode = "OFF"
-  }
+resource "aws_cloudwatch_event_rule" "cron" {
+  count               = local.has_domain ? 1 : 0
+  name                = "${var.project_name}-run-style-posts"
   schedule_expression = "rate(1 minute)"
+}
 
-  target {
-    arn      = aws_cloudwatch_event_api_destination.cron[0].arn
-    role_arn = aws_iam_role.scheduler[0].arn
-  }
+resource "aws_cloudwatch_event_target" "cron" {
+  count    = local.has_domain ? 1 : 0
+  rule     = aws_cloudwatch_event_rule.cron[0].name
+  arn      = aws_cloudwatch_event_api_destination.cron[0].arn
+  role_arn = aws_iam_role.cron_invoke[0].arn
 }
