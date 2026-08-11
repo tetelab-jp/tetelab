@@ -24,10 +24,10 @@ function AuthLayout({ children }: { children: any }) {
     <div class="min-h-screen flex items-center justify-center px-4">
       <div class="w-full max-w-md">
         <div class="text-center mb-6">
-          <div class="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-pink-500 text-white text-2xl mb-3">
-            <i class="fas fa-scissors"></i>
-          </div>
-          <h1 class="text-xl font-bold text-gray-900">TETE AOUT</h1>
+          <img src="/static/logo-icon.svg" alt="SalonMotion" class="inline-block w-14 h-14 rounded-2xl mb-3" />
+          <h1 class="text-xl font-bold text-gray-900">
+            Salon<span class="font-medium text-gray-400">Motion</span>
+          </h1>
           <p class="text-sm text-gray-500 mt-1">ホットペッパービューティー連携SaaS</p>
         </div>
         <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">{children}</div>
