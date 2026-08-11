@@ -84,4 +84,72 @@ document.addEventListener('DOMContentLoaded', () => {
       setValue('model_age', model.age || '99')
     })
   }
+
+  // 必須項目の入力チェック: 未入力の間は作成/更新ボタンを非活性風の見た目にし、
+  // 実際に送信しようとした場合はポップアップで警告して送信を止める。
+  // フォームの種類(スタイル/テンプレート)によって存在するフィールドが異なるため、
+  // 対象フィールドが存在する場合のみチェック対象に加える。
+  const submitBtn = form ? form.querySelector('button[type="submit"]') : null
+  if (form && submitBtn) {
+    const hasExistingImage = form.dataset.hasExistingImage === 'true'
+
+    function isRequiredFieldsFilled() {
+      const checks = []
+
+      const imageInput = form.querySelector('input[name="image"]')
+      if (imageInput) {
+        checks.push((imageInput.files && imageInput.files.length > 0) || hasExistingImage)
+      }
+
+      const templateNameInput = form.querySelector('input[name="template_name"]')
+      if (templateNameInput) {
+        checks.push(templateNameInput.value.trim() !== '')
+      }
+
+      const stylistSelect = form.querySelector('select[name="stylist_id"]')
+      if (stylistSelect) {
+        checks.push(stylistSelect.value !== '')
+      }
+
+      const commentField = form.querySelector('textarea[name="comment"]')
+      if (commentField) {
+        checks.push(commentField.value.trim() !== '')
+      }
+
+      const titleInput = form.querySelector('input[name="title"], input[name="title_template"]')
+      if (titleInput) {
+        checks.push(titleInput.value.trim() !== '')
+      }
+
+      if (categoryRadios.length > 0) {
+        checks.push(!!form.querySelector('.category-radio:checked'))
+      }
+
+      const menuDetailField = form.querySelector('textarea[name="menu_detail_text"]')
+      if (menuDetailField) {
+        checks.push(menuDetailField.value.trim() !== '')
+      }
+
+      return checks.every(Boolean)
+    }
+
+    function updateSubmitButtonAppearance() {
+      if (isRequiredFieldsFilled()) {
+        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed')
+      } else {
+        submitBtn.classList.add('opacity-50', 'cursor-not-allowed')
+      }
+    }
+
+    form.addEventListener('input', updateSubmitButtonAppearance)
+    form.addEventListener('change', updateSubmitButtonAppearance)
+    updateSubmitButtonAppearance()
+
+    form.addEventListener('submit', (e) => {
+      if (!isRequiredFieldsFilled()) {
+        e.preventDefault()
+        alert('必須項目が入力されていません。')
+      }
+    })
+  }
 })

@@ -637,7 +637,13 @@ function StyleForm({
   const action = mode === 'new' ? '/style/new' : `/style/${detail?.id}/edit`
 
   return (
-    <form method="post" action={action} enctype="multipart/form-data" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl">
+    <form
+      method="post"
+      action={action}
+      enctype="multipart/form-data"
+      data-has-existing-image={detail?.front_style_image_id ? 'true' : 'false'}
+      class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl"
+    >
       {mode === 'new' && templates.length > 0 && (
         <div class="bg-pink-50 border border-pink-100 rounded-lg p-3">
           <label class="block text-sm font-medium text-gray-700 mb-1">テンプレートから作成（任意）</label>
@@ -662,7 +668,9 @@ function StyleForm({
           スタイル名→カテゴリ→長さ→メニュー内容→クーポン→ハッシュタグ→モデル情報)
           に合わせて並び替え済み(ユーザーが実画面のスクリーンショットで確認)。 */}
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル画像（FRONT）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          スタイル画像（FRONT）<span style="color:#d32475">*</span>
+        </label>
         {detail?.front_style_image_id && (
           <img src={`/style/image/${detail.front_style_image_id}`} class="w-32 h-40 object-cover rounded-lg border border-gray-200 mb-2" />
         )}
@@ -670,7 +678,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">担当スタイリスト</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          担当スタイリスト<span style="color:#d32475">*</span>
+        </label>
         <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
           <option value="">未設定</option>
           {stylists.map((s) => (
@@ -685,7 +695,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイリストコメント（最大120文字）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          スタイリストコメント（最大120文字）<span style="color:#d32475">*</span>
+        </label>
         <textarea
           name="comment"
           rows={4}
@@ -695,7 +707,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大30文字）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          スタイル名（最大30文字）<span style="color:#d32475">*</span>
+        </label>
         <input
           type="text"
           name="title"
@@ -707,7 +721,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          カテゴリ<span style="color:#d32475">*</span>
+        </label>
         <div class="flex gap-4 text-sm">
           <label class="flex items-center gap-1">
             <input type="radio" name="category_value" value="SG01" checked={category === 'SG01'} class="category-radio" />
@@ -737,7 +753,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">メニュー内容</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          メニュー内容<span style="color:#d32475">*</span>
+        </label>
         <div class="flex flex-wrap gap-3 text-sm mb-2">
           {MENU_OPTIONS.map(([v, label]) => (
             <label class="flex items-center gap-1">
@@ -1354,7 +1372,9 @@ function TemplateForm({
   return (
     <form method="post" action={action} class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl">
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">テンプレート名（管理用・投稿には使われません）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          テンプレート名（管理用・投稿には使われません）<span style="color:#d32475">*</span>
+        </label>
         <input
           type="text"
           name="template_name"
@@ -1375,7 +1395,9 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">スタイル名（最大30文字）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          スタイル名（最大30文字）<span style="color:#d32475">*</span>
+        </label>
         <input
           type="text"
           name="title_template"
@@ -1386,7 +1408,9 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          カテゴリ<span style="color:#d32475">*</span>
+        </label>
         <div class="flex gap-4 text-sm">
           <label class="flex items-center gap-1">
             <input type="radio" name="category_value" value="SG01" checked={category === 'SG01'} class="category-radio" />
@@ -1416,7 +1440,9 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">メニュー内容</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          メニュー内容<span style="color:#d32475">*</span>
+        </label>
         <div class="flex flex-wrap gap-3 text-sm mb-2">
           {MENU_OPTIONS.map(([v, label]) => (
             <label class="flex items-center gap-1">
