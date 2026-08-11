@@ -54,7 +54,7 @@ dashboard.get('/dashboard', async (c) => {
     <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
-          <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードを同期する</p>
+          <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
           <p class="text-sm text-gray-500 leading-relaxed">
             作業開始の前にこちらから同期をしてください。
             <br />
