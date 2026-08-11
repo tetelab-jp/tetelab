@@ -12,22 +12,23 @@ export type NavKey =
   | 'blog-master'
   | 'blog-posts'
 
-const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' }[] = [
+const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' | 'settings' }[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
-  { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '画像ライブラリ', group: 'style' },
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: '投稿テンプレート設定', group: 'style' },
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿スケジュール', group: 'style' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: '手動実行・実行履歴', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
-  { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' }
+  { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
+  { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
 ]
 
-const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' }[] = [
+const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' }[] = [
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
-  { title: 'ブログ投稿', key: 'blog' }
+  { title: 'ブログ投稿', key: 'blog' },
+  { title: '', key: 'settings' }
 ]
 
 export function Sidebar({ active, salonName }: { active: NavKey; salonName: string | null }) {
@@ -73,7 +74,7 @@ function MobileNavPanel({ active }: { active: NavKey }) {
   return (
     <div class="absolute left-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div class="space-y-4">
-        {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => (
+        {NAV_GROUPS.filter((group) => group.key !== 'main' && group.key !== 'settings').map((group) => (
           <div>
             <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
             <nav class="space-y-1">
@@ -130,7 +131,7 @@ export function TopBar({ title, active }: { title: string; active: NavKey }) {
 
 function MobileGroupNav({ active }: { active: NavKey }) {
   const current = NAV_ITEMS.find((item) => item.key === active)
-  if (!current || current.group === 'main') return null
+  if (!current || current.group === 'main' || current.group === 'settings') return null
   const items = NAV_ITEMS.filter((item) => item.group === current.group)
   return (
     <div class="md:hidden px-4 pt-4">
