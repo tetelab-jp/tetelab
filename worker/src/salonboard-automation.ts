@@ -328,13 +328,23 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 
   // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
   // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
+  //
+  // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
+  // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
+  // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
+  // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
+  // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
+  // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
+  // である「登録が完了しました。」の文言も検知対象に加える。
   const registeredStyleId = await page
     .waitForFunction(
       () => {
         const el = document.getElementById('styleId') as HTMLInputElement | null
         if (el && /^L\d{9}$/.test(el.value)) return el.value
         const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
-        return urlMatch ? urlMatch[1] : false
+        if (urlMatch) return urlMatch[1]
+        if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
+        return false
       },
       { timeout: 20000 }
     )
@@ -390,7 +400,11 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     )
   }
 
-  log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+  if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
+    log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
+  } else {
+    log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+  }
 }
 
 /**
