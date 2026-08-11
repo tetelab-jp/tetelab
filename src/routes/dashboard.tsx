@@ -54,9 +54,16 @@ dashboard.get('/dashboard', async (c) => {
     <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
-          <p class="font-semibold">
-            <i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードを同期する
-          </p>
+          <div class="flex items-center justify-between gap-3 flex-wrap">
+            <p class="font-semibold">サロンボードを同期する</p>
+            <button
+              id="sync-stylists-coupons-btn"
+              type="button"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <i class="fas fa-rotate mr-2"></i>サロンボードと同期する
+            </button>
+          </div>
           <p class="text-sm text-gray-500 leading-relaxed">
             作業開始の前にこちらから同期をしてください。
             <br />
@@ -75,13 +82,6 @@ dashboard.get('/dashboard', async (c) => {
               <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at ? formatJstDateTime(cred.last_coupon_synced_at) : '未実施'}</p>
             </div>
           </div>
-          <button
-            id="sync-stylists-coupons-btn"
-            type="button"
-            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <i class="fas fa-rotate mr-1"></i>サロンボードと同期する
-          </button>
           <p id="sync-stylists-coupons-status" class="text-sm"></p>
         </div>
       )}
