@@ -12,7 +12,7 @@ export type NavKey =
   | 'blog-master'
   | 'blog-posts'
   | 'ranking-measure'
-  | 'ranking-registry'
+  | 'ranking-templates'
   | 'ranking-schedule'
 
 const NAV_ITEMS: {
@@ -32,7 +32,7 @@ const NAV_ITEMS: {
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
   { key: 'ranking-measure', href: '/ranking', icon: 'fa-magnifying-glass-chart', label: '計測', group: 'ranking' },
-  { key: 'ranking-registry', href: '/ranking/registry', icon: 'fa-list-check', label: '計測情報登録設定', group: 'ranking' },
+  { key: 'ranking-templates', href: '/ranking/templates', icon: 'fa-list-check', label: '計測テンプレート設定', group: 'ranking' },
   { key: 'ranking-schedule', href: '/ranking/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' }
 ]
 

@@ -9,7 +9,7 @@ import {
   getMiddleAreas,
   getSmallAreas,
   getSalonOptions,
-  buildAreaLabel
+  type AreaOption
 } from '../lib/ranking-areas'
 import type { Bindings, AppUser } from '../types'
 
@@ -99,6 +99,96 @@ function parseKeywords(body: Record<string, unknown>): string[] {
   return out
 }
 
+// 計測情報入力フォームのエリア/キーワード部品(計測画面・編集画面で共用)
+function AreaAndKeywordFields({
+  serviceAreaCd,
+  middleOptions,
+  middleAreaCd,
+  smallOptions,
+  smallAreaCd,
+  keywords
+}: {
+  serviceAreaCd?: string
+  middleOptions?: AreaOption[]
+  middleAreaCd?: string | null
+  smallOptions?: AreaOption[]
+  smallAreaCd?: string | null
+  keywords?: string[]
+}) {
+  const kw = keywords || []
+  return (
+    <>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            大エリア <span class="text-pink-500">*</span>
+          </label>
+          <select
+            id="service-area"
+            name="service_area_cd"
+            required
+            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
+          >
+            <option value="">選択してください</option>
+            {SERVICE_AREAS.map((a) => (
+              <option value={a.cd} selected={serviceAreaCd === a.cd}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
+          <select
+            id="middle-area"
+            name="middle_area_cd"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
+          >
+            <option value="">選択してください</option>
+            {(middleOptions || []).map((o) => (
+              <option value={o.code} selected={middleAreaCd === o.code}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
+          <select
+            id="small-area"
+            name="small_area_cd"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
+          >
+            <option value="">選択してください（任意）</option>
+            {(smallOptions || []).map((o) => (
+              <option value={o.code} selected={smallAreaCd === o.code}>
+                {o.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <input type="hidden" id="area-label" name="area_label" value="" />
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">キーワード</label>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {Array.from({ length: KEYWORD_SLOTS }).map((_, i) => (
+            <input
+              type="text"
+              name={`keyword_${i}`}
+              id={`keyword_${i}`}
+              value={kw[i] || ''}
+              placeholder={`キーワード${i + 1}`}
+              class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
+            />
+          ))}
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ============================================
 // 計測画面
 // ============================================
@@ -133,14 +223,14 @@ ranking.get('/ranking', requireAuth, async (c) => {
     <PageLayout active="ranking-measure" salonName={user.salon_name} title="検索順位計測">
       {registered && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>計測情報を登録しました。「計測情報登録設定」で確認・編集できます。
+          <i class="fas fa-circle-check mr-2"></i>計測テンプレートを登録しました。「計測テンプレート設定」で確認・編集できます。
         </div>
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-5 text-gray-900">計測・情報入力</p>
 
-        <form id="ranking-form" method="post" action="/ranking/register" class="space-y-5">
+        <form id="ranking-form" method="post" action="/ranking/templates" class="space-y-5">
           {/* サロン名 */}
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -163,72 +253,21 @@ ranking.get('/ranking', requireAuth, async (c) => {
             )}
           </div>
 
-          {/* エリア(大/中/小) */}
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">
-                大エリア <span class="text-pink-500">*</span>
-              </label>
-              <select
-                id="service-area"
-                name="service_area_cd"
-                required
-                class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-              >
-                <option value="">選択してください</option>
-                {SERVICE_AREAS.map((a) => (
-                  <option value={a.cd}>{a.name}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
-              <select
-                id="middle-area"
-                name="middle_area_cd"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-              >
-                <option value="">選択してください</option>
-              </select>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
-              <select
-                id="small-area"
-                name="small_area_cd"
-                class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-              >
-                <option value="">選択してください（任意）</option>
-              </select>
-            </div>
-          </div>
-          <input type="hidden" id="area-label" name="area_label" value="" />
+          <AreaAndKeywordFields />
 
-          {/* キーワード(最大10) */}
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-2">キーワード</label>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {Array.from({ length: KEYWORD_SLOTS }).map((_, i) => (
-                <input
-                  type="text"
-                  name={`keyword_${i}`}
-                  id={`keyword_${i}`}
-                  placeholder={`キーワード${i + 1}`}
-                  class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
-                />
-              ))}
-            </div>
-          </div>
+          {/* 登録名(モーダルで入力してここへ入る) */}
+          <input type="hidden" id="template-name" name="name" value="" />
 
           <p class="text-xs text-gray-500">
-            「登録」ボタンを押すと入力した計測情報が「計測情報登録設定」に保存され、「定期測定設定」で設定した頻度で定期的に自動計測できます。
+            「登録」ボタンを押すと入力した計測情報が「計測テンプレート設定」に保存され、「定期測定設定」で設定した頻度で定期的に自動計測できます。
           </p>
 
           <p id="measure-status" class="text-sm text-pink-600"></p>
 
           <div class="flex items-center justify-end gap-3">
             <button
-              type="submit"
+              type="button"
+              id="register-open-btn"
               class="bg-green-500 hover:bg-green-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm"
             >
               登録
@@ -242,6 +281,43 @@ ranking.get('/ranking', requireAuth, async (c) => {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* 登録名入力モーダル */}
+      <div
+        id="register-modal"
+        class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      >
+        <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
+          <p class="font-semibold text-gray-900 mb-1">計測テンプレートの登録</p>
+          <p class="text-xs text-gray-500 mb-4">この計測条件に名前を付けて保存します（管理用）。</p>
+          <label class="block text-sm font-medium text-gray-700 mb-1">
+            テンプレート名 <span class="text-pink-500">*</span>
+          </label>
+          <input
+            type="text"
+            id="modal-template-name"
+            placeholder="例: 赤羽・髪質改善セット"
+            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-pink-200"
+          />
+          <p id="modal-error" class="text-xs text-red-500 min-h-[1rem]"></p>
+          <div class="flex items-center justify-end gap-3 mt-3">
+            <button
+              type="button"
+              id="register-cancel-btn"
+              class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2"
+            >
+              キャンセル
+            </button>
+            <button
+              type="button"
+              id="register-confirm-btn"
+              class="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-2 rounded-lg text-sm"
+            >
+              保存する
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 計測結果履歴 */}
@@ -287,7 +363,9 @@ ranking.get('/ranking', requireAuth, async (c) => {
                         <span class="font-semibold text-gray-900">{r.rank}位</span>
                       )}
                     </td>
-                    <td class="py-2 pr-3 text-gray-500">{r.result_count != null ? `${r.result_count}件` : '-'}</td>
+                    <td class="py-2 pr-3 text-gray-500">
+                      {r.result_count != null ? `${r.result_count}件` : '-'}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -340,19 +418,19 @@ ranking.post('/ranking/measure', requireAuth, async (c) => {
     areaLabel: areaLabel || serviceAreaName(serviceAreaCd),
     keywords
   }
-  // レスポンスを待たせずバックグラウンドで計測(常駐Nodeサーバーなので継続する)
   void processMeasureRun(c.env, user.id, runId, null, params)
 
   return c.json({ success: true, runId, count: keywords.length })
 })
 
 // ============================================
-// 計測情報の登録(「登録」ボタン)
+// 計測テンプレートの作成(計測画面の「登録」モーダル)
 // ============================================
-ranking.post('/ranking/register', requireAuth, async (c) => {
+ranking.post('/ranking/templates', requireAuth, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
 
+  const name = String(body.name || '').trim()
   const salon = String(body.salon || '').trim()
   const serviceAreaCd = String(body.service_area_cd || '').trim()
   const middleAreaCd = String(body.middle_area_cd || '').trim() || null
@@ -366,10 +444,10 @@ ranking.post('/ranking/register', requireAuth, async (c) => {
 
   const q = await c.env.DB.prepare(
     `INSERT INTO ranking_queries
-      (user_id, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
-     VALUES (?, ?, ?, ?, ?, ?)`
+      (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(user.id, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel)
+    .bind(user.id, name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel)
     .run()
   const queryId = q.meta.last_row_id as number
 
@@ -386,75 +464,232 @@ ranking.post('/ranking/register', requireAuth, async (c) => {
 })
 
 // ============================================
-// 計測情報登録設定(一覧・削除)
+// 計測テンプレート設定(一覧)
 // ============================================
-ranking.get('/ranking/registry', requireAuth, async (c) => {
+ranking.get('/ranking/templates', requireAuth, async (c) => {
   const user = c.get('user')
   const { results: queries } = await c.env.DB.prepare(
-    `SELECT id, salon_name, area_label, is_active, created_at
+    `SELECT id, name, salon_name, area_label, created_at
      FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
   )
     .bind(user.id)
     .all<{
       id: number
+      name: string | null
       salon_name: string
       area_label: string | null
-      is_active: number
       created_at: string
     }>()
 
-  const { results: kws } = await c.env.DB.prepare(
-    `SELECT k.query_id, k.keyword FROM ranking_query_keywords k
-     JOIN ranking_queries q ON q.id = k.query_id
-     WHERE q.user_id = ? ORDER BY k.sort_order, k.id`
-  )
-    .bind(user.id)
-    .all<{ query_id: number; keyword: string }>()
-  const kwByQuery = new Map<number, string[]>()
-  for (const k of kws) {
-    if (!kwByQuery.has(k.query_id)) kwByQuery.set(k.query_id, [])
-    kwByQuery.get(k.query_id)!.push(k.keyword)
-  }
-
   return c.render(
-    <PageLayout active="ranking-registry" salonName={user.salon_name} title="計測情報登録設定">
+    <PageLayout active="ranking-templates" salonName={user.salon_name} title="計測テンプレート設定">
+      <div class="flex items-center justify-between">
+        <p class="font-semibold">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>計測テンプレート一覧（{queries.length}件）
+        </p>
+        <a
+          href="/ranking"
+          class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+        >
+          <i class="fas fa-plus mr-1"></i>計測画面で新規登録
+        </a>
+      </div>
+
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-4">登録済みの計測情報</p>
-        {!queries || queries.length === 0 ? (
-          <p class="text-sm text-gray-400">
-            登録済みの計測情報はありません。「計測」画面で条件を入力し「登録」ボタンを押すと保存されます。
+        {queries.length === 0 ? (
+          <p class="text-sm text-gray-400 text-center py-6">
+            まだ計測テンプレートが登録されていません。「計測」画面で条件を入力し「登録」ボタンから保存できます。
           </p>
         ) : (
-          <ul class="divide-y divide-gray-100">
-            {queries.map((q) => (
-              <li class="py-4 flex items-start justify-between gap-4">
-                <div class="min-w-0">
-                  <p class="font-medium text-gray-900">{q.salon_name}</p>
-                  <p class="text-xs text-gray-500 mt-0.5">{q.area_label || '-'}</p>
-                  <div class="flex flex-wrap gap-1.5 mt-2">
-                    {(kwByQuery.get(q.id) || []).map((kw) => (
-                      <span class="text-xs bg-gray-50 text-gray-600 rounded px-2 py-0.5">{kw}</span>
-                    ))}
-                  </div>
-                </div>
-                <form method="post" action={`/ranking/registry/${q.id}/delete`} class="flex-shrink-0">
-                  <button
-                    type="submit"
-                    class="text-xs font-semibold text-gray-400 hover:text-red-500 border border-gray-300 rounded px-3 py-1.5"
-                  >
-                    <i class="fas fa-trash mr-1"></i>削除
-                  </button>
-                </form>
-              </li>
-            ))}
-          </ul>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-400 border-b border-gray-100">
+                <th class="py-2">テンプレート名</th>
+                <th class="py-2">設定エリア</th>
+                <th class="py-2 text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {queries.map((q) => (
+                <tr class="border-b border-gray-50">
+                  <td class="py-2">
+                    <a href={`/ranking/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
+                      {q.name || `${q.salon_name}（無名）`}
+                    </a>
+                  </td>
+                  <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
+                  <td class="py-2 text-right">
+                    <a
+                      href={`/ranking/templates/${q.id}/edit`}
+                      class="text-xs text-gray-400 hover:text-pink-600"
+                    >
+                      編集
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
     </PageLayout>
   )
 })
 
-ranking.post('/ranking/registry/:id/delete', requireAuth, async (c) => {
+// ============================================
+// 計測テンプレート編集
+// ============================================
+ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+  const q = await c.env.DB.prepare(
+    `SELECT id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
+     FROM ranking_queries WHERE id = ? AND user_id = ?`
+  )
+    .bind(id, user.id)
+    .first<{
+      id: number
+      name: string | null
+      salon_name: string
+      service_area_cd: string
+      middle_area_cd: string | null
+      small_area_cd: string | null
+      area_label: string | null
+    }>()
+  if (!q) return c.redirect('/ranking/templates')
+
+  const { results: kwRows } = await c.env.DB.prepare(
+    `SELECT keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
+  )
+    .bind(id)
+    .all<{ keyword: string }>()
+  const keywords = kwRows.map((r) => r.keyword)
+
+  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
+  if (!salons.includes(q.salon_name)) salons.unshift(q.salon_name)
+
+  // エリア選択肢(保存済みを選択状態に。取得失敗時は保存済みコードだけをフォールバック表示)
+  const labelParts = (q.area_label || '').split('>').map((s) => s.trim())
+  let middleOptions: AreaOption[] = []
+  let smallOptions: AreaOption[] = []
+  try {
+    middleOptions = await getMiddleAreas(c.env, q.service_area_cd)
+  } catch {
+    if (q.middle_area_cd) middleOptions = [{ code: q.middle_area_cd, name: labelParts[1] || q.middle_area_cd }]
+  }
+  try {
+    if (q.middle_area_cd) smallOptions = await getSmallAreas(c.env, q.service_area_cd, q.middle_area_cd)
+  } catch {
+    if (q.small_area_cd) smallOptions = [{ code: q.small_area_cd, name: labelParts[2] || q.small_area_cd }]
+  }
+
+  return c.render(
+    <PageLayout active="ranking-templates" salonName={user.salon_name} title="計測テンプレート編集">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-3xl">
+        <p class="font-semibold mb-5 text-gray-900">計測テンプレート編集</p>
+        <form id="ranking-form" method="post" action={`/ranking/templates/${q.id}`} class="space-y-5">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              テンプレート名 <span class="text-pink-500">*</span>
+            </label>
+            <input
+              type="text"
+              name="name"
+              required
+              value={q.name || ''}
+              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
+            />
+          </div>
+
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              サロン名 <span class="text-pink-500">*</span>
+            </label>
+            <select
+              name="salon"
+              required
+              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
+            >
+              {salons.map((s) => (
+                <option value={s} selected={s === q.salon_name}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <AreaAndKeywordFields
+            serviceAreaCd={q.service_area_cd}
+            middleOptions={middleOptions}
+            middleAreaCd={q.middle_area_cd}
+            smallOptions={smallOptions}
+            smallAreaCd={q.small_area_cd}
+            keywords={keywords}
+          />
+
+          <div class="flex items-center justify-between pt-2">
+            <button
+              type="submit"
+              formaction={`/ranking/templates/${q.id}/delete`}
+              class="text-sm text-gray-400 hover:text-red-500"
+            >
+              <i class="fas fa-trash mr-1"></i>削除
+            </button>
+            <button
+              type="submit"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm"
+            >
+              保存
+            </button>
+          </div>
+        </form>
+      </div>
+      <script src="/static/ranking.js"></script>
+    </PageLayout>
+  )
+})
+
+ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+  const body = (await c.req.parseBody()) as Record<string, unknown>
+
+  const owned = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE id = ? AND user_id = ?`)
+    .bind(id, user.id)
+    .first<{ id: number }>()
+  if (!owned) return c.redirect('/ranking/templates')
+
+  const name = String(body.name || '').trim()
+  const salon = String(body.salon || '').trim()
+  const serviceAreaCd = String(body.service_area_cd || '').trim()
+  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
+  const smallAreaCd = String(body.small_area_cd || '').trim() || null
+  const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
+  const keywords = parseKeywords(body)
+
+  await c.env.DB.prepare(
+    `UPDATE ranking_queries
+       SET name = ?, salon_name = ?, service_area_cd = ?, middle_area_cd = ?, small_area_cd = ?,
+           area_label = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ? AND user_id = ?`
+  )
+    .bind(name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel, id, user.id)
+    .run()
+
+  await c.env.DB.prepare(`DELETE FROM ranking_query_keywords WHERE query_id = ?`).bind(id).run()
+  let order = 0
+  for (const kw of keywords) {
+    await c.env.DB.prepare(
+      `INSERT INTO ranking_query_keywords (query_id, keyword, sort_order) VALUES (?, ?, ?)`
+    )
+      .bind(id, kw, order++)
+      .run()
+  }
+
+  return c.redirect('/ranking/templates')
+})
+
+ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   if (Number.isFinite(id)) {
@@ -462,7 +697,7 @@ ranking.post('/ranking/registry/:id/delete', requireAuth, async (c) => {
       .bind(id, user.id)
       .run()
   }
-  return c.redirect('/ranking/registry')
+  return c.redirect('/ranking/templates')
 })
 
 // ============================================
@@ -491,7 +726,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-4">定期測定設定</p>
         <p class="text-sm text-gray-500 mb-5">
-          「計測情報登録設定」に登録した条件を、設定した頻度で自動計測します。
+          「計測テンプレート設定」に登録した条件を、設定した頻度で自動計測します。
         </p>
         <form method="post" action="/ranking/schedule" class="space-y-5">
           <label class="flex items-center gap-2 text-sm">
@@ -500,10 +735,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
           </label>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">頻度</label>
-            <select
-              name="frequency"
-              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white"
-            >
+            <select name="frequency" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white">
               <option value="daily" selected={frequency === 'daily'}>
                 毎日
               </option>
@@ -585,7 +817,3 @@ ranking.get('/ranking/api/areas', requireAuth, async (c) => {
 })
 
 export default ranking
-
-// buildAreaLabel はクライアント側(ranking.js)で表示ラベルを組み立てるため
-// サーバー側では直接使わないが、将来のcron計測での利用に備えてimportを保持する。
-void buildAreaLabel

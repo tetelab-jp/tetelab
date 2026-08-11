@@ -54,6 +54,7 @@ CREATE INDEX idx_ranking_areas_level ON ranking_areas(level);
 CREATE TABLE ranking_queries (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT,                     -- 計測テンプレート名(管理用)
   salon_name TEXT NOT NULL,
   service_area_cd TEXT NOT NULL,
   middle_area_cd TEXT,

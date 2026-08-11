@@ -1,6 +1,7 @@
-// 検索順位計測「計測」画面のクライアント処理
+// 検索順位計測「計測」「計測テンプレート編集」画面のクライアント処理
 // - 大/中/小エリアのカスケード(選択に応じて次の階層をAJAXで取得)
 // - 「計測」ボタン(バックグラウンド計測を起動し、数秒後に自動更新)
+// - 「登録」ボタン(テンプレート名モーダル → フォーム送信)
 
 ;(function () {
   var serviceSel = document.getElementById('service-area')
@@ -22,6 +23,7 @@
   }
 
   function fillSelect(sel, options, placeholder) {
+    if (!sel) return
     sel.innerHTML = ''
     var ph = document.createElement('option')
     ph.value = ''
@@ -50,8 +52,6 @@
       updateAreaLabel()
       if (!serviceSel.value) return
       middleSel.disabled = true
-      var prev = middleSel.options[0]
-      if (prev) prev.text = '読み込み中...'
       try {
         var options = await loadAreas('middle', serviceSel.value, '')
         fillSelect(middleSel, options, '選択してください')
@@ -86,28 +86,37 @@
     smallSel.addEventListener('change', updateAreaLabel)
   }
 
+  // 現在の選択(編集画面の初期値など)からエリアラベルを初期化
+  updateAreaLabel()
+
+  // 入力チェック(サロン・大エリア・キーワード1つ以上)
+  function collectAndValidate(statusEl) {
+    var salon = (document.querySelector('[name="salon"]') || {}).value || ''
+    var service = serviceSel ? serviceSel.value : ''
+    if (!salon || !service) {
+      if (statusEl) statusEl.textContent = 'サロン名と大エリアを選択してください'
+      return null
+    }
+    var keywords = []
+    for (var i = 0; i < 10; i++) {
+      var el = document.getElementById('keyword_' + i)
+      if (el && el.value.trim()) keywords.push(el.value.trim())
+    }
+    if (keywords.length === 0) {
+      if (statusEl) statusEl.textContent = 'キーワードを1つ以上入力してください'
+      return null
+    }
+    updateAreaLabel()
+    return { salon: salon, service: service, keywords: keywords }
+  }
+
   // 「計測」ボタン
   var measureBtn = document.getElementById('measure-btn')
   var status = document.getElementById('measure-status')
   if (measureBtn) {
     measureBtn.addEventListener('click', async function () {
-      var salon = (document.querySelector('[name="salon"]') || {}).value || ''
-      var service = serviceSel ? serviceSel.value : ''
-      if (!salon || !service) {
-        status.textContent = 'サロン名と大エリアを選択してください'
-        return
-      }
-      var keywords = []
-      for (var i = 0; i < 10; i++) {
-        var el = document.getElementById('keyword_' + i)
-        if (el && el.value.trim()) keywords.push(el.value.trim())
-      }
-      if (keywords.length === 0) {
-        status.textContent = 'キーワードを1つ以上入力してください'
-        return
-      }
-      updateAreaLabel()
-
+      var v = collectAndValidate(status)
+      if (!v) return
       measureBtn.disabled = true
       status.textContent = '計測を開始しています...'
       try {
@@ -115,12 +124,12 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            salon: salon,
-            service_area_cd: service,
+            salon: v.salon,
+            service_area_cd: v.service,
             middle_area_cd: middleSel ? middleSel.value : '',
             small_area_cd: smallSel ? smallSel.value : '',
             area_label: areaLabelInput ? areaLabelInput.value : '',
-            keywords: keywords
+            keywords: v.keywords
           })
         })
         var data = await res.json()
@@ -138,6 +147,51 @@
         status.textContent = '通信エラーが発生しました'
         measureBtn.disabled = false
       }
+    })
+  }
+
+  // 「登録」ボタン → テンプレート名モーダル
+  var openBtn = document.getElementById('register-open-btn')
+  var modal = document.getElementById('register-modal')
+  var modalName = document.getElementById('modal-template-name')
+  var modalError = document.getElementById('modal-error')
+  var confirmBtn = document.getElementById('register-confirm-btn')
+  var cancelBtn = document.getElementById('register-cancel-btn')
+  var form = document.getElementById('ranking-form')
+  var nameHidden = document.getElementById('template-name')
+
+  function closeModal() {
+    if (modal) modal.classList.add('hidden')
+  }
+
+  if (openBtn && modal) {
+    openBtn.addEventListener('click', function () {
+      var v = collectAndValidate(status)
+      if (!v) return
+      if (modalError) modalError.textContent = ''
+      modal.classList.remove('hidden')
+      if (modalName) {
+        modalName.value = ''
+        modalName.focus()
+      }
+    })
+  }
+  if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
+  if (modal) {
+    modal.addEventListener('click', function (e) {
+      if (e.target === modal) closeModal()
+    })
+  }
+  if (confirmBtn) {
+    confirmBtn.addEventListener('click', function () {
+      var name = modalName ? modalName.value.trim() : ''
+      if (!name) {
+        if (modalError) modalError.textContent = 'テンプレート名を入力してください'
+        return
+      }
+      if (nameHidden) nameHidden.value = name
+      updateAreaLabel()
+      if (form) form.submit()
     })
   }
 })()
