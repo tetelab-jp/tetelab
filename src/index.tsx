@@ -44,6 +44,22 @@ const bindings: Bindings = {
   ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS
 }
 
+// 2026-08-11追記: マイグレーション専用のランナーが無いため、追加列のような
+// 後方互換な(既存データを壊さない)スキーマ変更はアプリ起動時に冪等
+// (IF NOT EXISTS)に自動適用する。詳細はmigrations-pg/0002_*.sql参照。
+;(async () => {
+  try {
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_successful_proxy_session_id TEXT`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_successful_proxy_session_at TIMESTAMP`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_credentials拡張列)に失敗しました:', err)
+  }
+})()
+
 app.use('*', async (c, next) => {
   c.env = bindings
   await next()
