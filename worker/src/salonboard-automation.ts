@@ -578,7 +578,9 @@ async function uploadFrontImage(
         try {
           await new Promise((resolve) => setTimeout(resolve, 500))
           const domSnapshot = await page.evaluate(() => {
-            const loadingLike = Array.from(document.querySelectorAll('[class*="load" i], [class*="spinner" i], [class*="progress" i]'))
+            // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
+            // 誤検知するため、"loading"で判定する("upload"は含まない)。
+            const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
               .map((el) => el.className)
               .filter((c) => typeof c === 'string' && c.length > 0)
               .slice(0, 5)
@@ -606,8 +608,18 @@ async function uploadFrontImage(
         )
         lastError = null
         break
-      } catch {
-        const diag = uploadEvents.length > 0 ? uploadEvents.join(' / ') : '(doUploadへのリクエストが観測されませんでした)'
+      } catch (clickOrWaitError: any) {
+        // 2026-08-11修正(診断用): 従来はcatchの中身を受け取っておらず、
+        // 「登録する」クリック自体が例外で失敗した場合(要素が操作可能に
+        // ならない等のPuppeteerのアクショナビリティチェック失敗)の実際の
+        // エラーメッセージが握りつぶされていた。試行2回目以降で
+        // [診断:DOM状態]のログすら出ない(=クリックの行で例外が飛んでいる)
+        // ことが実機で確認されたため、原因特定のためにこのメッセージも記録する。
+        const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
+        const diag =
+          uploadEvents.length > 0
+            ? uploadEvents.join(' / ')
+            : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
         lastError = new Error(
           '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
             `45秒待っても検知できませんでした [診断] ${diag}`
