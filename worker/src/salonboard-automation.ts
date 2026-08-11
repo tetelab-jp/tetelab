@@ -567,6 +567,20 @@ async function uploadFrontImage(
       try {
         await page.click('input.jscImageUploaderModalSubmitButton')
 
+        // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
+        // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
+        // 画像IDが表示される。自動化のクリックが本当に同じ登録動作を引き起こして
+        // いるか(閉じるボタン等を誤ってクリックしていないか、通信が始まっている
+        // ように見えるか)を目視確認するため、クリック直後の画面をスクリーンショット
+        // として診断ログに残す。ログ肥大化を避けるためJPEG低品質・base64で記録する。
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          const screenshotBase64 = await page.screenshot({ type: 'jpeg', quality: 40, encoding: 'base64' })
+          log(`[診断:スクショ](試行${attempt}/${maxAttempts}) クリック約0.5秒後の画面(jpeg/base64): ${screenshotBase64}`)
+        } catch (e: any) {
+          log(`[診断:スクショ] 撮影失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+        }
+
         log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
         await page.waitForFunction(
           () => {
