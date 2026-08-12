@@ -12,7 +12,7 @@ export type NavKey =
   | 'blog-master'
   | 'blog-posts'
   | 'ranking-measure'
-  | 'ranking-templates'
+  | 'ranking-keywords'
   | 'ranking-schedule'
 
 const NAV_ITEMS: {
@@ -29,8 +29,8 @@ const NAV_ITEMS: {
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
-  { key: 'ranking-measure', href: '/ranking', icon: 'fa-magnifying-glass-chart', label: '計測', group: 'ranking' },
-  { key: 'ranking-templates', href: '/ranking/templates', icon: 'fa-list-check', label: '計測テンプレート設定', group: 'ranking' },
+  { key: 'ranking-keywords', href: '/ranking/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
+  { key: 'ranking-measure', href: '/ranking', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
   { key: 'ranking-schedule', href: '/ranking/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
@@ -40,7 +40,7 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' |
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
-  { title: '順位計測', key: 'ranking' },
+  { title: 'フリーワード対策', key: 'ranking' },
   { title: '設定・確認', key: 'settings' }
 ]
 

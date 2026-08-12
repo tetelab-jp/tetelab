@@ -20,94 +20,28 @@ const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 const KEYWORD_SLOTS = 10
 const MEASURE_MAX_PAGES = 50
 
-type MeasureParams = {
-  salon: string
-  serviceAreaCd: string
-  middleAreaCd: string | null
-  smallAreaCd: string | null
-  areaLabel: string
-  keywords: string[]
-}
-
 // --------------------------------------------
-// バックグラウンド計測: run配下の各キーワードを順に計測して結果を保存する。
-// レスポンスを待たせないため、measureエンドポイントからは await せずに起動する。
+// 指定テンプレート(未指定なら有効な全テンプレート)を1つのrunでまとめて計測する。
+// レスポンスを待たせないため呼び出し側は await せずに起動する。手動計測・定期計測で共用。
 // --------------------------------------------
-async function processMeasureRun(
+async function runTemplates(
   env: Bindings,
   userId: number,
   runId: number,
-  queryId: number | null,
-  params: MeasureParams
+  queryIds?: number[]
 ): Promise<void> {
   try {
-    for (const keyword of params.keywords) {
-      const result = await measureRank(
-        {
-          serviceAreaCd: params.serviceAreaCd,
-          middleAreaCd: params.middleAreaCd || undefined,
-          smallAreaCd: params.smallAreaCd || undefined
-        },
-        params.salon,
-        keyword,
-        { proxyUrl: env.RANKING_PROXY_URL, maxPages: MEASURE_MAX_PAGES }
-      )
-      await env.DB.prepare(
-        `INSERT INTO ranking_results
-          (user_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
-           keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          userId,
-          runId,
-          queryId,
-          params.salon,
-          params.areaLabel,
-          params.serviceAreaCd,
-          params.middleAreaCd,
-          params.smallAreaCd,
-          keyword,
-          result.rank,
-          result.resultCount,
-          result.pagesScanned,
-          result.matchedSlnId,
-          result.status,
-          result.errorMessage || null
-        )
-        .run()
-    }
-    await env.DB.prepare(
-      `UPDATE ranking_runs SET status = 'done', finished_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(runId)
-      .run()
-  } catch (e) {
-    await env.DB.prepare(
-      `UPDATE ranking_runs SET status = 'error', finished_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(runId)
-      .run()
-    console.error('processMeasureRun failed:', e)
-  }
-}
-
-// --------------------------------------------
-// 定期測定: あるユーザーの登録テンプレート全件を1回のrunでまとめて計測する。
-// --------------------------------------------
-async function runScheduledForUser(env: Bindings, userId: number): Promise<void> {
-  const run = await env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'scheduled', 'running')`
-  )
-    .bind(userId)
-    .run()
-  const runId = run.meta.last_row_id as number
-  try {
-    const { results: queries } = await env.DB.prepare(
+    let sql =
       `SELECT id, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
-       FROM ranking_queries WHERE user_id = ? AND is_active = 1 ORDER BY id`
-    )
-      .bind(userId)
+       FROM ranking_queries WHERE user_id = ? AND is_active = 1`
+    const binds: unknown[] = [userId]
+    if (queryIds && queryIds.length > 0) {
+      sql += ` AND id IN (${queryIds.map(() => '?').join(',')})`
+      binds.push(...queryIds)
+    }
+    sql += ` ORDER BY id`
+    const { results: queries } = await env.DB.prepare(sql)
+      .bind(...binds)
       .all<{
         id: number
         salon_name: string
@@ -172,8 +106,18 @@ async function runScheduledForUser(env: Bindings, userId: number): Promise<void>
     )
       .bind(runId)
       .run()
-    console.error('runScheduledForUser failed:', e)
+    console.error('runTemplates failed:', e)
   }
+}
+
+/** 定期測定: あるユーザーの有効な全テンプレートを1runでまとめて計測 */
+async function runScheduledForUser(env: Bindings, userId: number): Promise<void> {
+  const run = await env.DB.prepare(
+    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'scheduled', 'running')`
+  )
+    .bind(userId)
+    .run()
+  await runTemplates(env, userId, run.meta.last_row_id as number)
 }
 
 /** UTCの "YYYY-MM-DD HH:MM:SS" 文字列を JST の Date に変換 */
@@ -199,7 +143,7 @@ function parseKeywords(body: Record<string, unknown>): string[] {
   return out
 }
 
-// 計測情報入力フォームのエリア/キーワード部品(計測画面・編集画面で共用)
+// 対策キーワード入力フォームのエリア/キーワード部品(設定画面・編集画面で共用)
 function AreaAndKeywordFields({
   serviceAreaCd,
   middleOptions,
@@ -289,26 +233,73 @@ function AreaAndKeywordFields({
   )
 }
 
+// 順位セル(今回順位 + 前回比較バッジ)
+function RankCell({
+  status,
+  rank,
+  hadBefore,
+  prevRank
+}: {
+  status: string
+  rank: number | null
+  hadBefore: boolean
+  prevRank: number | null
+}) {
+  if (status === 'error') return <span class="text-xs text-red-500">エラー</span>
+  if (rank == null) {
+    return (
+      <span class="text-gray-400">
+        圏外
+        {hadBefore && prevRank != null && (
+          <span class="ml-1 text-xs text-red-500">▼ 前回{prevRank}位</span>
+        )}
+      </span>
+    )
+  }
+  let badge = <span class="ml-1 text-xs text-gray-400">初回</span>
+  if (hadBefore) {
+    if (prevRank == null) {
+      badge = <span class="ml-1 text-xs text-green-600">▲ 前回圏外</span>
+    } else {
+      const diff = prevRank - rank
+      badge =
+        diff > 0 ? (
+          <span class="ml-1 text-xs text-green-600">▲{diff}</span>
+        ) : diff < 0 ? (
+          <span class="ml-1 text-xs text-red-500">▼{-diff}</span>
+        ) : (
+          <span class="ml-1 text-xs text-gray-400">±0</span>
+        )
+    }
+  }
+  return (
+    <span>
+      <span class="font-semibold text-gray-900">{rank}位</span>
+      {badge}
+    </span>
+  )
+}
+
 // ============================================
-// 計測画面
+// 計測(テンプレートを選んで測定 + ログをコンテナ表示)
 // ============================================
 ranking.get('/ranking', requireAuth, async (c) => {
   const user = c.get('user')
-  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
 
-  const { results: rows } = await c.env.DB.prepare(
-    `SELECT measured_at, area_label, keyword, rank, result_count, status
-     FROM ranking_results WHERE user_id = ? ORDER BY id DESC LIMIT 100`
+  const { results: templates } = await c.env.DB.prepare(
+    `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
   )
     .bind(user.id)
-    .all<{
-      measured_at: string
-      area_label: string | null
-      keyword: string
-      rank: number | null
-      result_count: number | null
-      status: string
-    }>()
+    .all<{ id: number; name: string | null; salon_name: string; area_label: string | null }>()
+
+  const { results: kwCounts } = await c.env.DB.prepare(
+    `SELECT k.query_id, COUNT(*) AS n FROM ranking_query_keywords k
+     JOIN ranking_queries q ON q.id = k.query_id
+     WHERE q.user_id = ? GROUP BY k.query_id`
+  )
+    .bind(user.id)
+    .all<{ query_id: number; n: number }>()
+  const kwCountByQuery = new Map<number, number>(kwCounts.map((r) => [r.query_id, r.n]))
 
   const runningRun = await c.env.DB.prepare(
     `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND status = 'running'`
@@ -317,21 +308,235 @@ ranking.get('/ranking', requireAuth, async (c) => {
     .first<{ n: number }>()
   const hasRunning = (runningRun?.n || 0) > 0
 
-  const registered = c.req.query('registered') === '1'
+  // 直近の計測結果(前回比較のため昇順で走査してからコンテナ化)
+  const { results: recent } = await c.env.DB.prepare(
+    `SELECT run_id, salon_name, area_label, keyword, rank, result_count, status, measured_at
+     FROM ranking_results WHERE user_id = ? ORDER BY id DESC LIMIT 500`
+  )
+    .bind(user.id)
+    .all<{
+      run_id: number
+      salon_name: string
+      area_label: string | null
+      keyword: string
+      rank: number | null
+      result_count: number | null
+      status: string
+      measured_at: string
+    }>()
+
+  type Row = (typeof recent)[number] & { hadBefore: boolean; prevRank: number | null }
+  const asc = [...recent].reverse()
+  const seen = new Set<string>()
+  const lastRank = new Map<string, number | null>()
+  const withPrev: Row[] = asc.map((r) => {
+    const key = `${r.salon_name}||${r.area_label}||${r.keyword}`
+    const hadBefore = seen.has(key)
+    const prevRank = lastRank.has(key) ? (lastRank.get(key) as number | null) : null
+    seen.add(key)
+    lastRank.set(key, r.rank)
+    return { ...r, hadBefore, prevRank }
+  })
+
+  type Container = { salon: string; area: string; datetime: string; rows: Row[] }
+  const containerMap = new Map<string, Container>()
+  const order: string[] = []
+  for (const r of [...withPrev].reverse()) {
+    const ckey = `${r.run_id}||${r.salon_name}||${r.area_label}`
+    let cont = containerMap.get(ckey)
+    if (!cont) {
+      cont = { salon: r.salon_name, area: r.area_label || '-', datetime: r.measured_at, rows: [] }
+      containerMap.set(ckey, cont)
+      order.push(ckey)
+    }
+    cont.rows.push(r)
+  }
+  const containers = order.slice(0, 30).map((k) => containerMap.get(k) as Container)
+
+  const measured = c.req.query('measured') === '1'
 
   return c.render(
-    <PageLayout active="ranking-measure" salonName={user.salon_name} title="検索順位計測">
-      {registered && (
+    <PageLayout active="ranking-measure" salonName={user.salon_name} title="順位測定">
+      {measured && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>計測テンプレートを登録しました。「計測テンプレート設定」で確認・編集できます。
+          <i class="fas fa-circle-check mr-2"></i>計測を開始しました。完了次第、下のログに反映されます。
         </div>
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-5 text-gray-900">計測・情報入力</p>
+        <div class="flex items-center justify-between mb-4">
+          <p class="font-semibold text-gray-900">計測するキーワード設定を選択</p>
+          <a href="/ranking/keywords" class="text-xs text-pink-600 hover:underline">
+            <i class="fas fa-plus mr-1"></i>対策キーワード設定を追加
+          </a>
+        </div>
+
+        {templates.length === 0 ? (
+          <p class="text-sm text-gray-400">
+            登録済みの対策キーワード設定がありません。
+            <a href="/ranking/keywords" class="text-pink-600 hover:underline ml-1">
+              対策キーワード設定
+            </a>
+            で登録してください。
+          </p>
+        ) : (
+          <>
+            <div class="space-y-2">
+              {templates.map((t) => (
+                <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                  <input type="checkbox" class="tmpl-check w-4 h-4" value={t.id} />
+                  <span class="min-w-0">
+                    <span class="font-medium text-gray-800">{t.name || `${t.salon_name}（無名）`}</span>
+                    <span class="text-xs text-gray-400 ml-2">
+                      {t.salon_name} ／ {t.area_label || '-'} ／ キーワード{kwCountByQuery.get(t.id) || 0}件
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
+
+            <p id="measure-status" class="text-sm text-pink-600 mt-4"></p>
+
+            <div class="flex items-center justify-end mt-4">
+              <button
+                type="button"
+                id="measure-run-btn"
+                class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm disabled:opacity-50"
+              >
+                <i class="fas fa-magnifying-glass-chart mr-1"></i>測定
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* 計測ログ(1測定=1コンテナ) */}
+      <div class="flex items-center justify-between">
+        <p class="font-semibold">
+          <i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>計測ログ
+        </p>
+        {hasRunning && (
+          <span class="text-xs text-pink-600">
+            <i class="fas fa-spinner fa-spin mr-1"></i>計測中（自動反映）
+          </span>
+        )}
+      </div>
+
+      {containers.length === 0 ? (
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="text-sm text-gray-400">まだ計測ログがありません</p>
+        </div>
+      ) : (
+        containers.map((cont) => (
+          <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+            <div class="bg-gray-50 border-b border-gray-100 px-5 py-3 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <span class="font-semibold text-gray-900">{cont.salon}</span>
+              <span class="text-sm text-gray-500">{cont.area}</span>
+              <span class="text-xs text-gray-400 ml-auto">{formatJstDateTime(cont.datetime)}</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-gray-400 border-b border-gray-100">
+                    <th class="py-2 px-5">キーワード</th>
+                    <th class="py-2 pr-5">順位（前回比）</th>
+                    <th class="py-2 pr-5">該当数</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {cont.rows.map((r) => (
+                    <tr class="border-b border-gray-50">
+                      <td class="py-2 px-5 text-gray-700">{r.keyword}</td>
+                      <td class="py-2 pr-5">
+                        <RankCell
+                          status={r.status}
+                          rank={r.rank}
+                          hadBefore={r.hadBefore}
+                          prevRank={r.prevRank}
+                        />
+                      </td>
+                      <td class="py-2 pr-5 text-gray-500">
+                        {r.result_count != null ? `${r.result_count}件` : '-'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ))
+      )}
+
+      <script src="/static/ranking.js"></script>
+    </PageLayout>
+  )
+})
+
+// 計測実行(選択したテンプレートをバックグラウンドで測定 / JSON)
+ranking.post('/ranking/measure', requireAuth, async (c) => {
+  const user = c.get('user')
+  let body: Record<string, unknown>
+  try {
+    body = await c.req.json()
+  } catch {
+    return c.json({ success: false, error: 'リクエスト形式が不正です' }, 400)
+  }
+
+  const queryIds = Array.isArray(body.queryIds)
+    ? (body.queryIds as unknown[]).map((v) => Number(v)).filter((n) => Number.isFinite(n))
+    : []
+  if (queryIds.length === 0) {
+    return c.json({ success: false, error: '計測するキーワード設定を選択してください' }, 400)
+  }
+
+  // 所有チェック(自分のテンプレートに絞る)
+  const { results: owned } = await c.env.DB.prepare(
+    `SELECT id FROM ranking_queries WHERE user_id = ? AND id IN (${queryIds.map(() => '?').join(',')})`
+  )
+    .bind(user.id, ...queryIds)
+    .all<{ id: number }>()
+  const ownedIds = owned.map((r) => r.id)
+  if (ownedIds.length === 0) {
+    return c.json({ success: false, error: '対象が見つかりません' }, 400)
+  }
+
+  const run = await c.env.DB.prepare(
+    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'manual', 'running')`
+  )
+    .bind(user.id)
+    .run()
+  void runTemplates(c.env, user.id, run.meta.last_row_id as number, ownedIds)
+
+  return c.json({ success: true, count: ownedIds.length })
+})
+
+// ============================================
+// 対策キーワード設定(登録フォーム + 登録済み一覧)
+// ============================================
+ranking.get('/ranking/keywords', requireAuth, async (c) => {
+  const user = c.get('user')
+  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
+
+  const { results: queries } = await c.env.DB.prepare(
+    `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
+  )
+    .bind(user.id)
+    .all<{ id: number; name: string | null; salon_name: string; area_label: string | null }>()
+
+  const registered = c.req.query('registered') === '1'
+
+  return c.render(
+    <PageLayout active="ranking-keywords" salonName={user.salon_name} title="対策キーワード設定">
+      {registered && (
+        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
+          <i class="fas fa-circle-check mr-2"></i>対策キーワードを登録しました。「計測」画面で選んで測定できます。
+        </div>
+      )}
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
 
         <form id="ranking-form" method="post" action="/ranking/templates" class="space-y-5">
-          {/* サロン名 */}
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               サロン名 <span class="text-pink-500">*</span>
@@ -355,16 +560,15 @@ ranking.get('/ranking', requireAuth, async (c) => {
 
           <AreaAndKeywordFields />
 
-          {/* 登録名(モーダルで入力してここへ入る) */}
           <input type="hidden" id="template-name" name="name" value="" />
 
           <p class="text-xs text-gray-500">
-            「登録」ボタンを押すと入力した計測情報が「計測テンプレート設定」に保存され、「定期測定設定」で設定した頻度で定期的に自動計測できます。
+            「登録」ボタンを押すと入力した対策キーワードが保存され、「計測」画面で選択して測定できます。
           </p>
 
           <p id="measure-status" class="text-sm text-pink-600"></p>
 
-          <div class="flex items-center justify-end gap-3">
+          <div class="flex items-center justify-end">
             <button
               type="button"
               id="register-open-btn"
@@ -372,27 +576,17 @@ ranking.get('/ranking', requireAuth, async (c) => {
             >
               登録
             </button>
-            <button
-              type="button"
-              id="measure-btn"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm disabled:opacity-50"
-            >
-              計測
-            </button>
           </div>
         </form>
       </div>
 
       {/* 登録名入力モーダル */}
-      <div
-        id="register-modal"
-        class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      >
+      <div id="register-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
         <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-          <p class="font-semibold text-gray-900 mb-1">計測テンプレートの登録</p>
-          <p class="text-xs text-gray-500 mb-4">この計測条件に名前を付けて保存します（管理用）。</p>
+          <p class="font-semibold text-gray-900 mb-1">対策キーワードの登録</p>
+          <p class="text-xs text-gray-500 mb-4">この設定に名前を付けて保存します（管理用）。</p>
           <label class="block text-sm font-medium text-gray-700 mb-1">
-            テンプレート名 <span class="text-pink-500">*</span>
+            登録名 <span class="text-pink-500">*</span>
           </label>
           <input
             type="text"
@@ -402,11 +596,7 @@ ranking.get('/ranking', requireAuth, async (c) => {
           />
           <p id="modal-error" class="text-xs text-red-500 min-h-[1rem]"></p>
           <div class="flex items-center justify-end gap-3 mt-3">
-            <button
-              type="button"
-              id="register-cancel-btn"
-              class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2"
-            >
+            <button type="button" id="register-cancel-btn" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">
               キャンセル
             </button>
             <button
@@ -420,57 +610,40 @@ ranking.get('/ranking', requireAuth, async (c) => {
         </div>
       </div>
 
-      {/* 計測結果履歴 */}
+      {/* 登録済み一覧 */}
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center justify-between mb-3">
-          <p class="font-semibold">
-            <i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>計測結果履歴
-          </p>
-          {hasRunning && (
-            <span class="text-xs text-pink-600">
-              <i class="fas fa-spinner fa-spin mr-1"></i>計測中の実行があります（自動反映）
-            </span>
-          )}
-        </div>
-        {!rows || rows.length === 0 ? (
-          <p class="text-sm text-gray-400">まだ計測結果がありません</p>
+        <p class="font-semibold mb-4">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>登録済みの対策キーワード（{queries.length}件）
+        </p>
+        {queries.length === 0 ? (
+          <p class="text-sm text-gray-400 text-center py-6">まだ登録がありません。上のフォームから登録してください。</p>
         ) : (
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-gray-400 border-b border-gray-100">
-                  <th class="py-2 pr-3">計測日時</th>
-                  <th class="py-2 pr-3">エリア</th>
-                  <th class="py-2 pr-3">キーワード</th>
-                  <th class="py-2 pr-3">順位</th>
-                  <th class="py-2 pr-3">該当数</th>
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-400 border-b border-gray-100">
+                <th class="py-2">登録名</th>
+                <th class="py-2">設定エリア</th>
+                <th class="py-2 text-right"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {queries.map((q) => (
+                <tr class="border-b border-gray-50">
+                  <td class="py-2">
+                    <a href={`/ranking/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
+                      {q.name || `${q.salon_name}（無名）`}
+                    </a>
+                  </td>
+                  <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
+                  <td class="py-2 text-right">
+                    <a href={`/ranking/templates/${q.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">
+                      編集
+                    </a>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr class="border-b border-gray-50">
-                    <td class="py-2 pr-3 text-xs text-gray-400 whitespace-nowrap">
-                      {formatJstDateTime(r.measured_at)}
-                    </td>
-                    <td class="py-2 pr-3 text-gray-600">{r.area_label || '-'}</td>
-                    <td class="py-2 pr-3 text-gray-700">{r.keyword}</td>
-                    <td class="py-2 pr-3">
-                      {r.status === 'error' ? (
-                        <span class="text-xs text-red-500">エラー</span>
-                      ) : r.rank == null ? (
-                        <span class="text-xs text-gray-400">圏外</span>
-                      ) : (
-                        <span class="font-semibold text-gray-900">{r.rank}位</span>
-                      )}
-                    </td>
-                    <td class="py-2 pr-3 text-gray-500">
-                      {r.result_count != null ? `${r.result_count}件` : '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         )}
       </div>
 
@@ -479,53 +652,7 @@ ranking.get('/ranking', requireAuth, async (c) => {
   )
 })
 
-// ============================================
-// 計測実行(バックグラウンド起動 / JSON)
-// ============================================
-ranking.post('/ranking/measure', requireAuth, async (c) => {
-  const user = c.get('user')
-  let body: Record<string, unknown>
-  try {
-    body = await c.req.json()
-  } catch {
-    return c.json({ success: false, error: 'リクエスト形式が不正です' }, 400)
-  }
-
-  const salon = String(body.salon || '').trim()
-  const serviceAreaCd = String(body.service_area_cd || '').trim()
-  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
-  const smallAreaCd = String(body.small_area_cd || '').trim() || null
-  const areaLabel = String(body.area_label || '').trim()
-  const keywords = Array.isArray(body.keywords)
-    ? (body.keywords as unknown[]).map((k) => String(k).trim()).filter(Boolean).slice(0, KEYWORD_SLOTS)
-    : []
-
-  if (!salon || !serviceAreaCd) return c.json({ success: false, error: 'サロン名と大エリアは必須です' }, 400)
-  if (keywords.length === 0) return c.json({ success: false, error: 'キーワードを1つ以上入力してください' }, 400)
-
-  const run = await c.env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'manual', 'running')`
-  )
-    .bind(user.id)
-    .run()
-  const runId = run.meta.last_row_id as number
-
-  const params: MeasureParams = {
-    salon,
-    serviceAreaCd,
-    middleAreaCd,
-    smallAreaCd,
-    areaLabel: areaLabel || serviceAreaName(serviceAreaCd),
-    keywords
-  }
-  void processMeasureRun(c.env, user.id, runId, null, params)
-
-  return c.json({ success: true, runId, count: keywords.length })
-})
-
-// ============================================
-// 計測テンプレートの作成(計測画面の「登録」モーダル)
-// ============================================
+// 対策キーワードの作成(「登録」モーダル)
 ranking.post('/ranking/templates', requireAuth, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
@@ -539,7 +666,7 @@ ranking.post('/ranking/templates', requireAuth, async (c) => {
   const keywords = parseKeywords(body)
 
   if (!salon || !serviceAreaCd || keywords.length === 0) {
-    return c.redirect('/ranking?error=1')
+    return c.redirect('/ranking/keywords?error=1')
   }
 
   const q = await c.env.DB.prepare(
@@ -560,84 +687,11 @@ ranking.post('/ranking/templates', requireAuth, async (c) => {
       .run()
   }
 
-  return c.redirect('/ranking?registered=1')
+  return c.redirect('/ranking/keywords?registered=1')
 })
 
 // ============================================
-// 計測テンプレート設定(一覧)
-// ============================================
-ranking.get('/ranking/templates', requireAuth, async (c) => {
-  const user = c.get('user')
-  const { results: queries } = await c.env.DB.prepare(
-    `SELECT id, name, salon_name, area_label, created_at
-     FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
-  )
-    .bind(user.id)
-    .all<{
-      id: number
-      name: string | null
-      salon_name: string
-      area_label: string | null
-      created_at: string
-    }>()
-
-  return c.render(
-    <PageLayout active="ranking-templates" salonName={user.salon_name} title="計測テンプレート設定">
-      <div class="flex items-center justify-between">
-        <p class="font-semibold">
-          <i class="fas fa-list-check mr-2 text-pink-500"></i>計測テンプレート一覧（{queries.length}件）
-        </p>
-        <a
-          href="/ranking"
-          class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
-        >
-          <i class="fas fa-plus mr-1"></i>計測画面で新規登録
-        </a>
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        {queries.length === 0 ? (
-          <p class="text-sm text-gray-400 text-center py-6">
-            まだ計測テンプレートが登録されていません。「計測」画面で条件を入力し「登録」ボタンから保存できます。
-          </p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">テンプレート名</th>
-                <th class="py-2">設定エリア</th>
-                <th class="py-2 text-right"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {queries.map((q) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">
-                    <a href={`/ranking/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
-                      {q.name || `${q.salon_name}（無名）`}
-                    </a>
-                  </td>
-                  <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
-                  <td class="py-2 text-right">
-                    <a
-                      href={`/ranking/templates/${q.id}/edit`}
-                      class="text-xs text-gray-400 hover:text-pink-600"
-                    >
-                      編集
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-    </PageLayout>
-  )
-})
-
-// ============================================
-// 計測テンプレート編集
+// 対策キーワード編集
 // ============================================
 ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
   const user = c.get('user')
@@ -656,7 +710,7 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
       small_area_cd: string | null
       area_label: string | null
     }>()
-  if (!q) return c.redirect('/ranking/templates')
+  if (!q) return c.redirect('/ranking/keywords')
 
   const { results: kwRows } = await c.env.DB.prepare(
     `SELECT keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
@@ -668,7 +722,6 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
   const salons = await getSalonOptions(c.env, user.id, user.salon_name)
   if (!salons.includes(q.salon_name)) salons.unshift(q.salon_name)
 
-  // エリア選択肢(保存済みを選択状態に。取得失敗時は保存済みコードだけをフォールバック表示)
   const labelParts = (q.area_label || '').split('>').map((s) => s.trim())
   let middleOptions: AreaOption[] = []
   let smallOptions: AreaOption[] = []
@@ -684,13 +737,13 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
   }
 
   return c.render(
-    <PageLayout active="ranking-templates" salonName={user.salon_name} title="計測テンプレート編集">
+    <PageLayout active="ranking-keywords" salonName={user.salon_name} title="対策キーワード編集">
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-3xl">
-        <p class="font-semibold mb-5 text-gray-900">計測テンプレート編集</p>
+        <p class="font-semibold mb-5 text-gray-900">対策キーワード編集</p>
         <form id="ranking-form" method="post" action={`/ranking/templates/${q.id}`} class="space-y-5">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
-              テンプレート名 <span class="text-pink-500">*</span>
+              登録名 <span class="text-pink-500">*</span>
             </label>
             <input
               type="text"
@@ -757,7 +810,7 @@ ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
   const owned = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE id = ? AND user_id = ?`)
     .bind(id, user.id)
     .first<{ id: number }>()
-  if (!owned) return c.redirect('/ranking/templates')
+  if (!owned) return c.redirect('/ranking/keywords')
 
   const name = String(body.name || '').trim()
   const salon = String(body.salon || '').trim()
@@ -786,7 +839,7 @@ ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
       .run()
   }
 
-  return c.redirect('/ranking/templates')
+  return c.redirect('/ranking/keywords')
 })
 
 ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
@@ -797,7 +850,7 @@ ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
       .bind(id, user.id)
       .run()
   }
-  return c.redirect('/ranking/templates')
+  return c.redirect('/ranking/keywords')
 })
 
 // ============================================
@@ -828,7 +881,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-4">定期測定設定</p>
         <p class="text-sm text-gray-500 mb-2">
-          「計測テンプレート設定」に登録した条件を、設定した頻度で自動計測します。
+          「対策キーワード設定」に登録した条件を、設定した頻度で自動計測します。
         </p>
         <p class="text-xs text-gray-400 mb-5">
           前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
@@ -873,7 +926,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-2">エリアマスター</p>
         <p class="text-sm text-gray-500 mb-3">
-          「計測」画面のエリア選択肢に使う全国エリア（中/小）を一括取得します。
+          「対策キーワード設定」のエリア選択肢に使う全国エリア（中/小）を一括取得します。
           数分かかります。取得後にページを再読み込みすると件数が更新されます。
         </p>
         <p class="text-sm text-gray-700 mb-3">
@@ -928,9 +981,6 @@ ranking.post('/ranking/schedule', requireAuth, async (c) => {
 
 // ============================================
 // 定期測定の実行(外部Cronから CRON_SECRET で叩く。セッション不要)
-// 外部Cronは数分間隔でこのエンドポイントを叩く想定。呼ばれるたびに
-// 「enabledな設定のうち、今日(または今週)まだ実行しておらず、run_timeを
-// 過ぎているユーザー」を実行する。実測はバックグラウンドで進める。
 // ============================================
 ranking.post('/api/cron/run-ranking', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
@@ -953,19 +1003,18 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   const triggered: number[] = []
   for (const s of schedules) {
     const runTime = s.run_time || '09:00'
-    if (jstHHMM < runTime) continue // まだ実行時刻前
+    if (jstHHMM < runTime) continue
 
     if (s.last_run_at) {
       const lastJst = toJstDate(s.last_run_at)
       if (s.frequency === 'weekly') {
         const days = (nowUtc.getTime() - lastJst.getTime() + 9 * 3600 * 1000) / (24 * 3600 * 1000)
-        if (days < 7) continue // 今週分は実行済み
+        if (days < 7) continue
       } else if (jstYmd(lastJst) === jstToday) {
-        continue // 今日分は実行済み
+        continue
       }
     }
 
-    // 二重起動防止のため、実測前に last_run_at を更新してから起動する
     await c.env.DB.prepare(
       `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ?`
     )

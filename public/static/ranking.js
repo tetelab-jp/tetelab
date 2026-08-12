@@ -1,7 +1,8 @@
-// 検索順位計測「計測」「計測テンプレート編集」画面のクライアント処理
+// フリーワード対策「順位測定」「対策キーワード設定」画面のクライアント処理
 // - 大/中/小エリアのカスケード(選択に応じて次の階層をAJAXで取得)
-// - 「計測」ボタン(バックグラウンド計測を起動し、数秒後に自動更新)
-// - 「登録」ボタン(テンプレート名モーダル → フォーム送信)
+// - 「登録」ボタン(登録名モーダル → フォーム送信) … 対策キーワード設定
+// - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
+// - 「全国エリアを一括取得」ボタン … 定期測定設定
 
 ;(function () {
   var serviceSel = document.getElementById('service-area')
@@ -110,42 +111,43 @@
     return { salon: salon, service: service, keywords: keywords }
   }
 
-  // 「計測」ボタン
-  var measureBtn = document.getElementById('measure-btn')
   var status = document.getElementById('measure-status')
-  if (measureBtn) {
-    measureBtn.addEventListener('click', async function () {
-      var v = collectAndValidate(status)
-      if (!v) return
-      measureBtn.disabled = true
-      status.textContent = '計測を開始しています...'
+
+  // 「測定」ボタン(順位測定ページ: 選択したキーワード設定を測定)
+  var measureRunBtn = document.getElementById('measure-run-btn')
+  if (measureRunBtn) {
+    measureRunBtn.addEventListener('click', async function () {
+      var ids = []
+      document.querySelectorAll('.tmpl-check:checked').forEach(function (el) {
+        ids.push(Number(el.value))
+      })
+      if (ids.length === 0) {
+        if (status) status.textContent = '計測するキーワード設定を選択してください'
+        return
+      }
+      measureRunBtn.disabled = true
+      if (status) status.textContent = '測定を開始しています...'
       try {
         var res = await fetch('/ranking/measure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            salon: v.salon,
-            service_area_cd: v.service,
-            middle_area_cd: middleSel ? middleSel.value : '',
-            small_area_cd: smallSel ? smallSel.value : '',
-            area_label: areaLabelInput ? areaLabelInput.value : '',
-            keywords: v.keywords
-          })
+          body: JSON.stringify({ queryIds: ids })
         })
         var data = await res.json()
         if (data.success) {
-          status.textContent =
-            '計測を開始しました（' + data.count + '件）。完了まで少し時間がかかります。まもなく自動更新します...'
+          if (status)
+            status.textContent =
+              '測定を開始しました（' + data.count + '件）。完了まで少し時間がかかります。まもなく自動更新します...'
           setTimeout(function () {
             location.reload()
           }, 4000)
         } else {
-          status.textContent = 'エラー: ' + (data.error || '不明なエラー')
-          measureBtn.disabled = false
+          if (status) status.textContent = 'エラー: ' + (data.error || '不明なエラー')
+          measureRunBtn.disabled = false
         }
       } catch (e) {
-        status.textContent = '通信エラーが発生しました'
-        measureBtn.disabled = false
+        if (status) status.textContent = '通信エラーが発生しました'
+        measureRunBtn.disabled = false
       }
     })
   }
