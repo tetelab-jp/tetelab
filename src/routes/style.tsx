@@ -236,6 +236,18 @@ async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<Style
   return results || []
 }
 
+// 2026-08-12追記: 新規スタイル作成時にsort_orderを指定しないと0のまま
+// 挿入され、既存スタイル(手動並び替え後は0,1,2...の連番)の先頭グループと
+// 同点になり、id DESCの同点判定で先頭付近に割り込んでしまう(「最後尾に
+// 追加されるべきものが先頭に来る」不具合)。新規作成時は必ずこの関数で
+// 現在の最大sort_order+1を採番し、リストの最後尾に追加されるようにする。
+async function getNextSortOrder(c: AppContext, userId: number): Promise<number> {
+  const row = await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ?')
+    .bind(userId)
+    .first<{ next_order: number }>()
+  return row?.next_order ?? 0
+}
+
 function StyleListSection({
   styles,
   totalCount,
@@ -928,12 +940,14 @@ style.post('/style/new', async (c) => {
 
   const hasImageUpload = body.image instanceof File && (body.image as File).size > 0
   const internalStatus = computeInternalSaveStatus(parsed, hasImageUpload)
+  const nextSortOrder = await getNextSortOrder(c, user.id)
 
   const insert = await c.env.DB.prepare(
     `INSERT INTO styles (
        user_id, stylist_id, coupon_id, source_type, title, comment, category_value, length_value,
-       menu_values_json, menu_detail_text, hashtags_json, model_attributes_json, auto_post_enabled_flag, internal_save_status
-     ) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       menu_values_json, menu_detail_text, hashtags_json, model_attributes_json, auto_post_enabled_flag, internal_save_status,
+       sort_order
+     ) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
@@ -948,7 +962,8 @@ style.post('/style/new', async (c) => {
       JSON.stringify(parsed.hashtags),
       JSON.stringify(parsed.modelAttributes),
       parsed.autoPostEnabled ? 1 : 0,
-      internalStatus
+      internalStatus,
+      nextSortOrder
     )
     .run()
 

@@ -300,6 +300,17 @@ export async function importSelectedStyles(
   let importedCount = 0
   const errors: string[] = []
 
+  // 2026-08-12追記: sort_orderを指定しないと0のまま挿入され、既存スタイルの
+  // 先頭グループと同点になり並び順の先頭付近に割り込んでしまうため、
+  // 取り込み開始時点の最大sort_order+1から連番で採番し、リストの最後尾に
+  // 追加されるようにする。
+  const nextSortOrderRow = await env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ?'
+  )
+    .bind(userId)
+    .first<{ next_order: number }>()
+  let nextSortOrder = nextSortOrderRow?.next_order ?? 0
+
   for (const styleId of styleIds) {
     try {
       const detail = await fetchStyleDetail(page, styleId, log)
@@ -340,8 +351,8 @@ export async function importSelectedStyles(
            user_id, stylist_id, coupon_id, source_type, source_salonboard_style_key, title, comment,
            category_value, length_value, menu_values_json, menu_detail_text, hashtags_json,
            model_attributes_json, auto_post_enabled_flag, internal_save_status,
-           salonboard_register_status, reflection_request_status
-         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success')`
+           salonboard_register_status, reflection_request_status, sort_order
+         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success', ?)`
       )
         .bind(
           userId,
@@ -358,7 +369,8 @@ export async function importSelectedStyles(
           JSON.stringify(detail.menuValues),
           detail.menuDetailText.slice(0, 50),
           JSON.stringify(detail.hashtags),
-          JSON.stringify(detail.modelAttributes)
+          JSON.stringify(detail.modelAttributes),
+          nextSortOrder++
         )
         .run()
 
