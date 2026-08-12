@@ -8,7 +8,6 @@ import type { Bindings, AppUser } from '../types'
 
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-const KEYWORD_SLOTS_DEFAULT = 10
 const KEYWORD_SLOTS_MAX = 20
 const MEASURE_MAX_PAGES = 50
 
@@ -183,40 +182,38 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
   )
 }
 
-// キーワード入力欄(設定画面・編集画面で共用)
+// キーワード入力欄(設定画面・編集画面で共用)。
+// 入力欄は1個のみで、Enterキーまたは「追加」ボタンでチップとして追加していく
+// (public/static/ranking.js側で管理)。送信用のhidden inputはチップの増減に
+// 合わせてJS側で keyword_0, keyword_1... と振り直して再生成する。
 function KeywordFields({ keywords }: { keywords?: string[] }) {
-  const kw = keywords || []
-  const initialVisible = Math.min(KEYWORD_SLOTS_MAX, Math.max(KEYWORD_SLOTS_DEFAULT, kw.length))
+  const kw = (keywords || []).slice(0, KEYWORD_SLOTS_MAX)
   return (
     <div>
       <label class="block text-sm font-medium text-gray-700 mb-2">
-        キーワード（最大{KEYWORD_SLOTS_MAX}個）
+        登録済みの対策キーワード（<span id="keyword-count">{kw.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
       </label>
-      <div id="keyword-slots" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {Array.from({ length: KEYWORD_SLOTS_MAX }).map((_, i) => (
-          <input
-            type="text"
-            name={`keyword_${i}`}
-            id={`keyword_${i}`}
-            value={kw[i] || ''}
-            placeholder={`キーワード${i + 1}`}
-            class={
-              'keyword-slot border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200' +
-              (i >= initialVisible ? ' hidden' : '')
-            }
-          />
+      <div class="flex gap-2 mb-3">
+        <input
+          type="text"
+          id="keyword-input"
+          placeholder="追加するキーワードを入力"
+          class="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
+        />
+        <button
+          type="button"
+          id="keyword-add-btn"
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm flex-shrink-0"
+        >
+          追加
+        </button>
+      </div>
+      <div id="keyword-chips" class="flex flex-wrap gap-2"></div>
+      <div id="keyword-hidden-container">
+        {kw.map((k, i) => (
+          <input type="hidden" name={`keyword_${i}`} value={k} class="keyword-hidden-input" />
         ))}
       </div>
-      <button
-        type="button"
-        id="add-keyword-btn"
-        class={
-          'mt-2 text-xs font-semibold text-pink-600 hover:underline' +
-          (initialVisible >= KEYWORD_SLOTS_MAX ? ' hidden' : '')
-        }
-      >
-        <i class="fas fa-plus mr-1"></i>キーワードを追加
-      </button>
     </div>
   )
 }

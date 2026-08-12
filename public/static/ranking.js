@@ -2,11 +2,88 @@
 // サロン名・対策エリア(中/小)はサロンボード連携+HPBサロンページから自動検出した
 // 値をそのまま使うため、選択UI・カスケード取得は無い(#salon-auto-field/#area-auto-field
 // のdata属性で「未取得かどうか」だけを送信前チェックする)。
+// - キーワードは1個の入力欄にEnterまたは「追加」ボタンでチップとして追加(最大20個)
 // - 「登録」ボタン(登録名モーダル → フォーム送信) … 対策キーワード設定
 // - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
-// - 「+キーワードを追加」ボタン(最大20件まで入力枠を表示) … 対策キーワード設定
 
 ;(function () {
+  var KEYWORD_MAX = 20
+
+  // ------------------------------------------------
+  // キーワードのタグ入力(1個の入力欄 → Enter/追加ボタンでチップ化)
+  // 送信用hidden inputはチップの増減に合わせてkeyword_0, keyword_1...と再生成する。
+  // ------------------------------------------------
+  var keywordInput = document.getElementById('keyword-input')
+  var keywordAddBtn = document.getElementById('keyword-add-btn')
+  var keywordChips = document.getElementById('keyword-chips')
+  var keywordHiddenContainer = document.getElementById('keyword-hidden-container')
+  var keywordCountEl = document.getElementById('keyword-count')
+  var keywords = keywordHiddenContainer
+    ? Array.from(keywordHiddenContainer.querySelectorAll('.keyword-hidden-input')).map(function (el) {
+        return el.value
+      })
+    : []
+
+  function renderKeywords() {
+    if (!keywordChips || !keywordHiddenContainer) return
+
+    keywordChips.innerHTML = ''
+    keywords.forEach(function (kw, i) {
+      var chip = document.createElement('span')
+      chip.className =
+        'inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm'
+      var text = document.createElement('span')
+      text.textContent = kw
+      chip.appendChild(text)
+      var removeBtn = document.createElement('button')
+      removeBtn.type = 'button'
+      removeBtn.className = 'text-pink-400 hover:text-pink-600 leading-none'
+      removeBtn.setAttribute('aria-label', '削除')
+      removeBtn.textContent = '×'
+      removeBtn.addEventListener('click', function () {
+        keywords.splice(i, 1)
+        renderKeywords()
+      })
+      chip.appendChild(removeBtn)
+      keywordChips.appendChild(chip)
+    })
+
+    keywordHiddenContainer.innerHTML = ''
+    keywords.forEach(function (kw, i) {
+      var hidden = document.createElement('input')
+      hidden.type = 'hidden'
+      hidden.name = 'keyword_' + i
+      hidden.value = kw
+      keywordHiddenContainer.appendChild(hidden)
+    })
+
+    if (keywordCountEl) keywordCountEl.textContent = keywords.length
+    var atMax = keywords.length >= KEYWORD_MAX
+    if (keywordAddBtn) keywordAddBtn.disabled = atMax
+    if (keywordInput) keywordInput.disabled = atMax
+  }
+
+  function addKeywordFromInput() {
+    if (!keywordInput) return
+    var v = keywordInput.value.trim()
+    if (!v || keywords.length >= KEYWORD_MAX) return
+    if (keywords.indexOf(v) === -1) keywords.push(v)
+    keywordInput.value = ''
+    renderKeywords()
+    keywordInput.focus()
+  }
+
+  if (keywordAddBtn) keywordAddBtn.addEventListener('click', addKeywordFromInput)
+  if (keywordInput) {
+    keywordInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        addKeywordFromInput()
+      }
+    })
+  }
+  renderKeywords()
+
   // 入力チェック(サロン名・対策エリアが自動取得済みか、キーワード1つ以上)
   function collectAndValidate(statusEl) {
     var salonField = document.getElementById('salon-auto-field')
@@ -20,11 +97,6 @@
     if (!hasArea) {
       if (statusEl) statusEl.textContent = '対策エリアが未取得です。「サロンボード連携設定」で同期してください'
       return null
-    }
-    var keywords = []
-    for (var i = 0; i < 20; i++) {
-      var el = document.getElementById('keyword_' + i)
-      if (el && el.value.trim()) keywords.push(el.value.trim())
     }
     if (keywords.length === 0) {
       if (statusEl) statusEl.textContent = 'キーワードを1つ以上入力してください'
@@ -115,19 +187,6 @@
       }
       if (nameHidden) nameHidden.value = name
       if (form) form.submit()
-    })
-  }
-
-  // 「+キーワードを追加」ボタン(クリック1回につき隠れている枠を1個ずつ表示、最大20個)
-  var addKeywordBtn = document.getElementById('add-keyword-btn')
-  if (addKeywordBtn) {
-    addKeywordBtn.addEventListener('click', function () {
-      var hiddenSlots = document.querySelectorAll('.keyword-slot.hidden')
-      if (hiddenSlots.length === 0) return
-      hiddenSlots[0].classList.remove('hidden')
-      if (hiddenSlots.length <= 1) {
-        addKeywordBtn.classList.add('hidden')
-      }
     })
   }
 })()
