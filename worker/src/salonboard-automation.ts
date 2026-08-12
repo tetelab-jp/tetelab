@@ -41,6 +41,7 @@ export type StylePostInput = {
   menuContentsCdList?: string[] // MC01〜MC04
   menuDetailText: string // menuDetailTxt textarea(最大50文字)
   couponSelectValue?: string // frmStyleEditStyleDto.couponId(CP+14桁形式)
+  hashtags?: string[] // #hashTagTxt(1件最大40文字)へ1件ずつ入力し.jsc_style_edit-editCommon__tag--addBtnで追加(最大20件)
 }
 
 export type AutomationLogger = (message: string) => void
@@ -307,6 +308,35 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
       const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
       if (el) el.value = couponId
     }, input.couponSelectValue)
+  }
+
+  // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
+  // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
+  // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
+  // イベントを発生させる必要がある。
+  if (input.hashtags && input.hashtags.length > 0) {
+    for (const rawTag of input.hashtags.slice(0, 20)) {
+      const tag = rawTag.trim().slice(0, 40)
+      if (!tag) continue
+
+      const hashTagInput = await page.$('#hashTagTxt')
+      if (!hashTagInput) {
+        log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
+        break
+      }
+      await hashTagInput.click({ count: 3 })
+      await page.keyboard.press('Backspace').catch(() => {})
+      await hashTagInput.type(tag, { delay: 20 })
+      await sleep(200)
+
+      const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
+      if (!addBtn) {
+        log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
+        break
+      }
+      await addBtn.click()
+      await sleep(200)
+    }
   }
 
   // ---- 送信前セルフチェック ----
