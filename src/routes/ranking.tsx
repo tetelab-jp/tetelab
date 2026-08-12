@@ -242,18 +242,26 @@ function KeywordFields({ keywords }: { keywords?: string[] }) {
 }
 
 type Cell = { rank: number | null; status: string; resultCount: number | null } | undefined
+type CellSize = 'sm' | 'lg'
 
-// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)。店舗数は別セル(StoreCountCell)に分離。
-function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
-  if (!current) return <span class="text-gray-300 text-xs">-</span>
-  if (current.status === 'error') return <span class="text-xs text-red-500 whitespace-nowrap">エラー</span>
+// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)。
+function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Cell; size?: CellSize }) {
+  const baseTextCls = size === 'lg' ? 'text-sm' : 'text-xs'
+  const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  const badgeCls =
+    size === 'lg'
+      ? 'inline-flex items-center justify-center min-w-[2.75rem] px-3 py-1.5 rounded-lg bg-gradient-to-b from-pink-500 to-pink-600 text-white font-bold text-base shadow-sm'
+      : 'inline-flex items-center justify-center min-w-[2.25rem] px-2 py-1 rounded-lg bg-gradient-to-b from-pink-500 to-pink-600 text-white font-bold text-sm shadow-sm'
+
+  if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
+  if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
 
   if (current.rank == null) {
     return (
       <span class="inline-flex flex-col items-center">
-        <span class="text-gray-700 text-xs font-medium whitespace-nowrap">圏外</span>
+        <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>圏外</span>
         {prev && prev.rank != null && (
-          <span class="block text-[10px] leading-tight text-red-500 mt-0.5 whitespace-nowrap">▼前回{prev.rank}位</span>
+          <span class={`block ${deltaCls} leading-tight text-red-500 mt-0.5 whitespace-nowrap`}>▼前回{prev.rank}位</span>
         )}
       </span>
     )
@@ -263,7 +271,7 @@ function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
   if (prev) {
     if (prev.rank == null) {
       badge = (
-        <span class="block text-[10px] leading-tight font-semibold text-green-600 mt-0.5 whitespace-nowrap">
+        <span class={`block ${deltaCls} leading-tight font-semibold text-green-600 mt-0.5 whitespace-nowrap`}>
           ▲前回圏外
         </span>
       )
@@ -271,29 +279,38 @@ function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
       const diff = prev.rank - current.rank
       badge =
         diff > 0 ? (
-          <span class="block text-[10px] leading-tight font-semibold text-green-600 mt-0.5">▲{diff}</span>
+          <span class={`block ${deltaCls} leading-tight font-semibold text-green-600 mt-0.5`}>▲{diff}</span>
         ) : diff < 0 ? (
-          <span class="block text-[10px] leading-tight font-semibold text-red-500 mt-0.5">▼{-diff}</span>
+          <span class={`block ${deltaCls} leading-tight font-semibold text-red-500 mt-0.5`}>▼{-diff}</span>
         ) : (
-          <span class="block text-[10px] leading-tight font-medium text-gray-600 mt-0.5">±0</span>
+          <span class={`block ${deltaCls} leading-tight font-medium text-gray-600 mt-0.5`}>±0</span>
         )
     }
   }
 
   return (
     <span class="inline-flex flex-col items-center">
-      <span class="inline-flex items-center justify-center min-w-[2.25rem] px-2 py-1 rounded-lg bg-gradient-to-b from-pink-500 to-pink-600 text-white font-bold text-sm shadow-sm">
-        {current.rank}
-      </span>
+      <span class={badgeCls}>{current.rank}</span>
       {badge}
     </span>
   )
 }
 
-// 最新列専用: 該当店舗数だけを表示する独立セル
-function StoreCountCell({ cell }: { cell: Cell }) {
-  if (!cell || cell.resultCount == null) return <span class="text-gray-300 text-xs">-</span>
-  return <span class="text-xs text-gray-700 whitespace-nowrap">{cell.resultCount}店舗中</span>
+// 該当店舗数だけを表示する部品(最新列でRankPivotCellと組み合わせて使う)
+function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) {
+  const cls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  if (!cell || cell.resultCount == null) return <span class={`text-gray-300 ${cls}`}>-</span>
+  return <span class={`${cls} text-gray-700 whitespace-nowrap`}>{cell.resultCount}店舗中</span>
+}
+
+// 最新列専用: 順位バッジと店舗数を1マスにまとめて表示する(中エリア/小エリアそれぞれ1列)
+function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
+  return (
+    <span class="inline-flex flex-col items-center gap-0.5">
+      <RankPivotCell current={current} prev={prev} size={size} />
+      <StoreCountCell cell={current} size={size} />
+    </span>
+  )
 }
 
 /** 計測日を「8/12」のような短い表記にする */
@@ -304,6 +321,167 @@ function shortDate(sqliteTimestamp: string): string {
 }
 
 const MEASURE_RUN_COLUMNS = 12
+
+// 順位測定表のサイズ設定。スマホ(sm未満)は固定表示なし・コンパクトに
+// 横スクロールで全列見せる。sm以上(タブレット・PC)はキーワード列と
+// 最新計測列を固定表示にしつつ、文字・マス目を大きくして見やすくする。
+type TableVariant = {
+  size: CellSize
+  keywordPx: number
+  latestGroupPx: number
+  oldColPx: number
+  keywordColClass: string
+  latestCol1Class: string
+  latestCol2Class: string
+  headText: string
+  subHeadText: string
+  bodyText: string
+}
+
+const MOBILE_TABLE_VARIANT: TableVariant = {
+  size: 'sm',
+  keywordPx: 116,
+  latestGroupPx: 88,
+  oldColPx: 56,
+  keywordColClass: '',
+  latestCol1Class: '',
+  latestCol2Class: '',
+  headText: 'text-xs',
+  subHeadText: 'text-[10px]',
+  bodyText: 'text-xs'
+}
+
+const DESKTOP_TABLE_VARIANT: TableVariant = {
+  size: 'lg',
+  keywordPx: 168,
+  latestGroupPx: 132,
+  oldColPx: 88,
+  keywordColClass: 'sticky left-0 z-10',
+  latestCol1Class: 'sticky left-[168px] z-10',
+  latestCol2Class: 'sticky left-[300px] z-10',
+  headText: 'text-sm',
+  subHeadText: 'text-xs',
+  bodyText: 'text-sm'
+}
+
+// 対策KW×計測日の順位表を1つ描画する。中/小エリアは常に2列(最新列は
+// そのマスの中に順位バッジと店舗数を両方まとめて表示、それより古い列は
+// 順位のみ)なので、runごとの列数は常に2で統一している。
+function renderRankTable(
+  runs: { id: number; measuredAt: string }[],
+  keywordsList: string[],
+  cellMap: Map<string, Cell>,
+  v: TableVariant
+) {
+  const tableWidthPx =
+    runs.length === 0
+      ? 0
+      : v.keywordPx + v.latestGroupPx * 2 + Math.max(runs.length - 1, 0) * v.oldColPx * 2
+
+  return (
+    <table class="table-fixed text-center border-collapse" style={`width:${tableWidthPx}px`}>
+      <colgroup>
+        <col style={`width:${v.keywordPx}px`} />
+        {runs.map((_, i) => (
+          <>
+            <col style={`width:${i === 0 ? v.latestGroupPx : v.oldColPx}px`} />
+            <col style={`width:${i === 0 ? v.latestGroupPx : v.oldColPx}px`} />
+          </>
+        ))}
+      </colgroup>
+      <thead>
+        <tr class="bg-pink-50/60 border-b border-pink-100">
+          <th
+            rowspan={2}
+            class={`py-3 px-3 text-left align-middle font-semibold text-gray-900 bg-pink-50 whitespace-nowrap ${v.headText} ${v.keywordColClass}`}
+          >
+            対策キーワード
+          </th>
+          {runs.map((run, i) => (
+            <th
+              class={
+                `py-3 px-1 font-semibold text-gray-900 border-l border-pink-100 whitespace-nowrap ${v.headText}` +
+                (i === 0 ? ` bg-pink-50 ${v.latestCol1Class}` : '')
+              }
+              colspan={2}
+            >
+              {shortDate(run.measuredAt)}
+              {i === 0 && <span class="ml-1 text-pink-500">●最新</span>}
+            </th>
+          ))}
+        </tr>
+        <tr class="bg-pink-50/60 border-b-2 border-pink-100">
+          {runs.map((_, i) => (
+            <>
+              <th
+                class={
+                  `py-1.5 px-1 font-medium text-gray-700 border-l border-pink-100 whitespace-nowrap ${v.subHeadText}` +
+                  (i === 0 ? ` bg-pink-50 ${v.latestCol1Class}` : '')
+                }
+              >
+                中エリア
+              </th>
+              <th
+                class={
+                  `py-1.5 px-1 font-medium text-gray-700 whitespace-nowrap ${v.subHeadText}` +
+                  (i === 0 ? ` bg-pink-50 border-r-2 border-pink-200 ${v.latestCol2Class}` : '')
+                }
+              >
+                小エリア
+              </th>
+            </>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {keywordsList.map((kw, rowIdx) => (
+          <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
+            <td
+              class={
+                `py-3 px-3 text-left font-semibold text-gray-900 truncate ${v.bodyText} ${v.keywordColClass}` +
+                (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
+              }
+              title={kw}
+            >
+              {kw}
+            </td>
+            {runs.map((run, i) => {
+              const nextRun = runs[i + 1]
+              const middleCurrent = cellMap.get(`${run.id}||${kw}||middle`)
+              const smallCurrent = cellMap.get(`${run.id}||${kw}||small`)
+              const middlePrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||middle`) : undefined
+              const smallPrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||small`) : undefined
+              const isLatest = i === 0
+              const rowBg = rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white'
+              if (!isLatest) {
+                return (
+                  <>
+                    <td class="py-3 px-1 border-l border-gray-100">
+                      <RankPivotCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                    </td>
+                    <td class="py-3 px-1">
+                      <RankPivotCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                    </td>
+                  </>
+                )
+              }
+              return (
+                <>
+                  <td class={`py-3 px-1 border-l border-gray-100 ${v.latestCol1Class}${rowBg}`}>
+                    <LatestAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                  </td>
+                  <td class={`py-3 px-1 border-r-2 border-gray-200 ${v.latestCol2Class}${rowBg}`}>
+                    <LatestAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                  </td>
+                </>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
 
 // ============================================
 // 計測(表形式: 対策KW×計測日。左が最新、右にいくほど古い。中/小エリアを列で並記)
@@ -372,15 +550,6 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
   }
 
   const measured = c.req.query('measured') === '1'
-
-  // 表の列幅(px)。table-layout:fixedでcolgroupの指定通りに描画させるには、
-  // table自身にも同じ合計幅を明示しないとブラウザが内容量に応じて縮めてしまい、
-  // sticky指定のleft位置(この幅を前提にした固定px)とずれて表が崩れる。
-  const KEYWORD_COL_PX = 112
-  const LATEST_COLS_PX = 288 // 64(中エリア)+80(店舗数)+64(小エリア)+80(店舗数)
-  const OLD_RUN_COLS_PX = 112 // 56(中エリア)+56(小エリア)
-  const tableWidthPx =
-    runs.length === 0 ? 0 : KEYWORD_COL_PX + LATEST_COLS_PX + Math.max(runs.length - 1, 0) * OLD_RUN_COLS_PX
 
   return c.render(
     <PageLayout
@@ -456,136 +625,17 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
         </div>
       ) : (
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
-          <div class="overflow-x-auto">
-            {/* table-fixed+colgroupで列幅を強制しないと、ブラウザの自動レイアウトが
-                内容量に応じて列幅をずらしてしまい、sticky指定のleft位置(列幅の
-                累積値を前提にした固定px)とずれて表が崩れる(特に画面の狭い
-                スマホで顕著)。列幅は必ずcolgroupの値を正として一致させること。 */}
-            <table class="table-fixed text-sm text-center border-collapse" style={`width:${tableWidthPx}px`}>
-              <colgroup>
-                <col style="width:112px" />
-                {runs.map((_, i) =>
-                  i === 0 ? (
-                    <>
-                      <col style="width:64px" />
-                      <col style="width:80px" />
-                      <col style="width:64px" />
-                      <col style="width:80px" />
-                    </>
-                  ) : (
-                    <>
-                      <col style="width:56px" />
-                      <col style="width:56px" />
-                    </>
-                  )
-                )}
-              </colgroup>
-              <thead>
-                <tr class="bg-pink-50/60 border-b border-pink-100">
-                  <th class="w-28 py-3 px-3 text-left text-xs font-semibold text-gray-900 sticky left-0 z-10 bg-pink-50">
-                    対策キーワード
-                  </th>
-                  {runs.map((run, i) => (
-                    <th
-                      class={
-                        'py-3 px-1 text-xs font-semibold text-gray-900 border-l border-pink-100 whitespace-nowrap' +
-                        (i === 0 ? ' sm:sticky sm:left-28 sm:z-10 bg-pink-50' : '')
-                      }
-                      colspan={i === 0 ? 4 : 2}
-                    >
-                      {shortDate(run.measuredAt)}
-                      {i === 0 && <span class="ml-1 text-pink-500">●最新</span>}
-                    </th>
-                  ))}
-                </tr>
-                <tr class="bg-pink-50/60 border-b-2 border-pink-100">
-                  <th class="w-28 py-1.5 px-3 sticky left-0 z-10 bg-pink-50"></th>
-                  {runs.map((_, i) =>
-                    i === 0 ? (
-                      <>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sm:sticky sm:left-28 sm:z-10 bg-pink-50">
-                          中エリア
-                        </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sm:sticky sm:left-[176px] sm:z-10 bg-pink-50">
-                          店舗数
-                        </th>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sm:sticky sm:left-[256px] sm:z-10 bg-pink-50">
-                          小エリア
-                        </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sm:sticky sm:left-[320px] sm:z-10 bg-pink-50 border-r-2 border-pink-200">
-                          店舗数
-                        </th>
-                      </>
-                    ) : (
-                      <>
-                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap">
-                          中エリア
-                        </th>
-                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap">
-                          小エリア
-                        </th>
-                      </>
-                    )
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {keywordsList.map((kw, rowIdx) => (
-                  <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
-                    <td
-                      class={
-                        'w-28 py-3 px-3 text-left text-gray-900 font-semibold text-xs truncate sticky left-0 z-10' +
-                        (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
-                      }
-                      title={kw}
-                    >
-                      {kw}
-                    </td>
-                    {runs.map((run, i) => {
-                      const nextRun = runs[i + 1]
-                      const middleCurrent = cellMap.get(`${run.id}||${kw}||middle`)
-                      const smallCurrent = cellMap.get(`${run.id}||${kw}||small`)
-                      const middlePrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||middle`) : undefined
-                      const smallPrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||small`) : undefined
-                      const isLatest = i === 0
-                      const rowBg = rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white'
-                      if (!isLatest) {
-                        return (
-                          <>
-                            <td class="w-14 py-3 px-1 border-l border-gray-100">
-                              <RankPivotCell current={middleCurrent} prev={middlePrev} />
-                            </td>
-                            <td class="w-14 py-3 px-1">
-                              <RankPivotCell current={smallCurrent} prev={smallPrev} />
-                            </td>
-                          </>
-                        )
-                      }
-                      return (
-                        <>
-                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sm:sticky sm:left-28 sm:z-10' + rowBg}>
-                            <RankPivotCell current={middleCurrent} prev={middlePrev} />
-                          </td>
-                          <td class={'w-20 py-3 px-1 sm:sticky sm:left-[176px] sm:z-10' + rowBg}>
-                            <StoreCountCell cell={middleCurrent} />
-                          </td>
-                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sm:sticky sm:left-[256px] sm:z-10' + rowBg}>
-                            <RankPivotCell current={smallCurrent} prev={smallPrev} />
-                          </td>
-                          <td
-                            class={
-                              'w-20 py-3 px-1 sm:sticky sm:left-[320px] sm:z-10 border-r-2 border-gray-200' + rowBg
-                            }
-                          >
-                            <StoreCountCell cell={smallCurrent} />
-                          </td>
-                        </>
-                      )
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          {/* スマホ(sm未満): 固定表示なし・コンパクトな文字で横スクロール全体を見せる。
+              sm以上(タブレット・PC): キーワード列+最新計測列を固定表示にしつつ、
+              文字・マス目を大きくする。幅の異なる2つの<table>を両方描画し、
+              CSSのsm:表示切替だけで出し分ける(1つのtableで幅をブレークポイントごとに
+              変える方法は、table-layout:fixedの列幅指定を動的なTailwindクラスとして
+              静的解析させられず崩れるため採用しない)。 */}
+          <div class="overflow-x-auto sm:hidden">
+            {renderRankTable(runs, keywordsList, cellMap, MOBILE_TABLE_VARIANT)}
+          </div>
+          <div class="overflow-x-auto hidden sm:block">
+            {renderRankTable(runs, keywordsList, cellMap, DESKTOP_TABLE_VARIANT)}
           </div>
         </div>
       )}
