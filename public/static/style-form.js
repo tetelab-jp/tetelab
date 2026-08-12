@@ -85,6 +85,27 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // ハッシュタグ欄: カンマ(,)以外の記号が入力された場合はエラー表示する。
+  // 文字・数字・カンマ・空白のみを許可し、それ以外の記号(#!?など)を弾く。
+  const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
+  const hashtagsError = form ? form.querySelector('.hashtags-error') : null
+  const HASHTAGS_ALLOWED_PATTERN = /^[\p{L}\p{N},\s]*$/u
+
+  function isHashtagsValid() {
+    if (!hashtagsInput) return true
+    return HASHTAGS_ALLOWED_PATTERN.test(hashtagsInput.value)
+  }
+
+  function updateHashtagsError() {
+    if (!hashtagsInput || !hashtagsError) return
+    hashtagsError.classList.toggle('hidden', isHashtagsValid())
+  }
+
+  if (hashtagsInput) {
+    hashtagsInput.addEventListener('input', updateHashtagsError)
+    updateHashtagsError()
+  }
+
   // 必須項目の入力チェック: 未入力の間は作成/更新ボタンを非活性風の見た目にし、
   // 実際に送信しようとした場合はポップアップで警告して送信を止める。
   // フォームの種類(スタイル/テンプレート)によって存在するフィールドが異なるため、
@@ -94,7 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const hasExistingImage = form.dataset.hasExistingImage === 'true'
 
     function isRequiredFieldsFilled() {
-      const checks = []
+      const checks = [isHashtagsValid()]
 
       const imageInput = form.querySelector('input[name="image"]')
       if (imageInput) {
@@ -146,6 +167,12 @@ document.addEventListener('DOMContentLoaded', () => {
     updateSubmitButtonAppearance()
 
     form.addEventListener('submit', (e) => {
+      if (!isHashtagsValid()) {
+        e.preventDefault()
+        updateHashtagsError()
+        alert('ハッシュタグにカンマ(,)以外の記号が含まれています。')
+        return
+      }
       if (!isRequiredFieldsFilled()) {
         e.preventDefault()
         alert('必須項目が入力されていません。')
