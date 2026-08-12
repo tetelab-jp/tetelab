@@ -6,7 +6,7 @@
 //   登録済み一覧にそのままチップとして反映する(#keyword-chips, #keyword-hidden-containerなし)
 // - 対策キーワード編集: フォーム送信方式のタグ入力(ローカル状態→「保存」でまとめて送信、
 //   #keyword-hidden-containerあり)
-// - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
+// - 「測定」ボタン(登録済みキーワードを中/小エリアでバックグラウンド測定) … 順位測定
 
 ;(function () {
   var KEYWORD_MAX = 20
@@ -196,32 +196,19 @@
     updateAjaxState()
   }
 
-  // 「測定」ボタン(順位測定ページ: 選択したキーワード設定を測定)
+  // 「測定」ボタン(順位測定ページ: 登録済みの対策キーワードを中/小エリアで測定)
   var status = document.getElementById('measure-status')
   var measureRunBtn = document.getElementById('measure-run-btn')
   if (measureRunBtn) {
     measureRunBtn.addEventListener('click', async function () {
-      var ids = []
-      document.querySelectorAll('.tmpl-check:checked').forEach(function (el) {
-        ids.push(Number(el.value))
-      })
-      if (ids.length === 0) {
-        if (status) status.textContent = '計測するキーワード設定を選択してください'
-        return
-      }
       measureRunBtn.disabled = true
       if (status) status.textContent = '測定を開始しています...'
       try {
-        var res = await fetch('/seo/measure', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ queryIds: ids })
-        })
+        var res = await fetch('/seo/measure', { method: 'POST' })
         var data = await res.json()
         if (data.success) {
           if (status)
-            status.textContent =
-              '測定を開始しました（' + data.count + '件）。完了まで少し時間がかかります。まもなく自動更新します...'
+            status.textContent = '測定を開始しました。完了まで少し時間がかかります。まもなく自動更新します...'
           setTimeout(function () {
             location.reload()
           }, 4000)

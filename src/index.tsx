@@ -209,6 +209,17 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(salonboard_salonsエリア列)に失敗しました:', err)
   }
   try {
+    // 順位測定は毎回、中エリア(絞り込み無し)と小エリア(絞り込み有り)の両方を
+    // 別々に計測するようにしたため、どちらの計測かを区別する列を追加する
+    // (詳細はmigrations-pg/0012_*.sql参照)。既存行は旧仕様(小エリアありきの
+    // 単一計測)だったため既定値'small'とする。
+    await bindings.DB.prepare(
+      `ALTER TABLE ranking_results ADD COLUMN IF NOT EXISTS area_scope TEXT NOT NULL DEFAULT 'small'`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(ranking_results.area_scope)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
