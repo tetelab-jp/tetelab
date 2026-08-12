@@ -195,6 +195,20 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
   }
   try {
+    // フリーワード対策のエリア(中/小)は手動選択ではなく、サロン自身のHPB公開
+    // ページを読み取って自動検出する方式に変更(詳細はmigrations-pg/0011_*.sql参照)。
+    // 全国エリアを一括クロールしていたエリアマスター(ranking_areas)は不要になった。
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS service_area_cd TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS middle_area_cd TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS middle_area_name TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS small_area_cd TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS small_area_name TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS area_synced_at TIMESTAMP`).run()
+    await bindings.DB.prepare(`DROP TABLE IF EXISTS ranking_areas`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salonboard_salonsエリア列)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

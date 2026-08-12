@@ -13,9 +13,8 @@ import { buildSearchUrl, type AreaSelection } from './ranking-url'
 import {
   parseSearchResultPage,
   findSalonRankInPage,
-  extractMiddleAreas,
-  extractSmallAreas,
-  type AreaLink
+  extractSalonAreaFromSlnPage,
+  type SalonAreaInfo
 } from './ranking-parse'
 
 const USER_AGENT =
@@ -144,34 +143,15 @@ export async function measureRank(
 }
 
 // --------------------------------------------
-// エリアマスター用クロール
+// サロン自身のHPBページからの対策エリア自動検出
 // --------------------------------------------
 
-/** 大エリアページ(svc{XX}/)から中エリア一覧を取得 */
-export async function crawlMiddleAreas(
-  serviceAreaCd: string,
+/** サロンの公開ページ(https://beauty.hotpepper.jp/sln{STORE_ID}/)から中/小エリアを取得 */
+export async function fetchSalonAreaFromHpb(
+  hpbSlnId: string,
   options: ScrapeOptions = {}
-): Promise<AreaLink[]> {
+): Promise<SalonAreaInfo> {
   const dispatcher = await makeDispatcher(options.proxyUrl)
-  const html = await fetchHtml(
-    `https://beauty.hotpepper.jp/svc${serviceAreaCd}/`,
-    dispatcher,
-    options.signal
-  )
-  return extractMiddleAreas(html, serviceAreaCd)
-}
-
-/** 中エリアページ(svc{XX}/mac{YY}/)から小エリア一覧を取得 */
-export async function crawlSmallAreas(
-  serviceAreaCd: string,
-  middleAreaCd: string,
-  options: ScrapeOptions = {}
-): Promise<AreaLink[]> {
-  const dispatcher = await makeDispatcher(options.proxyUrl)
-  const html = await fetchHtml(
-    `https://beauty.hotpepper.jp/svc${serviceAreaCd}/mac${middleAreaCd}/`,
-    dispatcher,
-    options.signal
-  )
-  return extractSmallAreas(html, serviceAreaCd, middleAreaCd)
+  const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/`, dispatcher, options.signal)
+  return extractSalonAreaFromSlnPage(html)
 }

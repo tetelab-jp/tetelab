@@ -90,86 +90,70 @@ export function parseSearchResultPage(html: string): ParsedSearchPage {
 }
 
 // --------------------------------------------
-// エリアマスター用パース(大エリアページ svc{XX}/ から中エリアを抽出 等)
+// サロン自身のHPB公開ページ(https://beauty.hotpepper.jp/sln{STORE_ID}/)から、
+// そのサロンが属する中/小エリアを読み取る。
+// 対策エリアはSalonMotion上で手動選択するのではなく、この自動検出値を使う。
 // --------------------------------------------
 
-export type AreaLink = {
-  /** 中エリアCd(例 'AD') or 小エリアCd。パス接尾辞から抽出 */
-  code: string
-  name: string
-  url: string
+export type SalonAreaInfo = {
+  serviceAreaCd: string | null
+  middleAreaCd: string | null
+  middleAreaName: string | null
+  smallAreaCd: string | null
+  smallAreaName: string | null
 }
 
+// 中エリアへのリンクは `/svc{SA}/mac{XX}/` 形式(末尾に /salon/ は付かない)
+const MIDDLE_AREA_HREF_RE = /^(?:https?:\/\/beauty\.hotpepper\.jp)?\/svc([A-Za-z0-9]+)\/mac([A-Za-z0-9]+)\/(?:\?[^"'#]*)?$/
+// 小エリアへのリンクは `/svc{SA}/mac{XX}/salon/sac{YY}/` 形式
+const SMALL_AREA_HREF_RE =
+  /^(?:https?:\/\/beauty\.hotpepper\.jp)?\/svc([A-Za-z0-9]+)\/mac([A-Za-z0-9]+)\/salon\/sac([A-Za-z0-9]+)\/(?:\?[^"'#]*)?$/
+
 /**
- * 大エリアページ(例 https://beauty.hotpepper.jp/svcSA/ )のHTMLから
- * 配下の中エリア一覧を抽出する。
- * 中エリアは `/svc{SA}/mac{XX}/` 形式のリンクで並んでいる(末尾/salon/は付かない)。
- * @param serviceAreaCd 対象の大エリアCd(例 'SA')
+ * サロンページのHTMLから、ページ上に掲載されている中エリア/小エリアへの
+ * リンク(href)とその表示名を1つずつ抽出する(最初に見つかったものを採用)。
  */
-export function extractMiddleAreas(html: string, serviceAreaCd: string): AreaLink[] {
+export function extractSalonAreaFromSlnPage(html: string): SalonAreaInfo {
   const $ = cheerio.load(html)
-  const re = new RegExp(`/svc${serviceAreaCd}/mac([A-Za-z0-9]+)/(?:\\?[^"']*)?$`)
-  const byCode = new Map<string, AreaLink>()
+  let serviceAreaCd: string | null = null
+  let middleAreaCd: string | null = null
+  let middleAreaName: string | null = null
+  let smallAreaCd: string | null = null
+  let smallAreaName: string | null = null
+
   $('a[href]').each((_, el) => {
-    const href = $(el).attr('href') || ''
-    const m = href.match(re)
-    if (!m) return
-    const code = m[1]
-    const $el = $(el)
-    // 中エリア名は <br> 区切りの複合名(例 青山・表参道<br>原宿)。空白に変換して連結する
-    $el.find('br').replaceWith(' ')
-    const name = $el.text().replace(/\s+/g, ' ').trim()
-    if (!name) return
-    if (!byCode.has(code)) {
-      byCode.set(code, {
-        code,
-        name,
-        url: href.startsWith('http') ? href : `https://beauty.hotpepper.jp${href}`
-      })
+    if (middleAreaCd && smallAreaCd) return false
+    const href = ($(el).attr('href') || '').trim()
+    if (!smallAreaCd) {
+      const m = href.match(SMALL_AREA_HREF_RE)
+      if (m) {
+        const $el = $(el)
+        $el.find('br').replaceWith(' ')
+        const name = $el.text().replace(/\s+/g, ' ').trim()
+        if (name) {
+          serviceAreaCd = serviceAreaCd || m[1]
+          smallAreaCd = m[3]
+          smallAreaName = name
+          return
+        }
+      }
+    }
+    if (!middleAreaCd) {
+      const m = href.match(MIDDLE_AREA_HREF_RE)
+      if (m) {
+        const $el = $(el)
+        $el.find('br').replaceWith(' ')
+        const name = $el.text().replace(/\s+/g, ' ').trim()
+        if (name) {
+          serviceAreaCd = serviceAreaCd || m[1]
+          middleAreaCd = m[2]
+          middleAreaName = name
+        }
+      }
     }
   })
-  return [...byCode.values()]
-}
 
-/**
- * 中エリアページ(例 https://beauty.hotpepper.jp/svcSA/macJR/ )のHTMLから
- * 配下の小エリア一覧を抽出する。
- * 小エリアは「エリア絞り込み」の `class="jscAreaConditionLink"` 要素で、
- * `id` 属性に smallAreaCd(Xで始まる。例 X566)を持つ。
- * 検索URLでは smallAreaCd=X566 として使う。
- * @param serviceAreaCd 大エリアCd(例 'SA')
- * @param middleAreaCd 中エリアCd(例 'JR')
- */
-export function extractSmallAreas(
-  html: string,
-  serviceAreaCd: string,
-  middleAreaCd: string
-): AreaLink[] {
-  const $ = cheerio.load(html)
-  const byCode = new Map<string, AreaLink>()
-  $('.jscAreaConditionLink').each((_, el) => {
-    const $el = $(el)
-    const id = ($el.attr('id') || '').trim()
-    if (!/^X/i.test(id)) return // 小エリアCdはXで始まる
-    // 「エリア変更」モーダル(全国のエリア一覧)内のリンクは除外し、
-    // 現在の中エリア直下の小エリア(searchConditionLinkList)だけを取る
-    if ($el.closest('.jscConditionModal, #conditionAreaChangeTarget').length > 0) return
-    $el.find('br').replaceWith(' ')
-    let name = $el.text().replace(/\s+/g, ' ').trim()
-    // 末尾に件数「(123)」「（123）」が付く場合は除去して地名だけにする
-    name = name.replace(/[（(]\s*[\d,]+\s*[)）]\s*$/, '').trim()
-    if (!name) return
-    if (!byCode.has(id)) {
-      byCode.set(id, {
-        code: id,
-        name,
-        url:
-          'https://beauty.hotpepper.jp/CSP/bt/salonSearch/search/' +
-          `?serviceAreaCd=${serviceAreaCd}&middleAreaCd=${middleAreaCd}&smallAreaCd=${id}`
-      })
-    }
-  })
-  return [...byCode.values()]
+  return { serviceAreaCd, middleAreaCd, middleAreaName, smallAreaCd, smallAreaName }
 }
 
 /**

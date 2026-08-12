@@ -3,7 +3,7 @@ import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
-import { syncStylists, syncCoupons, syncSalonInfo } from '../lib/salonboard-sync'
+import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea } from '../lib/salonboard-sync'
 import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
@@ -496,6 +496,10 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
 
     // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
     const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
+    if (salonInfo?.storeId) {
+      // サロンID(STORE_ID)からHPBの公開サロンページを開き、対策エリア(中/小)を自動検出する
+      await syncSalonArea(c.env, user.id, `sln${salonInfo.storeId}`, () => {})
+    }
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
     const couponCount = await syncCoupons(page, c.env, user.id, () => {})
     console.log(

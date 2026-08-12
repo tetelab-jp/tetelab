@@ -11,6 +11,7 @@
 
 import type { Bindings } from '../types'
 import { SALONBOARD_BASE_URL, type AutomationLogger, type Page } from './salonboard-automation'
+import { fetchSalonAreaFromHpb } from './ranking-scraper'
 
 export type SyncedStylist = {
   stylistId: string // T001014365 形式
@@ -253,4 +254,49 @@ export async function syncSalonInfo(
     log('サロン情報が取得できませんでした(ヘッダー未検出)')
   }
   return info
+}
+
+// ============================================
+// 対策エリア(中/小)の自動検出
+// フリーワード対策のエリアはSalonMotion上で手動選択するのではなく、
+// サロン自身のHPB公開ページ(https://beauty.hotpepper.jp/{hpbSlnId}/)に
+// 掲載されている中/小エリアへのリンクをそのまま読み取って使う。
+// SalonBoardへのログインは不要な公開ページのため、ブラウザではなく
+// ranking-scraper.tsのfetch(プロキシ経由)で取得する。
+// ============================================
+
+/**
+ * サロン情報同期(syncSalonInfo)で得たhpbSlnIdをもとに、対策エリアを
+ * 取得してsalonboard_salonsへ保存する。取得に失敗してもエラーにはせず
+ * ログのみ残す(スタイリスト/クーポン同期を止めないため)。
+ */
+export async function syncSalonArea(
+  env: Bindings,
+  userId: number,
+  hpbSlnId: string,
+  log: AutomationLogger
+): Promise<void> {
+  log('HPBサロンページから対策エリアを取得中...')
+  try {
+    const area = await fetchSalonAreaFromHpb(hpbSlnId, { proxyUrl: env.RANKING_PROXY_URL })
+    await env.DB.prepare(
+      `UPDATE salonboard_salons
+         SET service_area_cd = ?, middle_area_cd = ?, middle_area_name = ?,
+             small_area_cd = ?, small_area_name = ?, area_synced_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND hpb_sln_id = ?`
+    )
+      .bind(
+        area.serviceAreaCd,
+        area.middleAreaCd,
+        area.middleAreaName,
+        area.smallAreaCd,
+        area.smallAreaName,
+        userId,
+        hpbSlnId
+      )
+      .run()
+    log(`対策エリアを同期しました: ${area.middleAreaName || '-'} / ${area.smallAreaName || '-'}`)
+  } catch (e) {
+    log(`対策エリアの取得に失敗しました(${e instanceof Error ? e.message : String(e)})`)
+  }
 }

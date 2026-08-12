@@ -1,92 +1,24 @@
 // フリーワード対策「順位測定」「対策キーワード設定」画面のクライアント処理
-// - 中エリア選択に応じて小エリアをAJAXで取得し、選択中エリアが属するservice_area_cdを
-//   隠しフィールドへ自動セット(中エリアのoptionが持つdata-service属性から判定)
+// サロン名・対策エリア(中/小)はサロンボード連携+HPBサロンページから自動検出した
+// 値をそのまま使うため、選択UI・カスケード取得は無い(#salon-auto-field/#area-auto-field
+// のdata属性で「未取得かどうか」だけを送信前チェックする)。
 // - 「登録」ボタン(登録名モーダル → フォーム送信) … 対策キーワード設定
 // - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
 // - 「+キーワードを追加」ボタン(最大20件まで入力枠を表示) … 対策キーワード設定
 
 ;(function () {
-  var serviceHidden = document.getElementById('service-area')
-  var middleSel = document.getElementById('middle-area')
-  var smallSel = document.getElementById('small-area')
-  var areaLabelInput = document.getElementById('area-label')
-
-  function selectedText(sel) {
-    if (!sel || sel.selectedIndex < 0) return ''
-    var opt = sel.options[sel.selectedIndex]
-    return opt && opt.value ? opt.text : ''
-  }
-
-  function updateAreaLabel() {
-    var parts = [selectedText(middleSel), selectedText(smallSel)].filter(function (t) {
-      return t
-    })
-    if (areaLabelInput) areaLabelInput.value = parts.join(' > ')
-  }
-
-  function fillSelect(sel, options, placeholder) {
-    if (!sel) return
-    sel.innerHTML = ''
-    var ph = document.createElement('option')
-    ph.value = ''
-    ph.text = placeholder
-    sel.appendChild(ph)
-    options.forEach(function (o) {
-      var el = document.createElement('option')
-      el.value = o.code
-      el.text = o.name
-      sel.appendChild(el)
-    })
-  }
-
-  async function loadAreas(level, service, middle) {
-    var url = '/seo/api/areas?level=' + level + '&service=' + encodeURIComponent(service)
-    if (middle) url += '&middle=' + encodeURIComponent(middle)
-    var res = await fetch(url)
-    var data = await res.json()
-    return data.options || []
-  }
-
-  if (middleSel) {
-    middleSel.addEventListener('change', async function () {
-      var selectedOpt = middleSel.options[middleSel.selectedIndex]
-      var service = (selectedOpt && selectedOpt.getAttribute('data-service')) || ''
-      if (serviceHidden) serviceHidden.value = service
-
-      fillSelect(smallSel, [], '選択してください（任意）')
-      updateAreaLabel()
-      if (!service || !middleSel.value) return
-      smallSel.disabled = true
-      try {
-        var options = await loadAreas('small', service, middleSel.value)
-        fillSelect(smallSel, options, options.length ? '選択してください（任意）' : '小エリアなし（任意）')
-      } catch (e) {
-        fillSelect(smallSel, [], '選択してください（任意）')
-      } finally {
-        smallSel.disabled = false
-        updateAreaLabel()
-      }
-    })
-  }
-
-  if (smallSel) {
-    smallSel.addEventListener('change', updateAreaLabel)
-  }
-
-  // 現在の選択(編集画面の初期値など)からエリアラベルを初期化
-  updateAreaLabel()
-
-  // 入力チェック(サロン名・中エリア・キーワード1つ以上)
+  // 入力チェック(サロン名・対策エリアが自動取得済みか、キーワード1つ以上)
   function collectAndValidate(statusEl) {
     var salonField = document.getElementById('salon-auto-field')
     var hasSalon = !salonField || salonField.getAttribute('data-has-salon') === '1'
     if (!hasSalon) {
-      if (statusEl) statusEl.textContent = 'サロン名が未取得です。サロンボードと同期してください'
+      if (statusEl) statusEl.textContent = 'サロン名が未取得です。「サロンボード連携設定」で同期してください'
       return null
     }
-    var middle = middleSel ? middleSel.value : ''
-    if (!middle) {
-      if (statusEl) statusEl.textContent = '中エリアを選択してください'
+    var areaField = document.getElementById('area-auto-field')
+    var hasArea = !areaField || areaField.getAttribute('data-has-area') === '1'
+    if (!hasArea) {
+      if (statusEl) statusEl.textContent = '対策エリアが未取得です。「サロンボード連携設定」で同期してください'
       return null
     }
     var keywords = []
@@ -98,8 +30,7 @@
       if (statusEl) statusEl.textContent = 'キーワードを1つ以上入力してください'
       return null
     }
-    updateAreaLabel()
-    return { middle: middle, keywords: keywords }
+    return { keywords: keywords }
   }
 
   var status = document.getElementById('measure-status')
@@ -183,7 +114,6 @@
         return
       }
       if (nameHidden) nameHidden.value = name
-      updateAreaLabel()
       if (form) form.submit()
     })
   }

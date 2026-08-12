@@ -3,14 +3,7 @@ import { requireAuth, requireSeoEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { formatJstDateTime } from '../lib/date-format'
 import { measureRank } from '../lib/ranking-scraper'
-import {
-  serviceAreaName,
-  getMiddleAreas,
-  getSmallAreas,
-  getAllMiddleAreas,
-  getPrimarySalonName,
-  type AreaOption
-} from '../lib/ranking-areas'
+import { getPrimarySalonArea, buildAreaLabel, type PrimarySalonArea } from '../lib/ranking-areas'
 import type { Bindings, AppUser } from '../types'
 
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -142,119 +135,79 @@ function parseKeywords(body: Record<string, unknown>): string[] {
   return out.slice(0, KEYWORD_SLOTS_MAX)
 }
 
-// サロン名は選択式ではなく、サロンボード連携の同期情報から自動入力する。
-// フォームには送信用フィールドを持たせず、サーバー側でgetPrimarySalonName()により
-// 改めて算出した値を使う(詳細はPOSTハンドラ参照)。data-has-salonはクライアント側の
-// 送信前チェック(ranking.js)用のマーカー。
-function SalonNameAutoField({ salonName }: { salonName: string | null }) {
+// サロン名・対策エリア(中/小)は選択式ではなく、サロンボード連携の同期情報から
+// 自動入力する(詳細はgetPrimarySalonArea()参照)。フォームには送信用フィールドを
+// 持たせず、サーバー側で改めて算出した値を使う(POSTハンドラ参照)。
+// data-has-salon/data-has-areaはクライアント側の送信前チェック(ranking.js)用マーカー。
+function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
+  const hasSalon = !!salon?.salonName
+  const hasArea = !!salon?.middleAreaCd
   return (
-    <div id="salon-auto-field" data-has-salon={salonName ? '1' : '0'}>
-      <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
-      {salonName ? (
-        <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
-          {salonName}
-        </p>
-      ) : (
-        <p class="text-xs text-amber-600">
-          サロン名が未取得です。「サロンボード連携設定」でサロンボードと同期すると自動反映されます。
-        </p>
-      )}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div id="salon-auto-field" data-has-salon={hasSalon ? '1' : '0'}>
+        <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
+        {hasSalon ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.salonName}
+          </p>
+        ) : (
+          <p class="text-xs text-amber-600">
+            サロン名が未取得です。「サロンボード連携設定」でサロンボードと同期すると自動反映されます。
+          </p>
+        )}
+      </div>
+      <div id="area-auto-field" data-has-area={hasArea ? '1' : '0'}>
+        <label class="block text-sm font-medium text-gray-700 mb-1">対策エリア（中・小）</label>
+        {hasArea ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.middleAreaName}
+            {salon!.smallAreaName ? ` / ${salon!.smallAreaName}` : ''}
+          </p>
+        ) : (
+          <p class="text-xs text-amber-600">
+            対策エリアが未取得です。「サロンボード連携設定」でサロンボードと同期すると、HPBのサロンページから自動反映されます。
+          </p>
+        )}
+      </div>
     </div>
   )
 }
 
-// 対策キーワード入力フォームのエリア/キーワード部品(設定画面・編集画面で共用)。
-// 大エリアの手動選択は廃止し、中エリア(全国分をまとめて1つの選択肢として提示)を
-// 選ぶと、その中エリアが属するservice_area_cdを隠しフィールドへ自動セットする
-// (public/static/ranking.js側でoptionのdata-service属性から設定)。
-function AreaAndKeywordFields({
-  serviceAreaCd,
-  middleOptions,
-  middleAreaCd,
-  smallOptions,
-  smallAreaCd,
-  keywords
-}: {
-  serviceAreaCd?: string | null
-  middleOptions?: (AreaOption & { serviceAreaCd: string })[]
-  middleAreaCd?: string | null
-  smallOptions?: AreaOption[]
-  smallAreaCd?: string | null
-  keywords?: string[]
-}) {
+// キーワード入力欄(設定画面・編集画面で共用)
+function KeywordFields({ keywords }: { keywords?: string[] }) {
   const kw = keywords || []
   const initialVisible = Math.min(KEYWORD_SLOTS_MAX, Math.max(KEYWORD_SLOTS_DEFAULT, kw.length))
   return (
-    <>
-      <input type="hidden" id="service-area" name="service_area_cd" value={serviceAreaCd || ''} />
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            中エリア <span class="text-pink-500">*</span>
-          </label>
-          <select
-            id="middle-area"
-            name="middle_area_cd"
-            required
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください</option>
-            {(middleOptions || []).map((o) => (
-              <option value={o.code} data-service={o.serviceAreaCd} selected={middleAreaCd === o.code}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
-          <select
-            id="small-area"
-            name="small_area_cd"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください（任意）</option>
-            {(smallOptions || []).map((o) => (
-              <option value={o.code} selected={smallAreaCd === o.code}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-2">
+        キーワード（最大{KEYWORD_SLOTS_MAX}個）
+      </label>
+      <div id="keyword-slots" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        {Array.from({ length: KEYWORD_SLOTS_MAX }).map((_, i) => (
+          <input
+            type="text"
+            name={`keyword_${i}`}
+            id={`keyword_${i}`}
+            value={kw[i] || ''}
+            placeholder={`キーワード${i + 1}`}
+            class={
+              'keyword-slot border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200' +
+              (i >= initialVisible ? ' hidden' : '')
+            }
+          />
+        ))}
       </div>
-      <input type="hidden" id="area-label" name="area_label" value="" />
-
-      <div>
-        <label class="block text-sm font-medium text-gray-700 mb-2">
-          キーワード（最大{KEYWORD_SLOTS_MAX}個）
-        </label>
-        <div id="keyword-slots" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {Array.from({ length: KEYWORD_SLOTS_MAX }).map((_, i) => (
-            <input
-              type="text"
-              name={`keyword_${i}`}
-              id={`keyword_${i}`}
-              value={kw[i] || ''}
-              placeholder={`キーワード${i + 1}`}
-              class={
-                'keyword-slot border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200' +
-                (i >= initialVisible ? ' hidden' : '')
-              }
-            />
-          ))}
-        </div>
-        <button
-          type="button"
-          id="add-keyword-btn"
-          class={
-            'mt-2 text-xs font-semibold text-pink-600 hover:underline' +
-            (initialVisible >= KEYWORD_SLOTS_MAX ? ' hidden' : '')
-          }
-        >
-          <i class="fas fa-plus mr-1"></i>キーワードを追加
-        </button>
-      </div>
-    </>
+      <button
+        type="button"
+        id="add-keyword-btn"
+        class={
+          'mt-2 text-xs font-semibold text-pink-600 hover:underline' +
+          (initialVisible >= KEYWORD_SLOTS_MAX ? ' hidden' : '')
+        }
+      >
+        <i class="fas fa-plus mr-1"></i>キーワードを追加
+      </button>
+    </div>
   )
 }
 
@@ -547,8 +500,7 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
 // ============================================
 ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  const salonName = await getPrimarySalonName(c.env, user.id, user.salon_name)
-  const middleOptions = await getAllMiddleAreas(c.env)
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
 
   const { results: queries } = await c.env.DB.prepare(
     `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
@@ -577,9 +529,9 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
         <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
 
         <form id="ranking-form" method="post" action="/seo/templates" class="space-y-5">
-          <SalonNameAutoField salonName={salonName} />
+          <SalonAndAreaAutoField salon={salon} />
 
-          <AreaAndKeywordFields middleOptions={middleOptions} />
+          <KeywordFields />
 
           <input type="hidden" id="template-name" name="name" value="" />
 
@@ -679,25 +631,22 @@ ranking.post('/seo/templates', requireAuth, requireSeoEnabled, async (c) => {
   const body = (await c.req.parseBody()) as Record<string, unknown>
 
   const name = String(body.name || '').trim()
-  // サロン名は画面上で編集不可(自動入力)のため、送信値を信用せずサーバー側で
-  // 改めて算出する(getPrimarySalonNameはSalonNameAutoFieldの表示値と同じロジック)。
-  const salon = await getPrimarySalonName(c.env, user.id, user.salon_name)
-  const serviceAreaCd = String(body.service_area_cd || '').trim()
-  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
-  const smallAreaCd = String(body.small_area_cd || '').trim() || null
-  const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
+  // サロン名・対策エリアは画面上で編集不可(自動入力)のため、送信値を信用せず
+  // サーバー側で改めて算出する(SalonAndAreaAutoFieldの表示値と同じロジック)。
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
   const keywords = parseKeywords(body)
 
-  if (!salon || !serviceAreaCd || keywords.length === 0) {
+  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd || keywords.length === 0) {
     return c.redirect('/seo/keywords?error=1')
   }
+  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
 
   const q = await c.env.DB.prepare(
     `INSERT INTO ranking_queries
       (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
      VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(user.id, name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel)
+    .bind(user.id, name || null, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
     .run()
   const queryId = q.meta.last_row_id as number
 
@@ -742,23 +691,7 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
     .all<{ keyword: string }>()
   const keywords = kwRows.map((r) => r.keyword)
 
-  const salonName = await getPrimarySalonName(c.env, user.id, user.salon_name)
-
-  const labelParts = (q.area_label || '').split('>').map((s) => s.trim())
-  let middleOptions: (AreaOption & { serviceAreaCd: string })[] = []
-  let smallOptions: AreaOption[] = []
-  try {
-    middleOptions = await getAllMiddleAreas(c.env)
-  } catch {
-    if (q.middle_area_cd) {
-      middleOptions = [{ code: q.middle_area_cd, name: labelParts[1] || q.middle_area_cd, serviceAreaCd: q.service_area_cd }]
-    }
-  }
-  try {
-    if (q.middle_area_cd) smallOptions = await getSmallAreas(c.env, q.service_area_cd, q.middle_area_cd)
-  } catch {
-    if (q.small_area_cd) smallOptions = [{ code: q.small_area_cd, name: labelParts[2] || q.small_area_cd }]
-  }
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
 
   return c.render(
     <PageLayout
@@ -785,16 +718,9 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
             />
           </div>
 
-          <SalonNameAutoField salonName={salonName} />
+          <SalonAndAreaAutoField salon={salon} />
 
-          <AreaAndKeywordFields
-            serviceAreaCd={q.service_area_cd}
-            middleOptions={middleOptions}
-            middleAreaCd={q.middle_area_cd}
-            smallOptions={smallOptions}
-            smallAreaCd={q.small_area_cd}
-            keywords={keywords}
-          />
+          <KeywordFields keywords={keywords} />
 
           <div class="flex items-center justify-between pt-2">
             <button
@@ -829,17 +755,14 @@ ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => 
   if (!owned) return c.redirect('/seo/keywords')
 
   const name = String(body.name || '').trim()
-  // 作成時と同様、サロン名は画面上で編集不可(自動入力)のため送信値を信用しない。
-  const salon = await getPrimarySalonName(c.env, user.id, user.salon_name)
-  const serviceAreaCd = String(body.service_area_cd || '').trim()
-  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
-  const smallAreaCd = String(body.small_area_cd || '').trim() || null
-  const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
+  // 作成時と同様、サロン名・対策エリアは画面上で編集不可(自動入力)のため送信値を信用しない。
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
   const keywords = parseKeywords(body)
 
-  if (!salon || !serviceAreaCd || keywords.length === 0) {
+  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd || keywords.length === 0) {
     return c.redirect(`/seo/templates/${id}/edit?error=1`)
   }
+  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
 
   await c.env.DB.prepare(
     `UPDATE ranking_queries
@@ -847,7 +770,7 @@ ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => 
            area_label = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND user_id = ?`
   )
-    .bind(name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel, id, user.id)
+    .bind(name || null, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel, id, user.id)
     .run()
 
   await c.env.DB.prepare(`DELETE FROM ranking_query_keywords WHERE query_id = ?`).bind(id).run()
@@ -1015,29 +938,6 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   }
 
   return c.json({ time: jstHHMM, date: jstToday, enabled: schedules.length, triggered })
-})
-
-// ============================================
-// エリアのカスケード用JSON API(中/小エリアをオンデマンド取得)
-// ============================================
-ranking.get('/seo/api/areas', requireAuth, requireSeoEnabled, async (c) => {
-  const level = c.req.query('level')
-  const service = String(c.req.query('service') || '').trim()
-  const middle = String(c.req.query('middle') || '').trim()
-  if (!service) return c.json({ options: [] })
-  try {
-    if (level === 'middle') {
-      const options = await getMiddleAreas(c.env, service)
-      return c.json({ options })
-    }
-    if (level === 'small' && middle) {
-      const options = await getSmallAreas(c.env, service, middle)
-      return c.json({ options })
-    }
-  } catch (e) {
-    return c.json({ options: [], error: e instanceof Error ? e.message : String(e) }, 200)
-  }
-  return c.json({ options: [] })
 })
 
 export default ranking
