@@ -28,7 +28,7 @@ export async function requireAuth(
 
   // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name FROM users WHERE id = ?'
+    'SELECT id, email, salon_name, is_active FROM users WHERE id = ?'
   )
     .bind(payload.sub)
     .first<AppUser>()
@@ -37,14 +37,19 @@ export async function requireAuth(
     return redirectOrUnauthorized(c)
   }
 
+  // 管理者サイト(/admin/salons)で契約OFFにされたサロンはログイン状態でも締め出す。
+  if (user.is_active === 0) {
+    return redirectOrUnauthorized(c, '現在このアカウントはご利用いただけません。詳しくは運営までお問い合わせください。')
+  }
+
   c.set('user', user)
   await next()
 }
 
-function redirectOrUnauthorized(c: Context) {
+function redirectOrUnauthorized(c: Context, message?: string) {
   const isApi = c.req.path.startsWith('/api/')
   if (isApi) {
-    return c.json({ error: 'ログインが必要です' }, 401)
+    return c.json({ error: message || 'ログインが必要です' }, 401)
   }
-  return c.redirect('/login')
+  return c.redirect('/login' + (message ? '?error=' + encodeURIComponent(message) : ''))
 }

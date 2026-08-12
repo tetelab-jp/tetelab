@@ -3,12 +3,14 @@ import { setCookie, deleteCookie, getCookie } from 'hono/cookie'
 import { hashPassword, verifyPassword } from '../lib/crypto'
 import { signJwt, verifyJwt } from '../lib/jwt'
 import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth } from '../lib/admin-auth-middleware'
+import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import { AdminPageLayout } from '../components/admin-layout'
 import type { Bindings, AdminUser } from '../types'
 
 const admin = new Hono<{ Bindings: Bindings; Variables: { admin: AdminUser } }>()
 
 const ADMIN_SESSION_TTL_SECONDS = 60 * 60 * 12 // 12時間(サロン側の7日より短く、管理者権限のリスクを踏まえ短めにする)
+const IMPERSONATE_SESSION_TTL_SECONDS = 60 * 60 * 24 * 7 // サロン側の通常セッションと同じ7日
 
 function AdminAuthLayout({ children }: { children: any }) {
   return (
@@ -46,6 +48,22 @@ async function setAdminSession(c: any, adminId: number, email: string) {
     sameSite: 'Lax',
     path: '/',
     maxAge: ADMIN_SESSION_TTL_SECONDS
+  })
+}
+
+// なりすましログイン用: サロン側auth.tsxのsetSession()と同じ組み立て方で、
+// 対象サロンの通常セッションCookie(session)をそのまま発行する(パスワードは一切扱わない)。
+async function impersonateSalonSession(c: any, userId: number, email: string) {
+  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
+  const exp = Math.floor(Date.now() / 1000) + IMPERSONATE_SESSION_TTL_SECONDS
+  const token = await signJwt({ sub: userId, email, exp }, secret)
+  const isHttps = c.req.header('x-forwarded-proto') === 'https' || c.req.url.startsWith('https://')
+  setCookie(c, SESSION_COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: isHttps,
+    sameSite: 'Lax',
+    path: '/',
+    maxAge: IMPERSONATE_SESSION_TTL_SECONDS
   })
 }
 
@@ -132,21 +150,237 @@ admin.use('/admin/tool', requireAdminAuth)
 admin.use('/admin/status/*', requireAdminAuth)
 admin.use('/admin/status', requireAdminAuth)
 
-// 2026-08-12追記: サロン一覧・ツール設定・稼働状況の各画面は次のステップで
-// 実装する(実装指示書6章の段階的な進め方に沿って、まずはログイン導線・
-// 認証ガードのみをここで確認できるようにする)。
-admin.get('/admin/salons', (c) => {
+// ---------- 監査ログ ----------
+
+async function logAdminAction(
+  c: any,
+  adminId: number,
+  action: string,
+  targetType: string,
+  targetId: number,
+  detail?: string
+) {
+  await c.env.DB.prepare(
+    'INSERT INTO admin_audit_logs (admin_id, action, target_type, target_id, detail) VALUES (?, ?, ?, ?, ?)'
+  )
+    .bind(adminId, action, targetType, targetId, detail ?? null)
+    .run()
+}
+
+// ---------- サロン一覧 ----------
+
+const SALONS_PAGE_SIZE = 20
+
+type SalonRow = {
+  id: number
+  email: string
+  salon_name: string | null
+  is_active: number
+  created_at: string
+  seq: number
+}
+
+function buildSalonsListUrl(page: number, q: string) {
+  const params = new URLSearchParams()
+  if (page > 1) params.set('page', String(page))
+  if (q) params.set('q', q)
+  const qs = params.toString()
+  return '/admin/salons' + (qs ? `?${qs}` : '')
+}
+
+admin.get('/admin/salons', async (c) => {
   const adminUser = c.get('admin')
+  const q = (c.req.query('q') || '').trim()
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1)
+  const offset = (page - 1) * SALONS_PAGE_SIZE
+  const likePattern = `%${q}%`
+
+  const countRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM users WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
+  )
+    .bind(q, likePattern, likePattern)
+    .first<{ cnt: number }>()
+  const totalCount = countRow?.cnt ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / SALONS_PAGE_SIZE))
+
+  const { results: salons } = await c.env.DB.prepare(
+    `SELECT id, email, salon_name, is_active, created_at,
+       ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
+     FROM users
+     WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
+     ORDER BY is_active DESC, created_at ASC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(q, likePattern, likePattern, SALONS_PAGE_SIZE, offset)
+    .all<SalonRow>()
+
   return c.render(
     <AdminPageLayout active="admin-salons" adminEmail={adminUser.email} title="サロン一覧">
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="text-sm text-gray-500">
-          管理者ログインに成功しました（{adminUser.email}）。サロン一覧はこの後の実装ステップで追加します。
-        </p>
+      <form method="get" action="/admin/salons" class="flex gap-2">
+        <input
+          type="text"
+          name="q"
+          value={q}
+          placeholder="サロン名・メールアドレスで検索"
+          class="flex-1 max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+        />
+        <button
+          type="submit"
+          class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition"
+        >
+          検索
+        </button>
+        {q && (
+          <a
+            href="/admin/salons"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-gray-600 transition"
+          >
+            クリア
+          </a>
+        )}
+      </form>
+
+      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">No.</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
+                <th class="px-4 py-3 text-left font-medium">登録日</th>
+                <th class="px-4 py-3 text-left font-medium">契約状況</th>
+                <th class="px-4 py-3 text-left font-medium">操作</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {salons.map((salon) => (
+                <tr>
+                  <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
+                  <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
+                  <td class="px-4 py-3 text-gray-500">{salon.email}</td>
+                  <td class="px-4 py-3 text-gray-500">{String(salon.created_at).slice(0, 10)}</td>
+                  <td class="px-4 py-3">
+                    <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
+                      <input type="hidden" name="page" value={page} />
+                      <input type="hidden" name="q" value={q} />
+                      <label class="flex items-center gap-2 cursor-pointer w-fit">
+                        <span class="relative inline-flex items-center flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={salon.is_active === 1}
+                            onchange="this.form.submit()"
+                            class="sr-only peer"
+                          />
+                          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+                        </span>
+                        <span
+                          class={
+                            'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')
+                          }
+                        >
+                          {salon.is_active === 1 ? '契約中' : '契約外'}
+                        </span>
+                      </label>
+                    </form>
+                  </td>
+                  <td class="px-4 py-3">
+                    <form
+                      method="post"
+                      action={`/admin/salons/${salon.id}/impersonate`}
+                      onsubmit="return confirm('このサロンとしてログインします。よろしいですか？')"
+                    >
+                      <button
+                        type="submit"
+                        class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+                      >
+                        <i class="fas fa-right-to-bracket mr-1"></i>なりすましログイン
+                      </button>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+              {salons.length === 0 && (
+                <tr>
+                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
+                    該当するサロンがありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-sm text-gray-500">
+        <span>
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + SALONS_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex gap-3">
+          {page > 1 && (
+            <a href={buildSalonsListUrl(page - 1, q)} class="hover:text-pink-600">
+              ← 前へ
+            </a>
+          )}
+          <span class="text-gray-400">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages && (
+            <a href={buildSalonsListUrl(page + 1, q)} class="hover:text-pink-600">
+              次へ →
+            </a>
+          )}
+        </div>
       </div>
     </AdminPageLayout>,
     { title: 'サロン一覧' }
   )
+})
+
+admin.post('/admin/salons/:id/toggle-active', async (c) => {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const target = await c.env.DB.prepare('SELECT id, email, is_active FROM users WHERE id = ?')
+    .bind(targetId)
+    .first<{ id: number; email: string; is_active: number }>()
+  if (target) {
+    const nextActive = target.is_active === 1 ? 0 : 1
+    await c.env.DB.prepare('UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(nextActive, targetId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'toggle_salon_active',
+      'user',
+      targetId,
+      `${target.email}: is_active ${target.is_active} -> ${nextActive}`
+    )
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
+admin.post('/admin/salons/:id/impersonate', async (c) => {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+
+  const target = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+    .bind(targetId)
+    .first<{ id: number; email: string }>()
+  if (!target) {
+    return c.redirect('/admin/salons')
+  }
+
+  await logAdminAction(c, adminUser.id, 'impersonate_login', 'user', targetId, target.email)
+  await impersonateSalonSession(c, target.id, target.email)
+  return c.redirect('/dashboard')
 })
 
 export default admin

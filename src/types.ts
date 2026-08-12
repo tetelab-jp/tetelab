@@ -39,6 +39,7 @@ export type AppUser = {
   id: number
   email: string
   salon_name: string | null
+  is_active: number
 }
 
 export type AdminUser = {

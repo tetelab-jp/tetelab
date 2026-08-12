@@ -665,8 +665,11 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   // 固定時刻での一括投稿から変更)。外部Cronは数分間隔でこのエンドポイントを
   // 叩く想定で、呼ばれるたびに各ユーザーごとに「今が投稿すべきタイミングか」
   // をrunNextStyleForUser()内で判定し、タイミングであれば1件だけ処理する。
+  // 管理者サイトで契約OFFにされたサロン(users.is_active=0)はcronの対象から除外する。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT user_id FROM style_post_schedules WHERE enabled = 1`
+    `SELECT s.user_id FROM style_post_schedules s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.enabled = 1 AND u.is_active = 1`
   ).all<{ user_id: number }>()
 
   const targets = schedules || []
