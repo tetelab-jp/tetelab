@@ -2,6 +2,12 @@ resource "random_id" "jwt_secret" {
   byte_length = 32
 }
 
+# 管理者サイト(/admin)用。サロン側のjwt_secretとは別の値にすることで、
+# 万が一の設定ミスでも両者のセッションが混同されないようにする。
+resource "random_id" "admin_jwt_secret" {
+  byte_length = 32
+}
+
 resource "random_id" "cron_secret" {
   byte_length = 24
 }
@@ -52,6 +58,22 @@ resource "aws_secretsmanager_secret_version" "cron_secret" {
   secret_string = random_id.cron_secret.hex
 }
 
+resource "aws_secretsmanager_secret" "admin_jwt_secret" {
+  name = "${var.project_name}/admin-jwt-secret"
+}
+resource "aws_secretsmanager_secret_version" "admin_jwt_secret" {
+  secret_id     = aws_secretsmanager_secret.admin_jwt_secret.id
+  secret_string = random_id.admin_jwt_secret.hex
+}
+
+resource "aws_secretsmanager_secret" "admin_initial_password" {
+  name = "${var.project_name}/admin-initial-password"
+}
+resource "aws_secretsmanager_secret_version" "admin_initial_password" {
+  secret_id     = aws_secretsmanager_secret.admin_initial_password.id
+  secret_string = var.admin_initial_password
+}
+
 # aws-ecs.ts(アプリ本体)がECS RunTaskをSigV4署名で呼ぶための静的アクセスキー。
 # 発行元のIAMユーザーは iam.tf の aws_iam_user.cloudflare_caller。
 resource "aws_secretsmanager_secret" "aws_access_key_id" {
@@ -82,7 +104,9 @@ data "aws_iam_policy_document" "task_execution_secrets" {
       aws_secretsmanager_secret.encryption_key.arn,
       aws_secretsmanager_secret.cron_secret.arn,
       aws_secretsmanager_secret.aws_access_key_id.arn,
-      aws_secretsmanager_secret.aws_secret_access_key.arn
+      aws_secretsmanager_secret.aws_secret_access_key.arn,
+      aws_secretsmanager_secret.admin_jwt_secret.arn,
+      aws_secretsmanager_secret.admin_initial_password.arn
     ]
   }
 }

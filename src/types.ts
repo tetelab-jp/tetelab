@@ -25,10 +25,23 @@ export type Bindings = {
   ECS_CONTAINER_NAME?: string
   ECS_SUBNET_IDS?: string // カンマ区切り
   ECS_SECURITY_GROUP_IDS?: string // カンマ区切り
+
+  // ---- 管理者サイト(/admin) ----
+  // サロン側のJWT_SECRET/セッションCookieとは完全に分離する。
+  ADMIN_JWT_SECRET?: string
+  // 初期管理者アカウント(inc.tete@gmail.com)のパスワードのシード用。
+  // 起動時にadmin_usersが空の場合のみ、この値をハッシュ化して1件だけ投入する
+  // (コード内に平文パスワードをハードコードしないため、環境変数経由で渡す)。
+  ADMIN_INITIAL_PASSWORD?: string
 }
 
 export type AppUser = {
   id: number
   email: string
   salon_name: string | null
+}
+
+export type AdminUser = {
+  id: number
+  email: string
 }

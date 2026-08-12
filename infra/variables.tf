@@ -112,3 +112,14 @@ variable "alert_email" {
   type    = string
   default = ""
 }
+
+# 管理者サイト(/admin)の初期管理者アカウント(inc.tete@gmail.com)の
+# パスワード。コード内にハードコードせず、この変数経由でSecrets Managerへ
+# 格納する(terraform apply時に -var 等で指定する。tfvarsファイルはgit管理外にすること)。
+# admin_usersテーブルが空の場合のみ、アプリ起動時にこの値をハッシュ化して
+# 1件だけ投入する(このTerraform変数自体には平文のまま保持されるため、
+# tfstateの取り扱いには注意すること)。
+variable "admin_initial_password" {
+  type      = string
+  sensitive = true
+}
