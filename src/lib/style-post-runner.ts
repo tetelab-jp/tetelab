@@ -17,7 +17,7 @@
 import type { Bindings } from '../types'
 import { runStylePostTask } from './aws-ecs'
 
-// TETE AOUT側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
+// SalonMotion側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
 
 export type RunSummary = {

@@ -276,7 +276,7 @@ style.get('/style/library', async (c) => {
         </p>
         <p class="text-sm text-gray-600 leading-relaxed">
           店舗全体のスタイルをここで一元管理します。新規作成したスタイルに「自動投稿対象」のチェックを入れると、
-          自動投稿スケジュール（<a href="/style/schedule" class="text-pink-600 hover:underline">設定はこちら</a>）で
+          自動投稿・手動投稿（<a href="/style/schedule" class="text-pink-600 hover:underline">設定はこちら</a>）で
           設定した時刻に、サロンボードへの登録＋反映申請まで自動で実行されます。
         </p>
       </div>
@@ -456,13 +456,6 @@ style.get('/style/import', async (c) => {
 
   return c.render(
     <PageLayout active="style-import" salonName={user.salon_name} title="既存スタイルの取り込み">
-      <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
-        <i class="fas fa-circle-info mr-2"></i>
-        サロンボードに既に登録されているスタイルを一覧取得し、選択したものをTETE AOUT側の
-        スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
-        自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
-      </div>
-
       {!cred && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
           <i class="fas fa-triangle-exclamation mr-2"></i>
@@ -470,7 +463,7 @@ style.get('/style/import', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
         <button
           id="fetch-list-btn"
           disabled={!cred}
@@ -478,7 +471,12 @@ style.get('/style/import', async (c) => {
         >
           <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードから一覧取得
         </button>
-        <p id="import-status" class="text-sm text-gray-500 mt-3"></p>
+        <p class="text-sm text-gray-500 leading-relaxed">
+          サロンボードに既に登録されているスタイルを一覧取得し、選択したものをSalonMotion側の
+          スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
+          自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
+        </p>
+        <p id="import-status" class="text-sm text-gray-500"></p>
       </div>
 
       <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
@@ -1179,12 +1177,12 @@ style.post('/style/library/delete/:id', async (c) => {
   return c.json({ success: true })
 })
 
-// ---------- 自動投稿スケジュール設定 ----------
+// ---------- 自動投稿・手動投稿 ----------
 
 // 自動投稿の時間窓(JST)。src/lib/style-post-runner.tsのDAILY_WINDOW_START/END_MINUTESと一致させること。
 const DAILY_WINDOW_START_LABEL = '7:00'
 const DAILY_WINDOW_END_LABEL = '24:00'
-// TETE AOUT側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
+// SalonMotion側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
 const DAILY_POST_LIMIT_LABEL = 100
 
 style.get('/style/schedule', async (c) => {
@@ -1205,7 +1203,7 @@ style.get('/style/schedule', async (c) => {
   const selectedCount = selectedRow?.cnt ?? 0
 
   return c.render(
-    <PageLayout active="style-schedule" salonName={user.salon_name} title="スタイル自動投稿スケジュール">
+    <PageLayout active="style-schedule" salonName={user.salon_name} title="自動投稿・手動投稿">
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1233,8 +1231,27 @@ style.get('/style/schedule', async (c) => {
           保存する
         </button>
       </form>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+        <i class="fas fa-triangle-exclamation mr-2"></i>
+        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
+        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <button
+          id="test-run-btn"
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+        >
+          <i class="fas fa-flask mr-2"></i>手動実行する
+        </button>
+        <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+      </div>
+
+      <script src="/static/test-run.js"></script>
     </PageLayout>,
-    { title: 'スタイル自動投稿スケジュール' }
+    { title: '自動投稿・手動投稿' }
   )
 })
 
