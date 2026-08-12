@@ -4,7 +4,7 @@ import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
-import { formatJstDateTime } from '../lib/date-format'
+import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -72,12 +72,12 @@ dashboard.get('/dashboard', async (c) => {
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">スタイリスト</p>
               <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
-              <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at ? formatJstDateTime(cred.last_stylist_synced_at) : '未実施'}</p>
+              <p class="text-xs text-gray-400 mt-1 whitespace-nowrap">最終同期: {cred.last_stylist_synced_at ? formatJstDate(cred.last_stylist_synced_at) : '未実施'}</p>
             </div>
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">クーポン</p>
               <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
-              <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at ? formatJstDateTime(cred.last_coupon_synced_at) : '未実施'}</p>
+              <p class="text-xs text-gray-400 mt-1 whitespace-nowrap">最終同期: {cred.last_coupon_synced_at ? formatJstDate(cred.last_coupon_synced_at) : '未実施'}</p>
             </div>
           </div>
           <p id="sync-stylists-coupons-status" class="text-sm"></p>

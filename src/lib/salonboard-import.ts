@@ -1,6 +1,6 @@
 // ============================================
 // salonboard-import.ts
-// SALON BOARDに既に登録済みのスタイルを、TETE AOUT側の
+// SALON BOARDに既に登録済みのスタイルを、SalonMotion側の
 // styles/style_imagesテーブルへ取り込む(docs/phase3-mvp-design.md 5-2)。
 //
 // docs/salonboard-real-html-findings.md（2026-08-09、Playwrightで実アカウントを
@@ -272,7 +272,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
 }
 
 /**
- * 選択された既存スタイルをTETE AOUT側のstyles/style_imagesへ取り込む。
+ * 選択された既存スタイルをSalonMotion側のstyles/style_imagesへ取り込む。
  * 画像はブラウザのセッション(Cookie)を使ってpage.evaluate内でfetchし、
  * base64化してWorker側へ渡してからR2へ保存する。
  */

@@ -1,27 +1,27 @@
-document.getElementById('test-run-btn').addEventListener('click', async function () {
-  var btn = this
-  var status = document.getElementById('test-run-status')
-  btn.disabled = true
-  status.textContent = 'AWSへジョブを投入中...'
-  try {
-    var res = await fetch('/api/automation/test-run', { method: 'POST' })
-    var data = await res.json()
-    if (data.success) {
-      status.textContent =
-        'ジョブ投入完了: ' + data.dispatchedCount + '件（投入失敗 ' + (data.failedToDispatchCount || 0) + '件）。' +
-        '結果は完了次第、下の実行履歴に反映されます（数十秒〜数分かかります）。'
-    } else {
-      status.textContent = 'エラー: ' + (data.error || '不明なエラー')
+var testRunBtn = document.getElementById('test-run-btn')
+if (testRunBtn) {
+  testRunBtn.addEventListener('click', async function () {
+    var btn = this
+    var status = document.getElementById('test-run-status')
+    btn.disabled = true
+    status.textContent = 'AWSへジョブを投入中...'
+    try {
+      var res = await fetch('/api/automation/test-run', { method: 'POST' })
+      var data = await res.json()
+      if (data.success) {
+        status.textContent =
+          'ジョブ投入完了: ' + data.dispatchedCount + '件（投入失敗 ' + (data.failedToDispatchCount || 0) + '件）。' +
+          '結果は完了次第、実行履歴に反映されます（数十秒〜数分かかります）。'
+      } else {
+        status.textContent = 'エラー: ' + (data.error || '不明なエラー')
+      }
+    } catch (e) {
+      status.textContent = '通信エラーが発生しました'
+    } finally {
+      btn.disabled = false
     }
-  } catch (e) {
-    status.textContent = '通信エラーが発生しました'
-  } finally {
-    btn.disabled = false
-    setTimeout(function () {
-      location.reload()
-    }, 2500)
-  }
-})
+  })
+}
 
 document.querySelectorAll('.retry-btn').forEach(function (btn) {
   btn.addEventListener('click', async function () {

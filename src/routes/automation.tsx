@@ -120,24 +120,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="手動実行・実行履歴">
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-        <i class="fas fa-triangle-exclamation mr-2"></i>
-        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
-        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
-        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次下の実行履歴に反映されます（数十秒〜数分かかります）。
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <button
-          id="test-run-btn"
-          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
-        >
-          <i class="fas fa-flask mr-2"></i>手動実行する
-        </button>
-        <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
-      </div>
-
+    <PageLayout active="style-test-run" salonName={user.salon_name} title="実行履歴">
       {retryTargets && retryTargets.length > 0 && (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
@@ -267,7 +250,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <script src="/static/test-run.js"></script>
     </PageLayout>,
-    { title: '手動実行・実行履歴' }
+    { title: '実行履歴' }
   )
 })
 

@@ -17,10 +17,10 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: '投稿テンプレート作成', group: 'style' },
-  { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿スケジュール', group: 'style' },
-  { key: 'style-test-run', href: '/style/test-run', icon: 'fa-flask', label: '手動実行・実行履歴', group: 'style' },
+  { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
+  { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
 ]
 
@@ -28,7 +28,7 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' }
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
-  { title: '', key: 'settings' }
+  { title: '設定・確認', key: 'settings' }
 ]
 
 export function Sidebar({ active, salonName }: { active: NavKey; salonName: string | null }) {
@@ -74,7 +74,7 @@ function MobileNavPanel({ active }: { active: NavKey }) {
   return (
     <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div class="space-y-4">
-        {NAV_GROUPS.filter((group) => group.key !== 'main' && group.key !== 'settings').map((group) => (
+        {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => (
           <div>
             <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
             <nav class="space-y-1">
@@ -90,21 +90,20 @@ function MobileNavPanel({ active }: { active: NavKey }) {
                   <span>{item.label}</span>
                 </a>
               ))}
+              {group.key === 'settings' && (
+                <form method="post" action="/logout">
+                  <button
+                    type="submit"
+                    class="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition text-gray-600 hover:bg-gray-50"
+                  >
+                    <i class="fas fa-arrow-right-from-bracket w-4"></i>
+                    <span>ログアウト</span>
+                  </button>
+                </form>
+              )}
             </nav>
           </div>
         ))}
-        <div>
-          <a
-            href="/settings/salonboard"
-            class={
-              'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition ' +
-              (active === 'settings' ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
-            }
-          >
-            <i class="fas fa-key w-4"></i>
-            <span>サロンボード連携</span>
-          </a>
-        </div>
       </div>
     </div>
   )
@@ -152,21 +151,6 @@ function MobileGroupNav({ active }: { active: NavKey }) {
   )
 }
 
-function MobileLogoutBar() {
-  return (
-    <div class="md:hidden fixed bottom-0 inset-x-0 z-10 bg-white border-t border-gray-100 px-4 py-2">
-      <form method="post" action="/logout">
-        <button
-          type="submit"
-          class="w-full flex items-center justify-center gap-2 py-2 text-sm text-gray-500 hover:text-gray-700"
-        >
-          <i class="fas fa-arrow-right-from-bracket"></i> ログアウト
-        </button>
-      </form>
-    </div>
-  )
-}
-
 export function PageLayout({
   active,
   salonName,
@@ -184,9 +168,8 @@ export function PageLayout({
       <div class="flex-1 min-w-0">
         <TopBar title={title} active={active} />
         <MobileGroupNav active={active} />
-        <main class="p-6 pb-20 md:pb-6 space-y-6">{children}</main>
+        <main class="p-6 space-y-6">{children}</main>
       </div>
-      <MobileLogoutBar />
     </div>
   )
 }
