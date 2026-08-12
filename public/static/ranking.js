@@ -1,113 +1,203 @@
 // フリーワード対策「順位測定」「対策キーワード設定」画面のクライアント処理
 // サロン名・対策エリア(中/小)はサロンボード連携+HPBサロンページから自動検出した
 // 値をそのまま使うため、選択UI・カスケード取得は無い(#salon-auto-field/#area-auto-field
-// のdata属性で「未取得かどうか」だけを送信前チェックする)。
-// - キーワードは1個の入力欄にEnterまたは「追加」ボタンでチップとして追加(最大20個)
-// - 「登録」ボタン(登録名モーダル → フォーム送信) … 対策キーワード設定
+// のdata属性で「未取得かどうか」だけを使う画面もある)。
+// - 対策キーワード設定(新規): キーワードを1個ずつ入力→「追加」で即座にAJAX保存し、
+//   登録済み一覧にそのままチップとして反映する(#keyword-chips, #keyword-hidden-containerなし)
+// - 対策キーワード編集: フォーム送信方式のタグ入力(ローカル状態→「保存」でまとめて送信、
+//   #keyword-hidden-containerあり)
 // - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
 
 ;(function () {
   var KEYWORD_MAX = 20
 
   // ------------------------------------------------
-  // キーワードのタグ入力(1個の入力欄 → Enter/追加ボタンでチップ化)
-  // 送信用hidden inputはチップの増減に合わせてkeyword_0, keyword_1...と再生成する。
+  // 対策キーワード編集画面: フォーム送信方式のタグ入力
   // ------------------------------------------------
-  var keywordInput = document.getElementById('keyword-input')
-  var keywordAddBtn = document.getElementById('keyword-add-btn')
-  var keywordChips = document.getElementById('keyword-chips')
   var keywordHiddenContainer = document.getElementById('keyword-hidden-container')
-  var keywordCountEl = document.getElementById('keyword-count')
-  var keywords = keywordHiddenContainer
-    ? Array.from(keywordHiddenContainer.querySelectorAll('.keyword-hidden-input')).map(function (el) {
-        return el.value
+  if (keywordHiddenContainer) {
+    var editInput = document.getElementById('keyword-input')
+    var editAddBtn = document.getElementById('keyword-add-btn')
+    var editChips = document.getElementById('keyword-chips')
+    var editCountEl = document.getElementById('keyword-count')
+    var editKeywords = Array.from(keywordHiddenContainer.querySelectorAll('.keyword-hidden-input')).map(function (el) {
+      return el.value
+    })
+
+    var renderEditKeywords = function () {
+      editChips.innerHTML = ''
+      editKeywords.forEach(function (kw, i) {
+        var chip = document.createElement('span')
+        chip.className =
+          'inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm'
+        var text = document.createElement('span')
+        text.textContent = kw
+        chip.appendChild(text)
+        var removeBtn = document.createElement('button')
+        removeBtn.type = 'button'
+        removeBtn.className = 'text-pink-400 hover:text-pink-600 leading-none'
+        removeBtn.setAttribute('aria-label', '削除')
+        removeBtn.textContent = '×'
+        removeBtn.addEventListener('click', function () {
+          editKeywords.splice(i, 1)
+          renderEditKeywords()
+        })
+        chip.appendChild(removeBtn)
+        editChips.appendChild(chip)
       })
-    : []
 
-  function renderKeywords() {
-    if (!keywordChips || !keywordHiddenContainer) return
+      keywordHiddenContainer.innerHTML = ''
+      editKeywords.forEach(function (kw, i) {
+        var hidden = document.createElement('input')
+        hidden.type = 'hidden'
+        hidden.name = 'keyword_' + i
+        hidden.value = kw
+        keywordHiddenContainer.appendChild(hidden)
+      })
 
-    keywordChips.innerHTML = ''
-    keywords.forEach(function (kw, i) {
+      if (editCountEl) editCountEl.textContent = editKeywords.length
+      var atMax = editKeywords.length >= KEYWORD_MAX
+      if (editAddBtn) editAddBtn.disabled = atMax
+      if (editInput) editInput.disabled = atMax
+    }
+
+    var addEditKeyword = function () {
+      if (!editInput) return
+      var v = editInput.value.trim()
+      if (!v || editKeywords.length >= KEYWORD_MAX) return
+      if (editKeywords.indexOf(v) === -1) editKeywords.push(v)
+      editInput.value = ''
+      renderEditKeywords()
+      editInput.focus()
+    }
+
+    if (editAddBtn) editAddBtn.addEventListener('click', addEditKeyword)
+    if (editInput) {
+      editInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          addEditKeyword()
+        }
+      })
+    }
+    renderEditKeywords()
+  }
+
+  // ------------------------------------------------
+  // 対策キーワード設定画面(新規): 1個ずつAJAXで追加/削除する即時保存モード
+  // ------------------------------------------------
+  var ajaxChips = document.getElementById('keyword-chips')
+  if (ajaxChips && !keywordHiddenContainer) {
+    var kwInput = document.getElementById('keyword-input')
+    var kwAddBtn = document.getElementById('keyword-add-btn')
+    var kwCountEl = document.getElementById('keyword-count')
+    var kwStatusEl = document.getElementById('keyword-add-status')
+
+    var chipCount = function () {
+      return ajaxChips.querySelectorAll('.keyword-chip').length
+    }
+
+    var updateAjaxState = function () {
+      var n = chipCount()
+      if (kwCountEl) kwCountEl.textContent = n
+      var atMax = n >= KEYWORD_MAX
+      if (kwAddBtn) kwAddBtn.disabled = atMax
+      if (kwInput) kwInput.disabled = atMax
+    }
+
+    var makeChip = function (id, keyword) {
       var chip = document.createElement('span')
       chip.className =
-        'inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm'
+        'keyword-chip inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm'
+      chip.setAttribute('data-id', id)
       var text = document.createElement('span')
-      text.textContent = kw
+      text.textContent = keyword
       chip.appendChild(text)
       var removeBtn = document.createElement('button')
       removeBtn.type = 'button'
-      removeBtn.className = 'text-pink-400 hover:text-pink-600 leading-none'
-      removeBtn.setAttribute('aria-label', '削除')
+      removeBtn.className = 'keyword-remove-btn text-pink-400 hover:text-pink-600 leading-none'
+      removeBtn.setAttribute('data-id', id)
       removeBtn.textContent = '×'
-      removeBtn.addEventListener('click', function () {
-        keywords.splice(i, 1)
-        renderKeywords()
-      })
       chip.appendChild(removeBtn)
-      keywordChips.appendChild(chip)
-    })
+      return chip
+    }
 
-    keywordHiddenContainer.innerHTML = ''
-    keywords.forEach(function (kw, i) {
-      var hidden = document.createElement('input')
-      hidden.type = 'hidden'
-      hidden.name = 'keyword_' + i
-      hidden.value = kw
-      keywordHiddenContainer.appendChild(hidden)
-    })
-
-    if (keywordCountEl) keywordCountEl.textContent = keywords.length
-    var atMax = keywords.length >= KEYWORD_MAX
-    if (keywordAddBtn) keywordAddBtn.disabled = atMax
-    if (keywordInput) keywordInput.disabled = atMax
-  }
-
-  function addKeywordFromInput() {
-    if (!keywordInput) return
-    var v = keywordInput.value.trim()
-    if (!v || keywords.length >= KEYWORD_MAX) return
-    if (keywords.indexOf(v) === -1) keywords.push(v)
-    keywordInput.value = ''
-    renderKeywords()
-    keywordInput.focus()
-  }
-
-  if (keywordAddBtn) keywordAddBtn.addEventListener('click', addKeywordFromInput)
-  if (keywordInput) {
-    keywordInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault()
-        addKeywordFromInput()
+    ajaxChips.addEventListener('click', async function (e) {
+      var btn = e.target.closest && e.target.closest('.keyword-remove-btn')
+      if (!btn) return
+      var chip = btn.closest('.keyword-chip')
+      var id = btn.getAttribute('data-id')
+      if (!chip || !id) return
+      chip.remove()
+      var emptyEl = document.getElementById('keyword-empty')
+      if (chipCount() === 0 && !emptyEl) {
+        emptyEl = document.createElement('p')
+        emptyEl.id = 'keyword-empty'
+        emptyEl.className = 'text-sm text-gray-400'
+        emptyEl.textContent = 'まだ登録がありません。上の入力欄からキーワードを追加してください。'
+        ajaxChips.appendChild(emptyEl)
+      }
+      updateAjaxState()
+      try {
+        await fetch('/api/seo/keywords/' + id + '/delete', { method: 'POST' })
+      } catch (err) {
+        // 失敗しても画面上は削除済みのまま(再読み込みで復元される)
       }
     })
-  }
-  renderKeywords()
 
-  // 入力チェック(サロン名・対策エリアが自動取得済みか、キーワード1つ以上)
-  function collectAndValidate(statusEl) {
-    var salonField = document.getElementById('salon-auto-field')
-    var hasSalon = !salonField || salonField.getAttribute('data-has-salon') === '1'
-    if (!hasSalon) {
-      if (statusEl) statusEl.textContent = 'サロン名が未取得です。「サロンボード連携設定」で同期してください'
-      return null
+    var addAjaxKeyword = async function () {
+      if (!kwInput) return
+      var v = kwInput.value.trim()
+      if (!v || chipCount() >= KEYWORD_MAX) return
+      if (kwStatusEl) kwStatusEl.textContent = ''
+      var prevCount = chipCount()
+      kwInput.disabled = true
+      if (kwAddBtn) kwAddBtn.disabled = true
+      try {
+        var res = await fetch('/api/seo/keywords', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ keyword: v })
+        })
+        var data = await res.json()
+        if (data.success) {
+          if (data.keywords.length > prevCount) {
+            var emptyEl = document.getElementById('keyword-empty')
+            if (emptyEl) emptyEl.remove()
+            var newest = data.keywords[data.keywords.length - 1]
+            ajaxChips.appendChild(makeChip(newest.id, newest.keyword))
+            kwInput.value = ''
+          } else if (kwStatusEl) {
+            kwStatusEl.textContent = 'このキーワードは既に登録されています'
+          }
+          updateAjaxState()
+        } else if (kwStatusEl) {
+          kwStatusEl.textContent = data.error || '追加に失敗しました'
+        }
+      } catch (err) {
+        if (kwStatusEl) kwStatusEl.textContent = '通信エラーが発生しました'
+      } finally {
+        var atMax = chipCount() >= KEYWORD_MAX
+        kwInput.disabled = atMax
+        if (kwAddBtn) kwAddBtn.disabled = atMax
+        kwInput.focus()
+      }
     }
-    var areaField = document.getElementById('area-auto-field')
-    var hasArea = !areaField || areaField.getAttribute('data-has-area') === '1'
-    if (!hasArea) {
-      if (statusEl) statusEl.textContent = '対策エリアが未取得です。「サロンボード連携設定」で同期してください'
-      return null
-    }
-    if (keywords.length === 0) {
-      if (statusEl) statusEl.textContent = 'キーワードを1つ以上入力してください'
-      return null
-    }
-    return { keywords: keywords }
-  }
 
-  var status = document.getElementById('measure-status')
+    if (kwAddBtn) kwAddBtn.addEventListener('click', addAjaxKeyword)
+    if (kwInput) {
+      kwInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          addAjaxKeyword()
+        }
+      })
+    }
+    updateAjaxState()
+  }
 
   // 「測定」ボタン(順位測定ページ: 選択したキーワード設定を測定)
+  var status = document.getElementById('measure-status')
   var measureRunBtn = document.getElementById('measure-run-btn')
   if (measureRunBtn) {
     measureRunBtn.addEventListener('click', async function () {
@@ -143,50 +233,6 @@
         if (status) status.textContent = '通信エラーが発生しました'
         measureRunBtn.disabled = false
       }
-    })
-  }
-
-  // 「登録」ボタン → テンプレート名モーダル
-  var openBtn = document.getElementById('register-open-btn')
-  var modal = document.getElementById('register-modal')
-  var modalName = document.getElementById('modal-template-name')
-  var modalError = document.getElementById('modal-error')
-  var confirmBtn = document.getElementById('register-confirm-btn')
-  var cancelBtn = document.getElementById('register-cancel-btn')
-  var form = document.getElementById('ranking-form')
-  var nameHidden = document.getElementById('template-name')
-
-  function closeModal() {
-    if (modal) modal.classList.add('hidden')
-  }
-
-  if (openBtn && modal) {
-    openBtn.addEventListener('click', function () {
-      var v = collectAndValidate(status)
-      if (!v) return
-      if (modalError) modalError.textContent = ''
-      modal.classList.remove('hidden')
-      if (modalName) {
-        modalName.value = ''
-        modalName.focus()
-      }
-    })
-  }
-  if (cancelBtn) cancelBtn.addEventListener('click', closeModal)
-  if (modal) {
-    modal.addEventListener('click', function (e) {
-      if (e.target === modal) closeModal()
-    })
-  }
-  if (confirmBtn) {
-    confirmBtn.addEventListener('click', function () {
-      var name = modalName ? modalName.value.trim() : ''
-      if (!name) {
-        if (modalError) modalError.textContent = 'テンプレート名を入力してください'
-        return
-      }
-      if (nameHidden) nameHidden.value = name
-      if (form) form.submit()
     })
   }
 })()

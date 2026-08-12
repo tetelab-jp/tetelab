@@ -502,20 +502,46 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
   return c.json({ success: true, count: ownedIds.length })
 })
 
+/**
+ * ユーザーの「対策キーワード設定」は、サロン名・エリアが自動検出の1本だけになった
+ * ため、名前を付けての複数登録はやめ、既存の最初の1件(無ければ自動作成)へ
+ * キーワードを直接追加/削除する方式にした。
+ */
+async function getOrCreatePrimaryQueryId(env: Bindings, userId: number, salon: PrimarySalonArea): Promise<number> {
+  const existing = await env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(userId)
+    .first<{ id: number }>()
+  if (existing) return existing.id
+
+  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
+  const q = await env.DB.prepare(
+    `INSERT INTO ranking_queries (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
+     VALUES (?, NULL, ?, ?, ?, ?, ?)`
+  )
+    .bind(userId, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
+    .run()
+  return q.meta.last_row_id as number
+}
+
 // ============================================
-// 対策キーワード設定(登録フォーム + 登録済み一覧)
+// 対策キーワード設定(1個ずつ追加 → その場で登録済み一覧に反映)
 // ============================================
 ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
 
-  const { results: queries } = await c.env.DB.prepare(
-    `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
-  )
+  const existingQuery = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
     .bind(user.id)
-    .all<{ id: number; name: string | null; salon_name: string; area_label: string | null }>()
-
-  const registered = c.req.query('registered') === '1'
+    .first<{ id: number }>()
+  let keywords: { id: number; keyword: string }[] = []
+  if (existingQuery) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT id, keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
+    )
+      .bind(existingQuery.id)
+      .all<{ id: number; keyword: string }>()
+    keywords = results
+  }
 
   return c.render(
     <PageLayout
@@ -526,105 +552,56 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}
     >
-      {registered && (
-        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>対策キーワードを登録しました。「計測」画面で選んで測定できます。
-        </div>
-      )}
-
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
-
-        <form id="ranking-form" method="post" action="/seo/templates" class="space-y-5">
-          <SalonAndAreaAutoField salon={salon} />
-
-          <KeywordFields />
-
-          <input type="hidden" id="template-name" name="name" value="" />
-
-          <p class="text-xs text-gray-500">
-            「登録」ボタンを押すと入力した対策キーワードが保存され、「計測」画面で選択して測定できます。
-          </p>
-
-          <p id="measure-status" class="text-sm text-pink-600"></p>
-
-          <div class="flex items-center justify-end">
-            <button
-              type="button"
-              id="register-open-btn"
-              class="w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition"
-            >
-              <i class="fas fa-circle-check mr-2"></i>この内容で登録する
-            </button>
-          </div>
-        </form>
+        <SalonAndAreaAutoField salon={salon} />
       </div>
 
-      {/* 登録名入力モーダル */}
-      <div id="register-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-          <p class="font-semibold text-gray-900 mb-1">対策キーワードの登録</p>
-          <p class="text-xs text-gray-500 mb-4">この設定に名前を付けて保存します（管理用）。</p>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            登録名 <span class="text-pink-500">*</span>
-          </label>
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <p class="font-semibold mb-4 text-gray-900">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>対策キーワードを追加する
+        </p>
+        <div class="flex gap-2">
           <input
             type="text"
-            id="modal-template-name"
-            placeholder="例: 赤羽・髪質改善セット"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-pink-200"
+            id="keyword-input"
+            placeholder="追加するキーワードを入力"
+            class="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
           />
-          <p id="modal-error" class="text-xs text-red-500 min-h-[1rem]"></p>
-          <div class="flex items-center justify-end gap-3 mt-3">
-            <button type="button" id="register-cancel-btn" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">
-              キャンセル
-            </button>
-            <button
-              type="button"
-              id="register-confirm-btn"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2 rounded-lg text-sm"
-            >
-              保存する
-            </button>
-          </div>
+          <button
+            type="button"
+            id="keyword-add-btn"
+            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm flex-shrink-0"
+          >
+            追加
+          </button>
         </div>
+        <p id="keyword-add-status" class="text-xs text-red-500 mt-2 min-h-[1rem]"></p>
       </div>
 
-      {/* 登録済み一覧 */}
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-4">
-          <i class="fas fa-list-check mr-2 text-pink-500"></i>登録済みの対策キーワード（{queries.length}件）
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>
+          登録済みの対策キーワード（<span id="keyword-count">{keywords.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
         </p>
-        {queries.length === 0 ? (
-          <p class="text-sm text-gray-400 text-center py-6">まだ登録がありません。上のフォームから登録してください。</p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">登録名</th>
-                <th class="py-2">設定エリア</th>
-                <th class="py-2 text-right"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {queries.map((q) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">
-                    <a href={`/seo/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
-                      {q.name || `${q.salon_name}（無名）`}
-                    </a>
-                  </td>
-                  <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
-                  <td class="py-2 text-right">
-                    <a href={`/seo/templates/${q.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">
-                      編集
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <div id="keyword-chips" class="flex flex-wrap gap-2">
+          {keywords.length === 0 && (
+            <p id="keyword-empty" class="text-sm text-gray-400">
+              まだ登録がありません。上の入力欄からキーワードを追加してください。
+            </p>
+          )}
+          {keywords.map((k) => (
+            <span
+              class="keyword-chip inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm"
+              data-id={k.id}
+            >
+              <span>{k.keyword}</span>
+              <button type="button" class="keyword-remove-btn text-pink-400 hover:text-pink-600 leading-none" data-id={k.id}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
       </div>
 
       <script src="/static/ranking.js"></script>
@@ -632,41 +609,54 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   )
 })
 
-// 対策キーワードの作成(「登録」モーダル)
-ranking.post('/seo/templates', requireAuth, requireSeoEnabled, async (c) => {
+// キーワードを1件追加(既存の対策キーワード設定が無ければ自動作成)
+ranking.post('/api/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  const body = (await c.req.parseBody()) as Record<string, unknown>
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+  const keyword = String(body.keyword || '').trim()
+  if (!keyword) return c.json({ success: false, error: 'キーワードを入力してください' }, 400)
 
-  const name = String(body.name || '').trim()
-  // サロン名・対策エリアは画面上で編集不可(自動入力)のため、送信値を信用せず
-  // サーバー側で改めて算出する(SalonAndAreaAutoFieldの表示値と同じロジック)。
   const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
-  const keywords = parseKeywords(body)
-
-  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd || keywords.length === 0) {
-    return c.redirect('/seo/keywords?error=1')
+  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd) {
+    return c.json({ success: false, error: 'サロン名または対策エリアが未取得です。サロンボードと同期してください' }, 400)
   }
-  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
 
-  const q = await c.env.DB.prepare(
-    `INSERT INTO ranking_queries
-      (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  const queryId = await getOrCreatePrimaryQueryId(c.env, user.id, salon)
+  const { results: existing } = await c.env.DB.prepare(
+    `SELECT id, keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
   )
-    .bind(user.id, name || null, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
-    .run()
-  const queryId = q.meta.last_row_id as number
+    .bind(queryId)
+    .all<{ id: number; keyword: string }>()
 
-  let order = 0
-  for (const kw of keywords) {
+  if (existing.some((e) => e.keyword === keyword)) {
+    return c.json({ success: true, keywords: existing })
+  }
+  if (existing.length >= KEYWORD_SLOTS_MAX) {
+    return c.json({ success: false, error: `キーワードは最大${KEYWORD_SLOTS_MAX}件までです` }, 400)
+  }
+
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO ranking_query_keywords (query_id, keyword, sort_order) VALUES (?, ?, ?)`
+  )
+    .bind(queryId, keyword, existing.length)
+    .run()
+
+  return c.json({ success: true, keywords: [...existing, { id: ins.meta.last_row_id as number, keyword }] })
+})
+
+// キーワードを1件削除
+ranking.post('/api/seo/keywords/:id/delete', requireAuth, requireSeoEnabled, async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+  if (Number.isFinite(id)) {
     await c.env.DB.prepare(
-      `INSERT INTO ranking_query_keywords (query_id, keyword, sort_order) VALUES (?, ?, ?)`
+      `DELETE FROM ranking_query_keywords
+       WHERE id = ? AND query_id IN (SELECT id FROM ranking_queries WHERE user_id = ?)`
     )
-      .bind(queryId, kw, order++)
+      .bind(id, user.id)
       .run()
   }
-
-  return c.redirect('/seo/keywords?registered=1')
+  return c.json({ success: true })
 })
 
 // ============================================
