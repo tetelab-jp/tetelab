@@ -526,62 +526,6 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
  *     なくspanタグ、IDも FRONT_IMG_ID ではなく FRONT_IMG_ID_ID)
  */
 
-/**
- * 2026-08-11追記(診断用): 画像アップロードがプロキシ経由(net::ERR_EMPTY_RESPONSE)で
- * 失敗した際、「同じCookie・同じfile input方式・プロキシなし」で同じアップロードを
- * 試すとどうなるかを自動で比較する。プロキシありのブラウザで取得済みのCookieを
- * プロキシなしの別ブラウザに引き継ぐことで、再ログインなしに同一セッションのまま
- * 経路だけを変えた比較ができる。結果はジョブの成否には影響させず、診断ログにのみ残す。
- */
-async function diagnoseUploadWithoutProxy(
-  proxiedPage: Page,
-  imageBuffer: ArrayBuffer,
-  fileName: string
-): Promise<string> {
-  const cookies = await proxiedPage.cookies().catch(() => [])
-  const currentUrl = proxiedPage.url()
-  let diagBrowser: Browser | null = null
-  try {
-    diagBrowser = await puppeteerExtra.launch({
-      headless: false,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    })
-    const diagPage = await diagBrowser.newPage()
-    await diagPage.setViewport({ width: 1920, height: 1080 })
-    if (cookies.length > 0) await diagPage.setCookie(...(cookies as any))
-    await diagPage.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
-
-    await diagPage.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 10000 })
-    await diagPage.click('#FRONT_IMG_ID_IMG')
-    const fileInput = (await diagPage.waitForSelector('#formFile', { timeout: 10000 })) as ElementHandle<HTMLInputElement> | null
-    if (!fileInput) {
-      return '[診断:プロキシなし比較] 失敗: #formFileが見つかりませんでした(Cookie流用でのログイン状態再現に失敗した可能性)'
-    }
-
-    const tmpPath = join(tmpdir(), `salonboard-diag-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
-    await writeFile(tmpPath, Buffer.from(imageBuffer))
-    try {
-      await fileInput.uploadFile(tmpPath)
-      await diagPage.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 10000 })
-      await diagPage.click('input.jscImageUploaderModalSubmitButton')
-      await diagPage.waitForFunction(
-        () => {
-          const el = document.getElementById('FRONT_IMG_ID_ID')
-          return !!el && !!el.textContent && el.textContent.trim().length > 0
-        },
-        { timeout: 20000 }
-      )
-      return '[診断:プロキシなし比較] 成功(同じCookie・同じ手順でプロキシを外したら通った → プロキシ経由アップロードが原因の濃厚な証拠)'
-    } finally {
-      await unlink(tmpPath).catch(() => {})
-    }
-  } catch (err: any) {
-    return `[診断:プロキシなし比較] 失敗: ${String(err?.message || err)} (プロキシ以外の要因の可能性、または比較テスト自体の不備)`
-  } finally {
-    await diagBrowser?.close().catch(() => {})
-  }
-}
-
 async function uploadFrontImage(
   page: Page,
   imageBuffer: ArrayBuffer,
@@ -610,238 +554,169 @@ async function uploadFrontImage(
   await writeFile(tmpPath, Buffer.from(imageBuffer))
   log(`アップロード画像サイズ: ${(imageBuffer.byteLength / 1024).toFixed(1)}KB`)
   try {
-    // 2026-08-11修正(重大バグ): net::ERR_EMPTY_RESPONSE失敗時、モーダルの
-    // 実際の表示内容を確認したところ、失敗後はモーダルがファイル未選択の
-    // 初期状態(「ここにファイルをドラッグ&ドロップ...」)にリセットされて
-    // いることが判明した。従来は「登録する」ボタンを再クリックするだけの
-    // リトライだったため、ファイルが選択されていない状態でクリックしても
-    // 何も起きず(ボタンは非活性のまま)、即座にリトライ不可と判定していた。
-    // ファイル選択(uploadFile)からやり直す必要があるため、選択〜送信〜
-    // 完了検知までの一連の流れ全体を最大3回リトライするよう修正する。
-    const maxAttempts = 3
-    let lastError: Error | null = null
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      // 2026-08-11修正(重大バグ): 失敗後のクリックが"Node is either not
-      // clickable or not an Element"で失敗する原因を実機のDOM状態(要素の
-      // offsetParentがnull、座標が全て0)で特定した。モーダルは「ファイル
-      // 未選択状態にリセット」されるのではなく、実際には非表示(モーダルごと
-      // 閉じた状態)になっていた。#formFileの要素自体はDOMに残るためセレクタ
-      // には一致するが、非表示のモーダル内にあるためクリック不可能だった。
-      // プレースホルダー(#FRONT_IMG_ID_IMG)を再クリックしてモーダルを
-      // 明示的に開き直してから、ファイル選択をやり直す。
-      //
-      // 2026-08-13追記(副次バグ対応): 上記の再クリックだけでは、失敗後の
-      // モーダルがブラウザ側からは開いているように見えても、SALON BOARD側の
-      // 内部状態(送信済みフラグ等)が前回失敗時のまま残り、2回目のクリックで
-      // doUpload自体が発火しない事例が実機で確認された(diagnoseUploadWithoutProxy
-      // より上のコメント、および2026-08-12付ログ参照)。モーダルを一度Escapeで
-      // 明示的に閉じてから間を置いて開き直すことで、内部状態をより確実に
-      // リセットさせる。
-      if (attempt > 1) {
-        await page.keyboard.press('Escape').catch(() => {})
-        await new Promise((resolve) => setTimeout(resolve, 1000))
-        await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
-        await page.click('#FRONT_IMG_ID_IMG')
-        await new Promise((resolve) => setTimeout(resolve, 500))
-      }
-      const currentFileInput =
-        attempt === 1
-          ? fileInput
-          : ((await page.waitForSelector('#formFile', { timeout: 15000 })) as ElementHandle<HTMLInputElement> | null)
-      if (!currentFileInput) {
-        lastError = new Error(`画像アップロードのリトライ不可: #formFile が再取得できませんでした(試行${attempt}回目)`)
-        break
-      }
-      await currentFileInput.uploadFile(tmpPath)
+    // 2026-08-13追記(方針転換): 従来はnet::ERR_ABORTED/ERR_EMPTY_RESPONSE等の
+    // 失敗時、同じブラウザ・同じプロキシセッション(出口IP)のまま「モーダルを
+    // 開き直してファイル再選択」を最大3回繰り返していたが、実機ログで
+    // 3回とも同じエラーで失敗する事例が確認された。これは同一IPに固有の
+    // 一時的な問題である可能性が高く、同じIPのまま何度粘っても回復しない
+    // ため、画面内リトライは廃止し1回だけ試行する。失敗時は例外をそのまま
+    // 呼び出し元(index.tsのrunJob)へ伝播させ、ブラウザContextを閉じて
+    // 別のプロキシセッションID(=別の出口IP)で最初から(ログインからやり直し)
+    // 再試行する(runJob側で候補セッション数の予算内で実施)。
+    log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
+    await fileInput.uploadFile(tmpPath)
+    await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
 
-      log(`ファイル選択完了。「登録する」ボタンの活性化を待機中...(試行${attempt}/${maxAttempts})`)
-      await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
-
-      // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
-      // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
-      // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
-      // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
-      const uploadEvents: string[] = []
-      const onRequestFinished = (req: any) => {
-        if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
-      }
-      const onResponse = async (res: any) => {
-        if (/doUpload/i.test(res.url())) {
-          let bodySnippet = ''
-          try {
-            bodySnippet = (await res.text()).slice(0, 300)
-          } catch {}
-          uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
-        }
-      }
-      const onRequestFailed = (req: any) => {
-        if (/doUpload/i.test(req.url())) {
-          uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
-        }
-      }
-      page.on('request', onRequestFinished)
-      page.on('response', onResponse)
-      page.on('requestfailed', onRequestFailed)
-
-      // 2026-08-11追記(診断用): Puppeteerの高レベルAPI(requestfailed)だけでは
-      // net::ERR_EMPTY_RESPONSEの詳細(プロキシのトンネル自体が張れなかったのか、
-      // 張った後に応答が来なかったのか)が分からない。CDPのNetwork.loadingFailedは
-      // blockedReason/corsErrorStatus等の追加情報を持つことがあるため、生のCDP
-      // イベントも合わせて記録する。
-      const cdpRequestUrls = new Map<string, string>()
-      let cdpClient: any = null
-      const onCdpRequestWillBeSent = (params: any) => {
-        cdpRequestUrls.set(params.requestId, params.request?.url ?? '')
-      }
-      const onCdpLoadingFailed = (params: any) => {
-        const url = cdpRequestUrls.get(params.requestId) ?? ''
-        if (/doUpload/i.test(url)) {
-          uploadEvents.push(
-            `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
-              `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
-          )
-        }
-      }
-      try {
-        const client = await page.target().createCDPSession()
-        await client.send('Network.enable')
-        client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
-        client.on('Network.loadingFailed', onCdpLoadingFailed)
-        cdpClient = client as any
-      } catch (e: any) {
-        uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
-      }
-
-      try {
-        // 2026-08-11修正(重大バグ): 実機ログで試行2・3回目に"Node is either
-        // not clickable or not an Element"というクリック失敗が確認された。
-        // isActive検知直後はモーダル内のDOM遷移(ファイル再選択後の再描画等)が
-        // まだ収まっていない可能性があるため、少し待ってからクリックし、
-        // それでも失敗する場合は短い間隔で数回リトライする。
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        let clickError: any = null
-        for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
-          try {
-            await page.click('input.jscImageUploaderModalSubmitButton')
-            clickError = null
-            break
-          } catch (e: any) {
-            clickError = e
-            // 2026-08-11追記(診断用): 待機+リトライを追加してもなお
-            // "not clickable"が解消しないケースが実機で確認された。単純な
-            // アニメーションタイミングの問題ではない可能性があるため、
-            // クリック失敗時の実際のDOM状態(表示状態・座標・一致要素数)を
-            // 記録し、原因特定に使う。
-            try {
-              const buttonState = await page.evaluate(() => {
-                const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
-                return buttons.map((btn) => {
-                  const el = btn as HTMLInputElement
-                  const rect = el.getBoundingClientRect()
-                  const style = window.getComputedStyle(el)
-                  return {
-                    isActiveClass: el.classList.contains('isActive'),
-                    disabled: el.disabled,
-                    offsetParentIsNull: el.offsetParent === null,
-                    display: style.display,
-                    visibility: style.visibility,
-                    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-                  }
-                })
-              })
-              log(
-                `[診断:クリック失敗詳細](試行${attempt}/${maxAttempts}, クリック試行${clickAttempt}/3) ` +
-                  `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
-              )
-            } catch (evalErr: any) {
-              log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
-            }
-            await new Promise((resolve) => setTimeout(resolve, 500))
-          }
-        }
-        if (clickError) throw clickError
-
-        // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
-        // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
-        // 画像IDが表示される。自動化のクリックが本当に同じ登録動作を引き起こして
-        // いるかを確認するため、当初はクリック直後のスクリーンショットをbase64で
-        // 記録していたが、実行履歴画面での表示・コピー時に長すぎる文字列が途中で
-        // 切れてしまい、しかもそれ以降(試行2・3回目分)のログまで一緒に失われる
-        // 実害が確認された。そのため画像ではなく、短いテキストで済むDOM状態の
-        // チェックに変更する。
+    // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
+    // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
+    // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
+    // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
+    const uploadEvents: string[] = []
+    const onRequestFinished = (req: any) => {
+      if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
+    }
+    const onResponse = async (res: any) => {
+      if (/doUpload/i.test(res.url())) {
+        let bodySnippet = ''
         try {
-          await new Promise((resolve) => setTimeout(resolve, 500))
-          const domSnapshot = await page.evaluate(() => {
-            // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
-            // 誤検知するため、"loading"で判定する("upload"は含まない)。
-            const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
-              .map((el) => el.className)
-              .filter((c) => typeof c === 'string' && c.length > 0)
-              .slice(0, 5)
-            const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
-            const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
-            return {
-              loadingLikeClasses: loadingLike,
-              submitButtonStillInDom: !!submitButton,
-              submitButtonDisabled: submitButton ? submitButton.disabled : null,
-              completionSpanText: completionSpan ? completionSpan.textContent : null
-            }
-          })
-          log(`[診断:DOM状態](試行${attempt}/${maxAttempts}) クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
-        } catch (e: any) {
-          log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
-        }
-
-        log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
-        await page.waitForFunction(
-          () => {
-            const el = document.getElementById('FRONT_IMG_ID_ID')
-            return !!el && !!el.textContent && el.textContent.trim().length > 0
-          },
-          { timeout: 45000 }
-        )
-        lastError = null
-        break
-      } catch (clickOrWaitError: any) {
-        // 2026-08-11修正(診断用): 従来はcatchの中身を受け取っておらず、
-        // 「登録する」クリック自体が例外で失敗した場合(要素が操作可能に
-        // ならない等のPuppeteerのアクショナビリティチェック失敗)の実際の
-        // エラーメッセージが握りつぶされていた。試行2回目以降で
-        // [診断:DOM状態]のログすら出ない(=クリックの行で例外が飛んでいる)
-        // ことが実機で確認されたため、原因特定のためにこのメッセージも記録する。
-        const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
-        const diag =
-          uploadEvents.length > 0
-            ? uploadEvents.join(' / ')
-            : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
-        lastError = new Error(
-          '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-            `45秒待っても検知できませんでした [診断] ${diag}`
-        )
-        if (attempt < maxAttempts) {
-          log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、ファイル再選択から再試行します... [診断] ${diag}`)
-          await new Promise((resolve) => setTimeout(resolve, 3000))
-        }
-      } finally {
-        page.off('request', onRequestFinished)
-        page.off('response', onResponse)
-        page.off('requestfailed', onRequestFailed)
-        if (cdpClient) {
-          cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
-          cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
-          await cdpClient.detach().catch(() => {})
-        }
+          bodySnippet = (await res.text()).slice(0, 300)
+        } catch {}
+        uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
       }
     }
-    if (lastError && process.env.SALONBOARD_PROXY_SERVER) {
-      log('[診断] プロキシなしでの比較テストを実行します(結果はこのジョブの成否には影響しません)...')
-      const comparisonResult = await diagnoseUploadWithoutProxy(page, imageBuffer, fileName).catch(
-        (e) => `[診断:プロキシなし比較] 比較テスト自体が例外で失敗: ${String(e)}`
-      )
-      log(comparisonResult)
-      lastError = new Error(`${lastError.message} ${comparisonResult}`)
+    const onRequestFailed = (req: any) => {
+      if (/doUpload/i.test(req.url())) {
+        uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
+      }
     }
-    if (lastError) throw lastError
+    page.on('request', onRequestFinished)
+    page.on('response', onResponse)
+    page.on('requestfailed', onRequestFailed)
+
+    // 2026-08-11追記(診断用): Puppeteerの高レベルAPI(requestfailed)だけでは
+    // net::ERR_EMPTY_RESPONSEの詳細(プロキシのトンネル自体が張れなかったのか、
+    // 張った後に応答が来なかったのか)が分からない。CDPのNetwork.loadingFailedは
+    // blockedReason/corsErrorStatus等の追加情報を持つことがあるため、生のCDP
+    // イベントも合わせて記録する。
+    const cdpRequestUrls = new Map<string, string>()
+    let cdpClient: any = null
+    const onCdpRequestWillBeSent = (params: any) => {
+      cdpRequestUrls.set(params.requestId, params.request?.url ?? '')
+    }
+    const onCdpLoadingFailed = (params: any) => {
+      const url = cdpRequestUrls.get(params.requestId) ?? ''
+      if (/doUpload/i.test(url)) {
+        uploadEvents.push(
+          `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
+            `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
+        )
+      }
+    }
+    try {
+      const client = await page.target().createCDPSession()
+      await client.send('Network.enable')
+      client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
+      client.on('Network.loadingFailed', onCdpLoadingFailed)
+      cdpClient = client as any
+    } catch (e: any) {
+      uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+    }
+
+    try {
+      // 2026-08-11修正(重大バグ): isActive検知直後はモーダル内のDOM遷移が
+      // まだ収まっていない可能性があるため、少し待ってからクリックし、
+      // それでも失敗する場合は短い間隔で数回リトライする(これはSALON BOARD
+      // 側との通信を伴わない純粋なUI操作のリトライであり、IPを変える対象の
+      // 「アップロード失敗」とは別物のため引き続き行う)。
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      let clickError: any = null
+      for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
+        try {
+          await page.click('input.jscImageUploaderModalSubmitButton')
+          clickError = null
+          break
+        } catch (e: any) {
+          clickError = e
+          try {
+            const buttonState = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
+              return buttons.map((btn) => {
+                const el = btn as HTMLInputElement
+                const rect = el.getBoundingClientRect()
+                const style = window.getComputedStyle(el)
+                return {
+                  isActiveClass: el.classList.contains('isActive'),
+                  disabled: el.disabled,
+                  offsetParentIsNull: el.offsetParent === null,
+                  display: style.display,
+                  visibility: style.visibility,
+                  rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                }
+              })
+            })
+            log(
+              `[診断:クリック失敗詳細](クリック試行${clickAttempt}/3) ` +
+                `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
+            )
+          } catch (evalErr: any) {
+            log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500))
+        }
+      }
+      if (clickError) throw clickError
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        const domSnapshot = await page.evaluate(() => {
+          // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
+          // 誤検知するため、"loading"で判定する("upload"は含まない)。
+          const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
+            .map((el) => el.className)
+            .filter((c) => typeof c === 'string' && c.length > 0)
+            .slice(0, 5)
+          const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
+          const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
+          return {
+            loadingLikeClasses: loadingLike,
+            submitButtonStillInDom: !!submitButton,
+            submitButtonDisabled: submitButton ? submitButton.disabled : null,
+            completionSpanText: completionSpan ? completionSpan.textContent : null
+          }
+        })
+        log(`[診断:DOM状態] クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
+      } catch (e: any) {
+        log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+      }
+
+      log('アップロード完了の検知を待機中...')
+      await page.waitForFunction(
+        () => {
+          const el = document.getElementById('FRONT_IMG_ID_ID')
+          return !!el && !!el.textContent && el.textContent.trim().length > 0
+        },
+        { timeout: 45000 }
+      )
+    } catch (clickOrWaitError: any) {
+      const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
+      const diag =
+        uploadEvents.length > 0
+          ? uploadEvents.join(' / ')
+          : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
+      throw new Error(
+        '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
+          `45秒待っても検知できませんでした [診断] ${diag}`
+      )
+    } finally {
+      page.off('request', onRequestFinished)
+      page.off('response', onResponse)
+      page.off('requestfailed', onRequestFailed)
+      if (cdpClient) {
+        cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
+        cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
+        await cdpClient.detach().catch(() => {})
+      }
+    }
   } finally {
     await unlink(tmpPath).catch(() => {})
   }
