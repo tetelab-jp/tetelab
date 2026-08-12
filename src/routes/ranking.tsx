@@ -373,6 +373,15 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
 
   const measured = c.req.query('measured') === '1'
 
+  // 表の列幅(px)。table-layout:fixedでcolgroupの指定通りに描画させるには、
+  // table自身にも同じ合計幅を明示しないとブラウザが内容量に応じて縮めてしまい、
+  // sticky指定のleft位置(この幅を前提にした固定px)とずれて表が崩れる。
+  const KEYWORD_COL_PX = 112
+  const LATEST_COLS_PX = 288 // 64(中エリア)+80(店舗数)+64(小エリア)+80(店舗数)
+  const OLD_RUN_COLS_PX = 112 // 56(中エリア)+56(小エリア)
+  const tableWidthPx =
+    runs.length === 0 ? 0 : KEYWORD_COL_PX + LATEST_COLS_PX + Math.max(runs.length - 1, 0) * OLD_RUN_COLS_PX
+
   return c.render(
     <PageLayout
       active="ranking-measure"
@@ -448,7 +457,29 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
       ) : (
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div class="overflow-x-auto">
-            <table class="text-sm text-center border-collapse">
+            {/* table-fixed+colgroupで列幅を強制しないと、ブラウザの自動レイアウトが
+                内容量に応じて列幅をずらしてしまい、sticky指定のleft位置(列幅の
+                累積値を前提にした固定px)とずれて表が崩れる(特に画面の狭い
+                スマホで顕著)。列幅は必ずcolgroupの値を正として一致させること。 */}
+            <table class="table-fixed text-sm text-center border-collapse" style={`width:${tableWidthPx}px`}>
+              <colgroup>
+                <col style="width:112px" />
+                {runs.map((_, i) =>
+                  i === 0 ? (
+                    <>
+                      <col style="width:64px" />
+                      <col style="width:80px" />
+                      <col style="width:64px" />
+                      <col style="width:80px" />
+                    </>
+                  ) : (
+                    <>
+                      <col style="width:56px" />
+                      <col style="width:56px" />
+                    </>
+                  )
+                )}
+              </colgroup>
               <thead>
                 <tr class="bg-pink-50/60 border-b border-pink-100">
                   <th class="w-28 py-3 px-3 text-left text-xs font-semibold text-gray-900 sticky left-0 z-10 bg-pink-50">
@@ -458,7 +489,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
                     <th
                       class={
                         'py-3 px-1 text-xs font-semibold text-gray-900 border-l border-pink-100 whitespace-nowrap' +
-                        (i === 0 ? ' sticky left-28 z-10 bg-pink-50' : '')
+                        (i === 0 ? ' sm:sticky sm:left-28 sm:z-10 bg-pink-50' : '')
                       }
                       colspan={i === 0 ? 4 : 2}
                     >
@@ -472,16 +503,16 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
                   {runs.map((_, i) =>
                     i === 0 ? (
                       <>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sticky left-28 z-10 bg-pink-50">
+                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sm:sticky sm:left-28 sm:z-10 bg-pink-50">
                           中エリア
                         </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sticky left-[176px] z-10 bg-pink-50">
+                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sm:sticky sm:left-[176px] sm:z-10 bg-pink-50">
                           店舗数
                         </th>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sticky left-[256px] z-10 bg-pink-50">
+                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sm:sticky sm:left-[256px] sm:z-10 bg-pink-50">
                           小エリア
                         </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sticky left-[320px] z-10 bg-pink-50 border-r-2 border-pink-200">
+                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sm:sticky sm:left-[320px] sm:z-10 bg-pink-50 border-r-2 border-pink-200">
                           店舗数
                         </th>
                       </>
@@ -532,18 +563,18 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
                       }
                       return (
                         <>
-                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sticky left-28 z-10' + rowBg}>
+                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sm:sticky sm:left-28 sm:z-10' + rowBg}>
                             <RankPivotCell current={middleCurrent} prev={middlePrev} />
                           </td>
-                          <td class={'w-20 py-3 px-1 sticky left-[176px] z-10' + rowBg}>
+                          <td class={'w-20 py-3 px-1 sm:sticky sm:left-[176px] sm:z-10' + rowBg}>
                             <StoreCountCell cell={middleCurrent} />
                           </td>
-                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sticky left-[256px] z-10' + rowBg}>
+                          <td class={'w-16 py-3 px-1 border-l border-gray-100 sm:sticky sm:left-[256px] sm:z-10' + rowBg}>
                             <RankPivotCell current={smallCurrent} prev={smallPrev} />
                           </td>
                           <td
                             class={
-                              'w-20 py-3 px-1 sticky left-[320px] z-10 border-r-2 border-gray-200' + rowBg
+                              'w-20 py-3 px-1 sm:sticky sm:left-[320px] sm:z-10 border-r-2 border-gray-200' + rowBg
                             }
                           >
                             <StoreCountCell cell={smallCurrent} />
