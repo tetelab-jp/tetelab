@@ -142,6 +142,12 @@ const bindings: Bindings = {
     await bindings.DB.prepare(
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS consecutive_failure_count INTEGER NOT NULL DEFAULT 0`
     ).run()
+    // 2026-08-12追記: 新規登録時、スタイル/ブログの自動投稿機能は管理者サイト
+    // (/admin/tool)で有効化するまで使わせない運用に変更したため、列自体の既定値も
+    // OFFへ変更する(新規登録時のINSERT文でも明示的に0を指定済みだが、念のため
+    // 列のDEFAULTもここで揃えておく。既存行の値は変更しない)。
+    await bindings.DB.prepare(`ALTER TABLE users ALTER COLUMN style_enabled SET DEFAULT 0`).run()
+    await bindings.DB.prepare(`ALTER TABLE users ALTER COLUMN blog_enabled SET DEFAULT 0`).run()
   } catch (err) {
     console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
   }

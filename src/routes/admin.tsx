@@ -289,7 +289,8 @@ admin.get('/admin/salons', async (c) => {
                     <form
                       method="post"
                       action={`/admin/salons/${salon.id}/impersonate`}
-                      onsubmit="return confirm('このサロンとしてログインします。よろしいですか？')"
+                      target="_blank"
+                      onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
                     >
                       <button
                         type="submit"
@@ -648,13 +649,13 @@ admin.get('/admin/status', async (c) => {
   const totalCount = countRow?.cnt ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / STATUS_PAGE_SIZE))
 
-  // 連続失敗回数が多い(=問題が起きている)サロンが上に来るように並べる。
+  // サロン一覧(/admin/salons)と同じ並び順(契約中を上位・契約外を最後尾)にする。
   const { results: salons } = await c.env.DB.prepare(
     `SELECT id, email, salon_name, consecutive_failure_count, is_active, style_enabled,
-       ROW_NUMBER() OVER (ORDER BY consecutive_failure_count DESC, created_at ASC) AS seq
+       ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
-     ORDER BY consecutive_failure_count DESC, created_at ASC
+     ORDER BY is_active DESC, created_at ASC
      LIMIT ? OFFSET ?`
   )
     .bind(q, likePattern, likePattern, STATUS_PAGE_SIZE, offset)

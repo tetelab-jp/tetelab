@@ -106,8 +106,11 @@ auth.post('/signup', async (c) => {
   }
 
   const passwordHash = await hashPassword(password)
+  // 契約状況(is_active)は既定のDEFAULT 1(契約中)のままでよいが、スタイル/
+  // ブログの自動投稿機能は、管理者サイト(/admin/tool)で有効化するまでは
+  // 使わせない運用のため、新規登録時は明示的にOFFで作成する。
   const result = await c.env.DB.prepare(
-    'INSERT INTO users (email, password_hash, salon_name) VALUES (?, ?, ?)'
+    'INSERT INTO users (email, password_hash, salon_name, style_enabled, blog_enabled) VALUES (?, ?, ?, 0, 0)'
   )
     .bind(email, passwordHash, salonName)
     .run()
