@@ -165,3 +165,38 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
   role   = aws_iam_role.github_actions_deploy.name
   policy = data.aws_iam_policy_document.github_actions_deploy.json
 }
+
+# ---------- CloudWatch Logs閲覧専用ユーザー(調査・デバッグ用) ----------
+# app/workerのログを読むためだけの最小権限。他のAWSリソースへの権限は一切与えない。
+# デバッグ目的の一時的な認証情報のため、不要になったらaws_iam_access_key.log_readerを
+# ローテーション(terraform taint等)するか、このリソース自体を削除すること。
+
+resource "aws_iam_user" "log_reader" {
+  name = "${var.project_name}-log-reader"
+}
+
+data "aws_iam_policy_document" "log_reader" {
+  statement {
+    sid = "ReadAppAndWorkerLogs"
+    actions = [
+      "logs:DescribeLogGroups",
+      "logs:DescribeLogStreams",
+      "logs:GetLogEvents",
+      "logs:FilterLogEvents"
+    ]
+    resources = [
+      "${aws_cloudwatch_log_group.app.arn}:*",
+      "${aws_cloudwatch_log_group.worker.arn}:*"
+    ]
+  }
+}
+
+resource "aws_iam_user_policy" "log_reader" {
+  name   = "${var.project_name}-log-reader"
+  user   = aws_iam_user.log_reader.name
+  policy = data.aws_iam_policy_document.log_reader.json
+}
+
+resource "aws_iam_access_key" "log_reader" {
+  user = aws_iam_user.log_reader.name
+}
