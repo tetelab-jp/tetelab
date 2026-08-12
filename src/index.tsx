@@ -13,6 +13,7 @@ import { verifyJwt } from './lib/jwt'
 import { hashPassword } from './lib/crypto'
 import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
+import { backfillCompressStyleImages } from './lib/style-image-backfill'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -220,6 +221,14 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(ranking_results.area_scope)に失敗しました:', err)
   }
   try {
+    // スタイル画像の保存前圧縮(image-process.ts)導入に伴い、既に圧縮済みかを
+    // 記録する列を追加する。NULLの行は起動完了後にbackfillCompressStyleImages()
+    // が一度だけ再圧縮する(詳細はmigrations-pg/0013_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE style_images ADD COLUMN IF NOT EXISTS compressed_at TIMESTAMP`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_images.compressed_at)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
@@ -241,7 +250,14 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時シード(初期管理者アカウント)に失敗しました:', err)
   }
-})()
+})().then(() => {
+  // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
+  // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。
+  // サーバー起動(ヘルスチェック応答)はこの完了を待たない。
+  void backfillCompressStyleImages(bindings).catch((err) => {
+    console.error('起動時バックフィル(style_images圧縮)に失敗しました:', err)
+  })
+})
 
 app.use('*', async (c, next) => {
   c.env = bindings

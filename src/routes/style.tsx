@@ -4,6 +4,7 @@ import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
+import { processStyleImage } from '../lib/image-process'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
@@ -942,11 +943,14 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
   if (!file || !(file instanceof File) || file.size === 0) return
 
   const arrayBuffer = await file.arrayBuffer()
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const key = `style/${user.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  // プロキシ経由のアップロードが大きいPOSTボディで失敗しやすいため、保存前に
+  // 縦4:横3・最大600x800px・300KB以下のJPEGへ正規化する(image-process.ts参照)。
+  // 出力は常にJPEGになるため拡張子もjpgで統一する。
+  const { buffer, contentType } = await processStyleImage(arrayBuffer)
+  const key = `style/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
 
-  await c.env.STYLE_IMAGES.put(key, arrayBuffer, {
-    httpMetadata: { contentType: file.type || 'image/jpeg' }
+  await c.env.STYLE_IMAGES.put(key, buffer, {
+    httpMetadata: { contentType }
   })
 
   const existingFront = await c.env.DB.prepare(
@@ -957,12 +961,15 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
 
   if (existingFront) {
     await c.env.STYLE_IMAGES.delete(existingFront.r2_key).catch(() => {})
-    await c.env.DB.prepare(`UPDATE style_images SET r2_key = ?, file_name = ? WHERE id = ?`)
+    await c.env.DB.prepare(
+      `UPDATE style_images SET r2_key = ?, file_name = ?, compressed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
       .bind(key, file.name, existingFront.id)
       .run()
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order) VALUES (?, 'FRONT', ?, ?, 0)`
+      `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order, compressed_at)
+       VALUES (?, 'FRONT', ?, ?, 0, CURRENT_TIMESTAMP)`
     )
       .bind(styleId, key, file.name)
       .run()

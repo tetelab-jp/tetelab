@@ -32,6 +32,7 @@
 
 import type { Bindings } from '../types'
 import { SALONBOARD_BASE_URL, type AutomationLogger, type Page } from './salonboard-automation'
+import { processStyleImage } from './image-process'
 
 export type ExistingStyleSummary = {
   styleId: string // L+9桁形式
@@ -387,12 +388,15 @@ export async function importSelectedStyles(
           const res = await fetch(detail.imageUrl)
           if (!res.ok) throw new Error(`画像の取得に失敗しました(status=${res.status})`)
           const bytes = new Uint8Array(await res.arrayBuffer())
+          // 手動アップロードと同様、保存前に規定サイズ・容量へ正規化する(image-process.ts参照)。
+          const { buffer, contentType } = await processStyleImage(bytes)
 
           const key = `style/${userId}/imported-${styleId}-${Date.now()}.jpg`
-          await env.STYLE_IMAGES.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } })
+          await env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
 
           await env.DB.prepare(
-            `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order) VALUES (?, 'FRONT', ?, ?, 0)`
+            `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order, compressed_at)
+             VALUES (?, 'FRONT', ?, ?, 0, CURRENT_TIMESTAMP)`
           )
             .bind(newStyleId, key, `${styleId}.jpg`)
             .run()
