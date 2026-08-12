@@ -53,6 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setValue('comment', t.comment_template)
       setValue('menu_detail_text', t.menu_detail_text)
       setValue('hashtags', (JSON.parse(t.hashtags_json || '[]') || []).join(','))
+      setValue('stylist_id', t.stylist_id != null ? String(t.stylist_id) : '')
       setValue('coupon_id', t.coupon_id != null ? String(t.coupon_id) : '')
 
       const category = t.category_value || 'SG01'

@@ -94,6 +94,15 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(proxy_session_pool_stats)に失敗しました:', err)
   }
+  try {
+    // テンプレート作成・適用画面にも担当スタイリスト欄を追加するための拡張列
+    // (詳細はmigrations-pg/0007_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE templates ADD COLUMN IF NOT EXISTS stylist_id INTEGER REFERENCES stylists(id) ON DELETE SET NULL`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(templates.stylist_id)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {
