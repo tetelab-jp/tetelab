@@ -287,6 +287,16 @@ automation.post('/api/style/:id/retry', requireAuth, async (c) => {
 // Bearer認証はユーザーセッションではなく、style_post_jobs.job_token
 // (ジョブ発行時に生成される使い捨てシークレット)で行う。
 
+// SALON BOARD側にはハッシュタグ専用の入力欄が存在しないため、
+// スタイリストコメント(#stylistCommentTxt、最大120文字)の末尾に
+// 「 #タグ1 #タグ2」の形で連結して送信する。
+function buildStylistCommentWithHashtags(comment: string, hashtagsJson: string): string {
+  const hashtags: string[] = JSON.parse(hashtagsJson || '[]')
+  const tagsText = hashtags.map((t) => `#${t}`).join(' ')
+  const combined = tagsText ? [comment, tagsText].filter(Boolean).join(' ') : comment
+  return combined.slice(0, 120)
+}
+
 automation.get('/api/automation/jobs/:id', async (c) => {
   const jobId = Number(c.req.param('id'))
   const authHeader = c.req.header('Authorization') || ''
@@ -346,7 +356,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
       imageFileName: row.front_file_name || `style-${row.id}.jpg`,
       styleName: (row.title || `スタイル${row.id}`).slice(0, 30),
       stylistSelectValue: row.stylist_select_value || '',
-      stylistComment: row.comment || '',
+      stylistComment: buildStylistCommentWithHashtags(row.comment || '', row.hashtags_json),
       categoryCd: (row.category_value as 'SG01' | 'SG02') || 'SG01',
       hairLengthValue: row.length_value || '',
       menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
