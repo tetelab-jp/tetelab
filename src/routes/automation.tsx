@@ -26,6 +26,11 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
+// 同一プロキシセッション(出口IP)で連続してネットワーク障害が発生した場合に
+// セッションを切り替えるまでの許容回数。1回だけの障害では切り替えない
+// (実績のない新しいIPは画像認証(CAPTCHA)に当たりやすいため)。
+const PROXY_SESSION_MAX_CONSECUTIVE_FAILURES = 2
+
 // ---------- 手動実行・履歴画面 ----------
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
@@ -426,30 +431,48 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
   // のnewAutomationPage/index.tsのrunJob参照)。
   //
-  // 2026-08-12追記(重大バグ修正): 従来はログイン成功のみを条件に保存していたが、
-  // ログインは通っても画像アップロード等の後続工程がプロキシ側の障害
-  // (net::ERR_EMPTY_RESPONSE等)で失敗するセッションが存在し、そのIDが
-  // 「実績あり」として記録され続けると、以降のジョブが毎回同じ壊れた
-  // セッション(出口IP)を使い回して同じ失敗を繰り返す状態になっていた。
-  // そのため保存はジョブ全体が成功した場合のみに限定し、後続工程が
-  // ネットワークレベルの障害(net::ERR_*)で失敗した場合は記録済みの
-  // セッションIDをクリアして、次回は新しい出口IPを発行させる。
+  // 2026-08-12追記: 実績のないセッション(出口IP)でログインすると画像認証
+  // (CAPTCHA)を要求されるリスクがあるため、1回のネットワーク障害
+  // (net::ERR_EMPTY_RESPONSE等)だけでは切り替えず、同一セッションで2回
+  // 連続して発生した場合のみ「このセッションは壊れている」とみなして
+  // 切り替える(PROXY_SESSION_MAX_CONSECUTIVE_FAILURES)。1回だけなら
+  // 一時的な通信不安定の可能性を優先し、同じ出口IPを使い続ける。
   const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
   if (body.success && body.proxySessionId) {
     await c.env.DB.prepare(
-      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP,
+         proxy_session_fail_count = 0
        WHERE user_id = ?`
     )
       .bind(body.proxySessionId, userId)
       .run()
       .catch(() => {})
-  } else if (networkErrorSignal) {
-    await c.env.DB.prepare(
-      `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`
+  } else if (networkErrorSignal && body.proxySessionId) {
+    const cred = await c.env.DB.prepare(
+      `SELECT last_successful_proxy_session_id, proxy_session_fail_count FROM salon_credentials WHERE user_id = ?`
     )
       .bind(userId)
-      .run()
-      .catch(() => {})
+      .first<{ last_successful_proxy_session_id: string | null; proxy_session_fail_count: number | null }>()
+
+    // 現在「実績あり」として記録されているセッションと同じものが失敗した
+    // 場合のみ、失敗回数をカウントする(既に別セッションに切り替わっている
+    // 場合や、そもそも記録が無い場合は対象外)。
+    if (cred?.last_successful_proxy_session_id === body.proxySessionId) {
+      const failCount = (cred.proxy_session_fail_count ?? 0) + 1
+      if (failCount >= PROXY_SESSION_MAX_CONSECUTIVE_FAILURES) {
+        await c.env.DB.prepare(
+          `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL, proxy_session_fail_count = 0 WHERE user_id = ?`
+        )
+          .bind(userId)
+          .run()
+          .catch(() => {})
+      } else {
+        await c.env.DB.prepare(`UPDATE salon_credentials SET proxy_session_fail_count = ? WHERE user_id = ?`)
+          .bind(failCount, userId)
+          .run()
+          .catch(() => {})
+      }
+    }
   }
 
   let jobStatus: string
