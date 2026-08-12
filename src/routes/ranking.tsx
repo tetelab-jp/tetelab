@@ -251,7 +251,7 @@ function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
   if (current.rank == null) {
     return (
       <span class="inline-flex flex-col items-center">
-        <span class="text-gray-400 text-xs font-medium whitespace-nowrap">圏外</span>
+        <span class="text-gray-700 text-xs font-medium whitespace-nowrap">圏外</span>
         {prev && prev.rank != null && (
           <span class="block text-[10px] leading-tight text-red-500 mt-0.5 whitespace-nowrap">▼前回{prev.rank}位</span>
         )}
@@ -275,7 +275,7 @@ function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
         ) : diff < 0 ? (
           <span class="block text-[10px] leading-tight font-semibold text-red-500 mt-0.5">▼{-diff}</span>
         ) : (
-          <span class="block text-[10px] leading-tight font-medium text-gray-400 mt-0.5">±0</span>
+          <span class="block text-[10px] leading-tight font-medium text-gray-600 mt-0.5">±0</span>
         )
     }
   }
@@ -293,7 +293,7 @@ function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
 // 最新列専用: 該当店舗数だけを表示する独立セル
 function StoreCountCell({ cell }: { cell: Cell }) {
   if (!cell || cell.resultCount == null) return <span class="text-gray-300 text-xs">-</span>
-  return <span class="text-xs text-gray-400 whitespace-nowrap">{cell.resultCount}店舗中</span>
+  return <span class="text-xs text-gray-700 whitespace-nowrap">{cell.resultCount}店舗中</span>
 }
 
 /** 計測日を「8/12」のような短い表記にする */
@@ -451,13 +451,13 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
             <table class="text-sm text-center border-collapse">
               <thead>
                 <tr class="bg-pink-50/60 border-b border-pink-100">
-                  <th class="w-28 py-3 px-3 text-left text-xs font-semibold text-gray-500 sticky left-0 z-10 bg-pink-50">
+                  <th class="w-28 py-3 px-3 text-left text-xs font-semibold text-gray-900 sticky left-0 z-10 bg-pink-50">
                     対策キーワード
                   </th>
                   {runs.map((run, i) => (
                     <th
                       class={
-                        'py-3 px-1 text-xs font-semibold text-gray-600 border-l border-pink-100 whitespace-nowrap' +
+                        'py-3 px-1 text-xs font-semibold text-gray-900 border-l border-pink-100 whitespace-nowrap' +
                         (i === 0 ? ' sticky left-28 z-10 bg-pink-50' : '')
                       }
                       colspan={i === 0 ? 4 : 2}
@@ -472,25 +472,25 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
                   {runs.map((_, i) =>
                     i === 0 ? (
                       <>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-400 font-medium border-l border-pink-100 whitespace-nowrap sticky left-28 z-10 bg-pink-50">
+                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sticky left-28 z-10 bg-pink-50">
                           中エリア
                         </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-400 font-medium whitespace-nowrap sticky left-[176px] z-10 bg-pink-50">
+                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sticky left-[176px] z-10 bg-pink-50">
                           店舗数
                         </th>
-                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-400 font-medium border-l border-pink-100 whitespace-nowrap sticky left-[256px] z-10 bg-pink-50">
+                        <th class="w-16 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap sticky left-[256px] z-10 bg-pink-50">
                           小エリア
                         </th>
-                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-400 font-medium whitespace-nowrap sticky left-[320px] z-10 bg-pink-50 border-r-2 border-pink-200">
+                        <th class="w-20 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap sticky left-[320px] z-10 bg-pink-50 border-r-2 border-pink-200">
                           店舗数
                         </th>
                       </>
                     ) : (
                       <>
-                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-400 font-medium border-l border-pink-100 whitespace-nowrap">
+                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-700 font-medium border-l border-pink-100 whitespace-nowrap">
                           中エリア
                         </th>
-                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-400 font-medium whitespace-nowrap">
+                        <th class="w-14 py-1.5 px-1 text-[10px] text-gray-700 font-medium whitespace-nowrap">
                           小エリア
                         </th>
                       </>
@@ -503,7 +503,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
                   <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
                     <td
                       class={
-                        'w-28 py-3 px-3 text-left text-gray-800 font-semibold text-xs truncate sticky left-0 z-10' +
+                        'w-28 py-3 px-3 text-left text-gray-900 font-semibold text-xs truncate sticky left-0 z-10' +
                         (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
                       }
                       title={kw}
