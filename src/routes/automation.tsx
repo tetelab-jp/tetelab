@@ -7,6 +7,7 @@ import {
   retryStylePost,
   currentJstTimeLabel,
   getStyleRowForJob,
+  getStyleNo,
   sweepStaleJobs
 } from '../lib/style-post-runner'
 import { decryptSecret } from '../lib/crypto'
@@ -54,7 +55,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
   const { results: logs } = await c.env.DB.prepare(
-    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.post_id, l.created_at,
+    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.style_no, l.post_id, l.created_at,
             s.title AS style_title, p.title AS post_title
      FROM execution_logs l
      LEFT JOIN styles s ON s.id = l.style_id
@@ -68,6 +69,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       message: string
       execution_type: string | null
       style_id: number | null
+      style_no: number | null
       post_id: number | null
       created_at: string
       style_title: string | null
@@ -91,7 +93,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
           )}
           {l.style_id ? (
             <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-              No.{l.style_id} {l.style_title || '(無題)'}
+              No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
             </a>
           ) : l.post_id ? (
             l.post_title || `投稿${l.post_id}`
@@ -390,6 +392,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const { style_id: styleId, user_id: userId } = job
   const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
   const messageWithDiagnostics = (body.message + diagnostics).slice(0, 2000)
+  const styleNo = await getStyleNo(c.env, userId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
   if (body.step === 'login' && !body.success) {
@@ -427,16 +430,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', 'success', '反映申請成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', '反映申請成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     jobStatus = 'success'
   } else if (body.step === 'reflect') {
@@ -449,16 +452,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(reflectStatus, messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', ?, ?)`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'request_reflection', ?, ?)`
     )
-      .bind(userId, styleId, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
+      .bind(userId, styleId, styleNo, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
       .run()
     jobStatus = reflectStatus
   } else {
@@ -469,10 +472,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', ?)`
     )
-      .bind(userId, styleId, `スタイル登録失敗: ${messageWithDiagnostics}`)
+      .bind(userId, styleId, styleNo, `スタイル登録失敗: ${messageWithDiagnostics}`)
       .run()
     jobStatus = 'failed'
   }

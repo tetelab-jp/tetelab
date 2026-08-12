@@ -68,6 +68,13 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(style_post_jobs.run_id)に失敗しました:', err)
   }
+  try {
+    // 個別実行ログのNo.表示を、実行時点の登録スタイル一覧の並び順で
+    // スナップショットしておくための拡張列(詳細はmigrations-pg/0004_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE execution_logs ADD COLUMN IF NOT EXISTS style_no INTEGER`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(execution_logs.style_no)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {
