@@ -74,6 +74,40 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       post_title: string | null
     }>()
 
+  const logRows = (logs || []).map((l) => {
+    const category = l.post_id ? 'ブログ' : 'スタイル'
+    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 2000)
+    return {
+      id: l.id,
+      dateLabel: formatJstDate(l.created_at),
+      category,
+      categoryClass: category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600',
+      content: (
+        <>
+          {l.execution_type && (
+            <span class="text-xs font-semibold text-gray-400 mr-1">
+              [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+            </span>
+          )}
+          {l.style_id ? (
+            <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+              No.{l.style_id} {l.style_title || '(無題)'}
+            </a>
+          ) : l.post_id ? (
+            l.post_title || `投稿${l.post_id}`
+          ) : (
+            '-'
+          )}
+        </>
+      ),
+      statusLabel: LOG_RESULT_LABEL[l.status] || l.status,
+      statusClass: LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500',
+      borderClass: LOG_RESULT_BORDER[l.status] || 'border-gray-300',
+      errorText: errorText || '-',
+      showToggle: errorText.length > 150
+    }
+  })
+
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
   const { results: retryTargets } = await c.env.DB.prepare(
     `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
@@ -129,78 +163,87 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
-        {!logs || logs.length === 0 ? (
+        {logRows.length === 0 ? (
           <p class="text-sm text-gray-400">まだログがありません</p>
         ) : (
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead>
-                <tr class="text-left text-gray-400 border-b border-gray-100">
-                  <th class="py-2 pl-3">実行日時</th>
-                  <th class="py-2">カテゴリ</th>
-                  <th class="py-2">内容</th>
-                  <th class="py-2">ステータス</th>
-                  <th class="py-2">エラー</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((l) => {
-                  const category = l.post_id ? 'ブログ' : 'スタイル'
-                  return (
+          <>
+            {/* PC表示: テーブル */}
+            <div class="hidden md:block overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-gray-400 border-b border-gray-100">
+                    <th class="py-2 pl-3">実行日時</th>
+                    <th class="py-2">カテゴリ</th>
+                    <th class="py-2">内容</th>
+                    <th class="py-2">ステータス</th>
+                    <th class="py-2">エラー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logRows.map((r) => (
                     <tr class="border-b border-gray-50">
-                      <td
-                        class={
-                          'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' +
-                          (LOG_RESULT_BORDER[l.status] || 'border-gray-300')
-                        }
-                      >
-                        {formatJstDate(l.created_at)}
+                      <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
+                        {r.dateLabel}
                       </td>
                       <td class="py-2">
-                        <span
-                          class={
-                            'text-xs px-2 py-0.5 rounded font-semibold ' +
-                            (category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600')
-                          }
-                        >
-                          {category}
-                        </span>
+                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
                       </td>
-                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">
-                        {l.style_id ? (
-                          <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-                            No.{l.style_id} {l.style_title || '(無題)'}
-                          </a>
-                        ) : l.post_id ? (
-                          l.post_title || `投稿${l.post_id}`
-                        ) : (
-                          '-'
-                        )}
-                        {l.execution_type && (
-                          <span class="text-gray-400 ml-1">
-                            [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
-                          </span>
-                        )}
-                      </td>
+                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
                       <td class="py-2">
-                        <span
-                          class={
-                            'text-xs px-2 py-0.5 rounded font-semibold ' +
-                            (LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500')
-                          }
-                        >
-                          {LOG_RESULT_LABEL[l.status] || l.status}
-                        </span>
+                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
                       </td>
-                      <td class="py-2 text-xs text-gray-400 max-w-xs truncate" title={l.message}>
-                        {l.status === 'success' ? '-' : l.message || '-'}
+                      <td class="py-2 text-xs text-gray-400 max-w-xs">
+                        <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
+                        {r.showToggle && (
+                          <button
+                            type="button"
+                            class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                            onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                          >
+                            続きを見る
+                          </button>
+                        )}
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* モバイル表示: カード */}
+            <div class="md:hidden space-y-3">
+              {logRows.map((r) => (
+                <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-gray-500">{r.dateLabel}</span>
+                    <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1.5">
+                    <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
+                      {r.category}
+                    </span>
+                    <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+                  </div>
+                  {r.errorText !== '-' && (
+                    <div class="mt-1.5">
+                      <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
+                        {r.errorText}
+                      </p>
+                      {r.showToggle && (
+                        <button
+                          type="button"
+                          class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                          onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                        >
+                          続きを見る
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </>
         )}
       </div>
 

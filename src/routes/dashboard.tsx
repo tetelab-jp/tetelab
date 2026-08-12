@@ -71,10 +71,11 @@ dashboard.get('/dashboard', async (c) => {
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
           <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
           <p class="text-sm text-gray-500 leading-relaxed">
-            作業開始の前にこちらから同期をしてください。
+            作業開始の前に必ずこちらから同期をしてください。
             <br />
-            サロンボードに登録されているスタイリスト・クーポンの一覧を取得し、このアプリのスタイル投稿フォームで選べるようにします。
-            スタイリストやクーポンを追加・変更した場合は再度同期してください。
+            登録されているスタイリスト・クーポンの一覧を取得し、スタイル投稿フォームで選べるようにします。
+            <br />
+            ※サロンボードのスタイリストやクーポンを追加・変更した場合は再度同期してください。
           </p>
           <button
             id="sync-stylists-coupons-btn"
@@ -212,13 +213,14 @@ dashboard.get('/dashboard', async (c) => {
           </div>
         )}
 
-        <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
             <input
               required
               type="text"
               name="salonboard_login_id"
+              autocomplete="off"
               placeholder="サロンボードのログインIDを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
@@ -229,6 +231,7 @@ dashboard.get('/dashboard', async (c) => {
               required
               type="password"
               name="salonboard_password"
+              autocomplete="new-password"
               placeholder="サロンボードのパスワードを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
@@ -341,13 +344,14 @@ dashboard.get('/settings/salonboard', async (c) => {
           </div>
         )}
 
-        <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
             <input
               required
               type="text"
               name="salonboard_login_id"
+              autocomplete="off"
               placeholder="サロンボードのログインIDを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
@@ -358,6 +362,7 @@ dashboard.get('/settings/salonboard', async (c) => {
               required
               type="password"
               name="salonboard_password"
+              autocomplete="new-password"
               placeholder="サロンボードのパスワードを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
