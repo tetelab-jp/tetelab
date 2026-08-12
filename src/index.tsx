@@ -76,14 +76,23 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(execution_logs.style_no)に失敗しました:', err)
   }
   try {
-    // 同一プロキシセッションでのネットワーク障害の連続回数を記録し、
-    // 1回の障害では切り替えず2回連続で初めて切り替える判定に使う
-    // (詳細はmigrations-pg/0005_*.sql参照)。
+    // 2026-08-12追記: プロキシが少数(実測5個)の専用固定IPプールであることが
+    // 判明したため、単一の「直近成功セッション」だけを覚える方式(0005)から、
+    // プール内の各セッションIDごとに連続障害回数を記録し、その時点で最も
+    // 調子の良いものを選ぶ方式に変更した(詳細はmigrations-pg/0006_*.sql参照)。
     await bindings.DB.prepare(
-      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS proxy_session_fail_count INTEGER DEFAULT 0`
+      `CREATE TABLE IF NOT EXISTS proxy_session_pool_stats (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL,
+         session_id TEXT NOT NULL,
+         consecutive_fail_count INTEGER NOT NULL DEFAULT 0,
+         last_result TEXT,
+         last_used_at TIMESTAMP,
+         UNIQUE(user_id, session_id)
+       )`
     ).run()
   } catch (err) {
-    console.error('起動時マイグレーション(salon_credentials.proxy_session_fail_count)に失敗しました:', err)
+    console.error('起動時マイグレーション(proxy_session_pool_stats)に失敗しました:', err)
   }
 })()
 

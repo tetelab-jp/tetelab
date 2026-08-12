@@ -26,10 +26,14 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-// 同一プロキシセッション(出口IP)で連続してネットワーク障害が発生した場合に
-// セッションを切り替えるまでの許容回数。1回だけの障害では切り替えない
-// (実績のない新しいIPは画像認証(CAPTCHA)に当たりやすいため)。
-const PROXY_SESSION_MAX_CONSECUTIVE_FAILURES = 2
+// 2026-08-12追記: Bright Dataのプロキシ契約を確認したところ、実際には
+// 少数(5個)の専用固定IPのプールであることが判明した(一般家庭回線を
+// 都度借りるローテーション型ではない)。そのため「新しいセッションID=
+// 未知のIP」ではなく、常にこの5つの中のどれかを使うことになる。
+// このプール内の各セッションIDごとに連続障害回数を記録し(DB:
+// proxy_session_pool_stats)、その時点で最も調子の良い(連続障害回数が
+// 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
+const PROXY_SESSION_POOL = ['salonmotion-pool-1', 'salonmotion-pool-2', 'salonmotion-pool-3', 'salonmotion-pool-4', 'salonmotion-pool-5']
 
 // ---------- 手動実行・履歴画面 ----------
 
@@ -313,15 +317,10 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
-       FROM salon_credentials WHERE user_id = ?`
+    `SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{
-      salonboard_login_id_enc: string
-      salonboard_password_enc: string
-      last_successful_proxy_session_id: string | null
-    }>()
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -357,10 +356,29 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .first<{ cnt: number }>()
   const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
 
+  // プール内の各セッションIDの連続障害回数を見て、最も調子の良いものを選ぶ
+  // (記録が無いものは0回として扱う。同点の場合は配列の先頭を優先し、
+  // 健全な間はできるだけ同じセッションを使い続ける)。
+  const poolStats = await c.env.DB.prepare(
+    `SELECT session_id, consecutive_fail_count FROM proxy_session_pool_stats WHERE user_id = ?`
+  )
+    .bind(job.user_id)
+    .all<{ session_id: string; consecutive_fail_count: number }>()
+  const failCounts = new Map((poolStats.results || []).map((r) => [r.session_id, r.consecutive_fail_count]))
+  let bestProxySessionId = PROXY_SESSION_POOL[0]
+  let bestFailCount = failCounts.get(bestProxySessionId) ?? 0
+  for (const sid of PROXY_SESSION_POOL) {
+    const fc = failCounts.get(sid) ?? 0
+    if (fc < bestFailCount) {
+      bestProxySessionId = sid
+      bestFailCount = fc
+    }
+  }
+
   return c.json({
     loginId,
     password,
-    preferredProxySessionId: hasConcurrentJob ? undefined : cred.last_successful_proxy_session_id || undefined,
+    preferredProxySessionId: hasConcurrentJob ? undefined : bestProxySessionId,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -426,52 +444,36 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .catch(() => {})
   }
 
-  // 2026-08-11追記: ログインに成功した(CAPTCHA等を回避できた)プロキシセッション
-  // IDを記録し、次回以降のジョブで優先的に使い回す(出口IPを固定する)ために
-  // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
-  // のnewAutomationPage/index.tsのrunJob参照)。
-  //
-  // 2026-08-12追記: 実績のないセッション(出口IP)でログインすると画像認証
-  // (CAPTCHA)を要求されるリスクがあるため、1回のネットワーク障害
-  // (net::ERR_EMPTY_RESPONSE等)だけでは切り替えず、同一セッションで2回
-  // 連続して発生した場合のみ「このセッションは壊れている」とみなして
-  // 切り替える(PROXY_SESSION_MAX_CONSECUTIVE_FAILURES)。1回だけなら
-  // 一時的な通信不安定の可能性を優先し、同じ出口IPを使い続ける。
+  // 2026-08-12追記: プロキシは少数(5個)の専用固定IPプールのため、
+  // 使われたセッションID(=プールの1メンバー)ごとに連続障害回数を記録する。
+  // ジョブ全体が成功すればそのセッションの連続障害回数を0にリセットし、
+  // 後続工程がネットワークレベルの障害(net::ERR_*)で失敗した場合は
+  // 連続障害回数を1増やす(次回のジョブ取得時、この回数が最小のセッションが
+  // 優先的に選ばれる仕組み)。プール外のセッションID(同時実行回避時など
+  // ワーカー側がランダムに払い出したもの)は対象外とする。
   const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
-  if (body.success && body.proxySessionId) {
-    await c.env.DB.prepare(
-      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP,
-         proxy_session_fail_count = 0
-       WHERE user_id = ?`
-    )
-      .bind(body.proxySessionId, userId)
-      .run()
-      .catch(() => {})
-  } else if (networkErrorSignal && body.proxySessionId) {
-    const cred = await c.env.DB.prepare(
-      `SELECT last_successful_proxy_session_id, proxy_session_fail_count FROM salon_credentials WHERE user_id = ?`
-    )
-      .bind(userId)
-      .first<{ last_successful_proxy_session_id: string | null; proxy_session_fail_count: number | null }>()
-
-    // 現在「実績あり」として記録されているセッションと同じものが失敗した
-    // 場合のみ、失敗回数をカウントする(既に別セッションに切り替わっている
-    // 場合や、そもそも記録が無い場合は対象外)。
-    if (cred?.last_successful_proxy_session_id === body.proxySessionId) {
-      const failCount = (cred.proxy_session_fail_count ?? 0) + 1
-      if (failCount >= PROXY_SESSION_MAX_CONSECUTIVE_FAILURES) {
-        await c.env.DB.prepare(
-          `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL, proxy_session_fail_count = 0 WHERE user_id = ?`
-        )
-          .bind(userId)
-          .run()
-          .catch(() => {})
-      } else {
-        await c.env.DB.prepare(`UPDATE salon_credentials SET proxy_session_fail_count = ? WHERE user_id = ?`)
-          .bind(failCount, userId)
-          .run()
-          .catch(() => {})
-      }
+  if (body.proxySessionId && PROXY_SESSION_POOL.includes(body.proxySessionId)) {
+    if (body.success) {
+      await c.env.DB.prepare(
+        `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+         VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id, session_id) DO UPDATE SET
+           consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
+      )
+        .bind(userId, body.proxySessionId)
+        .run()
+        .catch(() => {})
+    } else if (networkErrorSignal) {
+      await c.env.DB.prepare(
+        `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+         VALUES (?, ?, 1, 'network_error', CURRENT_TIMESTAMP)
+         ON CONFLICT (user_id, session_id) DO UPDATE SET
+           consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
+           last_result = 'network_error', last_used_at = CURRENT_TIMESTAMP`
+      )
+        .bind(userId, body.proxySessionId)
+        .run()
+        .catch(() => {})
     }
   }
 
