@@ -389,20 +389,31 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center flex-shrink-0">
-            <i class="fas fa-store text-pink-500"></i>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center flex-shrink-0">
+              <i class="fas fa-store text-pink-500"></i>
+            </div>
+            <div class="min-w-0">
+              {primaryQuery ? (
+                <>
+                  <p class="font-bold text-gray-900 text-lg truncate">{primaryQuery.salon_name}</p>
+                  <p class="text-sm text-gray-500 truncate">{primaryQuery.area_label || '-'}</p>
+                </>
+              ) : (
+                <p class="font-semibold text-gray-900">対策キーワード設定が未登録です</p>
+              )}
+            </div>
           </div>
-          <div class="min-w-0">
-            {primaryQuery ? (
-              <>
-                <p class="font-bold text-gray-900 text-lg truncate">{primaryQuery.salon_name}</p>
-                <p class="text-sm text-gray-500 truncate">{primaryQuery.area_label || '-'}</p>
-              </>
-            ) : (
-              <p class="font-semibold text-gray-900">対策キーワード設定が未登録です</p>
-            )}
-          </div>
+          {keywordsList.length > 0 && (
+            <button
+              type="button"
+              id="measure-run-btn"
+              class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition disabled:opacity-50"
+            >
+              <i class="fas fa-magnifying-glass-chart mr-2"></i>測定
+            </button>
+          )}
         </div>
 
         {keywordsList.length === 0 ? (
@@ -414,22 +425,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
             で追加してください。
           </p>
         ) : (
-          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mt-4 pt-4 border-t border-gray-100">
-            <div>
-              <p class="text-sm text-gray-600">
-                登録済みキーワード<span class="font-semibold text-gray-900">{keywordsList.length}件</span>
-                を、中エリア・小エリアの両方で計測します。
-              </p>
-              <p id="measure-status" class="text-sm text-pink-600 mt-1"></p>
-            </div>
-            <button
-              type="button"
-              id="measure-run-btn"
-              class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition disabled:opacity-50"
-            >
-              <i class="fas fa-magnifying-glass-chart mr-2"></i>測定
-            </button>
-          </div>
+          <p id="measure-status" class="text-sm text-pink-600 mt-3"></p>
         )}
       </div>
 
