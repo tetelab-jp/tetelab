@@ -177,9 +177,15 @@ resource "aws_iam_user" "log_reader" {
 
 data "aws_iam_policy_document" "log_reader" {
   statement {
+    # logs:DescribeLogGroupsはアカウント内一覧取得APIのため、特定のロググループ単位では
+    # 権限を絞れず、Resource="*"が必須(実機で確認済み: 特定ARNを指定するとAccessDenied)。
+    sid       = "ListLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+  statement {
     sid = "ReadAppAndWorkerLogs"
     actions = [
-      "logs:DescribeLogGroups",
       "logs:DescribeLogStreams",
       "logs:GetLogEvents",
       "logs:FilterLogEvents"
