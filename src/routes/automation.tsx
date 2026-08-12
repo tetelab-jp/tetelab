@@ -10,7 +10,7 @@ import {
   sweepStaleJobs
 } from '../lib/style-post-runner'
 import { decryptSecret } from '../lib/crypto'
-import { formatJstDateTime } from '../lib/date-format'
+import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
@@ -33,7 +33,7 @@ const EXECUTION_TYPE_LABEL: Record<string, string> = {
 }
 
 const LOG_RESULT_LABEL: Record<string, string> = {
-  success: '成功',
+  success: '完了',
   blocked: 'ブロック',
   failure: '失敗'
 }
@@ -44,58 +44,21 @@ const LOG_RESULT_COLOR: Record<string, string> = {
   failure: 'bg-red-50 text-red-600'
 }
 
-const RUN_STATUS_LABEL: Record<string, string> = {
-  processing: '処理中',
-  done: '完了',
-  failed: '失敗',
-  partial_failure: '一部失敗'
+const LOG_RESULT_BORDER: Record<string, string> = {
+  success: 'border-green-500',
+  blocked: 'border-amber-500',
+  failure: 'border-red-500'
 }
 
 automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
-  const { results: runs } = await c.env.DB.prepare(
-    `SELECT id, scheduled_time, total_images, status, error_message, executed_at, created_at
-     FROM style_post_runs WHERE user_id = ? ORDER BY id DESC LIMIT 10`
-  )
-    .bind(user.id)
-    .all<{
-      id: number
-      scheduled_time: string
-      total_images: number
-      status: string
-      error_message: string | null
-      executed_at: string | null
-      created_at: string
-    }>()
-
-  // 実行履歴に「どのスタイルが対象だったか」を表示するため、対象runIdに
-  // 紐づくジョブ(style_post_jobs.run_id)からスタイルのID・名前を取得する。
-  const runIds = (runs || []).map((r) => r.id)
-  const stylesByRunId = new Map<number, { id: number; title: string | null }[]>()
-  if (runIds.length > 0) {
-    const placeholders = runIds.map(() => '?').join(',')
-    const { results: runStyles } = await c.env.DB.prepare(
-      `SELECT j.run_id, s.id AS style_id, s.title
-       FROM style_post_jobs j
-       JOIN styles s ON s.id = j.style_id
-       WHERE j.run_id IN (${placeholders})
-       ORDER BY j.id ASC`
-    )
-      .bind(...runIds)
-      .all<{ run_id: number; style_id: number; title: string | null }>()
-
-    for (const row of runStyles || []) {
-      const list = stylesByRunId.get(row.run_id) || []
-      list.push({ id: row.style_id, title: row.title })
-      stylesByRunId.set(row.run_id, list)
-    }
-  }
-
   const { results: logs } = await c.env.DB.prepare(
-    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.created_at, s.title AS style_title
+    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.post_id, l.created_at,
+            s.title AS style_title, p.title AS post_title
      FROM execution_logs l
      LEFT JOIN styles s ON s.id = l.style_id
+     LEFT JOIN posts p ON p.id = l.post_id
      WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 30`
   )
     .bind(user.id)
@@ -105,8 +68,10 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       message: string
       execution_type: string | null
       style_id: number | null
+      post_id: number | null
       created_at: string
       style_title: string | null
+      post_title: string | null
     }>()
 
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
@@ -163,107 +128,79 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-3"><i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>実行履歴</p>
-        {!runs || runs.length === 0 ? (
-          <p class="text-sm text-gray-400">まだ実行履歴がありません</p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">実行時刻区分</th>
-                <th class="py-2">対象枚数</th>
-                <th class="py-2">対象スタイル</th>
-                <th class="py-2">ステータス</th>
-                <th class="py-2">エラー</th>
-                <th class="py-2">実行日時</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">{r.scheduled_time}</td>
-                  <td class="py-2">{r.total_images}</td>
-                  <td class="py-2 text-xs text-gray-500 max-w-xs truncate">
-                    {(stylesByRunId.get(r.id) || [])
-                      .map((s) => `No.${s.id} ${s.title || '(無題)'}`)
-                      .join(', ') || '-'}
-                  </td>
-                  <td class="py-2">
-                    <span
-                      class={
-                        'px-2 py-0.5 rounded text-xs font-semibold ' +
-                        (r.status === 'done'
-                          ? 'bg-green-50 text-green-600'
-                          : r.status === 'failed'
-                          ? 'bg-red-50 text-red-600'
-                          : r.status === 'partial_failure'
-                          ? 'bg-amber-50 text-amber-600'
-                          : 'bg-gray-50 text-gray-500')
-                      }
-                    >
-                      {RUN_STATUS_LABEL[r.status] || r.status}
-                    </span>
-                  </td>
-                  <td class="py-2 text-xs text-gray-400 max-w-xs truncate">{r.error_message || '-'}</td>
-                  <td class="py-2 text-xs text-gray-400">{formatJstDateTime(r.executed_at || r.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
         {!logs || logs.length === 0 ? (
           <p class="text-sm text-gray-400">まだログがありません</p>
         ) : (
-          <ul class="text-sm divide-y divide-gray-50">
-            {logs.map((l) => (
-              <li class="py-2.5">
-                <div class="flex items-center justify-between gap-2 flex-wrap">
-                  <div class="flex items-center gap-2 min-w-0">
-                    {l.execution_type && (
-                      <span class="text-xs font-semibold text-gray-400 flex-shrink-0">
-                        [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
-                      </span>
-                    )}
-                    {l.style_id ? (
-                      <a
-                        href={`/style/${l.style_id}/edit`}
-                        class="font-medium text-gray-700 hover:text-pink-600 hover:underline truncate"
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead>
+                <tr class="text-left text-gray-400 border-b border-gray-100">
+                  <th class="py-2 pl-3">実行日時</th>
+                  <th class="py-2">カテゴリ</th>
+                  <th class="py-2">内容</th>
+                  <th class="py-2">ステータス</th>
+                  <th class="py-2">エラー</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map((l) => {
+                  const category = l.post_id ? 'ブログ' : 'スタイル'
+                  return (
+                    <tr class="border-b border-gray-50">
+                      <td
+                        class={
+                          'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' +
+                          (LOG_RESULT_BORDER[l.status] || 'border-gray-300')
+                        }
                       >
-                        No.{l.style_id} {l.style_title || '(無題)'}
-                      </a>
-                    ) : (
-                      <span class="text-gray-400">-</span>
-                    )}
-                  </div>
-                  <span
-                    class={
-                      'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' +
-                      (LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500')
-                    }
-                  >
-                    {LOG_RESULT_LABEL[l.status] || l.status}
-                  </span>
-                </div>
-                <p class={'text-xs text-gray-400 mt-1' + (l.message.length > 150 ? ' line-clamp-3' : '')}>
-                  {l.message}
-                </p>
-                {l.message.length > 150 && (
-                  <button
-                    type="button"
-                    class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                    onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-3'); this.textContent = p.classList.contains('line-clamp-3') ? '続きを見る' : '閉じる'"
-                  >
-                    続きを見る
-                  </button>
-                )}
-                <p class="text-xs text-gray-300 mt-0.5">{formatJstDateTime(l.created_at)}</p>
-              </li>
-            ))}
-          </ul>
+                        {formatJstDate(l.created_at)}
+                      </td>
+                      <td class="py-2">
+                        <span
+                          class={
+                            'text-xs px-2 py-0.5 rounded font-semibold ' +
+                            (category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600')
+                          }
+                        >
+                          {category}
+                        </span>
+                      </td>
+                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">
+                        {l.style_id ? (
+                          <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+                            No.{l.style_id} {l.style_title || '(無題)'}
+                          </a>
+                        ) : l.post_id ? (
+                          l.post_title || `投稿${l.post_id}`
+                        ) : (
+                          '-'
+                        )}
+                        {l.execution_type && (
+                          <span class="text-gray-400 ml-1">
+                            [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+                          </span>
+                        )}
+                      </td>
+                      <td class="py-2">
+                        <span
+                          class={
+                            'text-xs px-2 py-0.5 rounded font-semibold ' +
+                            (LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500')
+                          }
+                        >
+                          {LOG_RESULT_LABEL[l.status] || l.status}
+                        </span>
+                      </td>
+                      <td class="py-2 text-xs text-gray-400 max-w-xs truncate" title={l.message}>
+                        {l.status === 'success' ? '-' : l.message || '-'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 
