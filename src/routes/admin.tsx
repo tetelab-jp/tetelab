@@ -605,4 +605,170 @@ async function toggleSalonFeature(
 admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_enabled', 'toggle_salon_style_enabled'))
 admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
 
+// ---------- 稼働状況 ----------
+// スタイル自動投稿の連続失敗回数(users.consecutive_failure_count、
+// automation.tsxのジョブ結果コールバックで更新)を一覧表示する。
+// 5回以上連続失敗した/そこから復旧した瞬間はSNS経由でメール通知される
+// (src/lib/sns-alert.ts、automation.tsxのupdateConsecutiveFailureAndNotify)。
+// ブログは自動投稿機能が未実装のため対象外(実装後に別途追加する)。
+
+const STATUS_PAGE_SIZE = 20
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+
+type StatusSalonRow = {
+  id: number
+  email: string
+  salon_name: string | null
+  consecutive_failure_count: number
+  is_active: number
+  style_enabled: number
+  seq: number
+}
+
+function buildStatusListUrl(page: number, q: string) {
+  const params = new URLSearchParams()
+  if (page > 1) params.set('page', String(page))
+  if (q) params.set('q', q)
+  const qs = params.toString()
+  return '/admin/status' + (qs ? `?${qs}` : '')
+}
+
+admin.get('/admin/status', async (c) => {
+  const adminUser = c.get('admin')
+  const q = (c.req.query('q') || '').trim()
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1)
+  const offset = (page - 1) * STATUS_PAGE_SIZE
+  const likePattern = `%${q}%`
+
+  const countRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM users WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
+  )
+    .bind(q, likePattern, likePattern)
+    .first<{ cnt: number }>()
+  const totalCount = countRow?.cnt ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / STATUS_PAGE_SIZE))
+
+  // 連続失敗回数が多い(=問題が起きている)サロンが上に来るように並べる。
+  const { results: salons } = await c.env.DB.prepare(
+    `SELECT id, email, salon_name, consecutive_failure_count, is_active, style_enabled,
+       ROW_NUMBER() OVER (ORDER BY consecutive_failure_count DESC, created_at ASC) AS seq
+     FROM users
+     WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
+     ORDER BY consecutive_failure_count DESC, created_at ASC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(q, likePattern, likePattern, STATUS_PAGE_SIZE, offset)
+    .all<StatusSalonRow>()
+
+  const alertingCount = salons.filter((s) => s.consecutive_failure_count >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD).length
+
+  return c.render(
+    <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="稼働状況">
+      {alertingCount > 0 && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-triangle-exclamation mr-2"></i>
+          このページ内に{CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続で失敗しているサロンが{alertingCount}件あります
+        </div>
+      )}
+
+      <form method="get" action="/admin/status" class="flex gap-2">
+        <input
+          type="text"
+          name="q"
+          value={q}
+          placeholder="サロン名・メールアドレスで検索"
+          class="flex-1 max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+        />
+        <button
+          type="submit"
+          class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition"
+        >
+          検索
+        </button>
+        {q && (
+          <a
+            href="/admin/status"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-gray-600 transition"
+          >
+            クリア
+          </a>
+        )}
+      </form>
+
+      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">No.</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
+                <th class="px-4 py-3 text-left font-medium">スタイル連続失敗</th>
+                <th class="px-4 py-3 text-left font-medium">状態</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {salons.map((salon) => {
+                const isAlerting = salon.consecutive_failure_count >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+                const isInactive = salon.is_active === 0 || salon.style_enabled === 0
+                return (
+                  <tr>
+                    <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
+                    <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
+                    <td class="px-4 py-3 text-gray-500">{salon.email}</td>
+                    <td class="px-4 py-3 text-gray-700">{salon.consecutive_failure_count}回</td>
+                    <td class="px-4 py-3">
+                      {isInactive ? (
+                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-400">
+                          対象外(契約OFF/機能OFF)
+                        </span>
+                      ) : isAlerting ? (
+                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">
+                          異常({CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続失敗)
+                        </span>
+                      ) : (
+                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">正常</span>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+              {salons.length === 0 && (
+                <tr>
+                  <td colspan={5} class="px-4 py-8 text-center text-gray-400">
+                    該当するサロンがありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-sm text-gray-500">
+        <span>
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + STATUS_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex gap-3">
+          {page > 1 && (
+            <a href={buildStatusListUrl(page - 1, q)} class="hover:text-pink-600">
+              ← 前へ
+            </a>
+          )}
+          <span class="text-gray-400">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages && (
+            <a href={buildStatusListUrl(page + 1, q)} class="hover:text-pink-600">
+              次へ →
+            </a>
+          )}
+        </div>
+      </div>
+    </AdminPageLayout>,
+    { title: '稼働状況' }
+  )
+})
+
 export default admin

@@ -38,6 +38,10 @@ env:
   # terraform applyしてもAPP_BASE_URL(Fargateワーカーへのコールバック先)が
   # 更新されない。デプロイの度にここで正しい値に上書きする。
   APP_BASE_URL: https://salonmotion.com
+  # /admin/status の連続失敗検知アラート用SNSトピックARN(infra/monitoring.tf、
+  # 非機密情報)。同じくlifecycle.ignore_changesの都合で、既存タスク定義には
+  # 含まれていないため、下のステップで無ければ追加する。
+  SNS_ALERT_TOPIC_ARN: arn:aws:sns:ap-northeast-1:102798329434:salonboard-worker-alerts
 
 permissions:
   id-token: write # OIDCでAWS認証するために必要
@@ -84,6 +88,26 @@ jobs:
             .containerDefinitions |= map(
               if .name == $name then
                 .environment |= map(if .name == "APP_BASE_URL" then .value = $url else . end)
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
+      # APP_BASE_URLと違い、SNS_ALERT_TOPIC_ARNは古いタスク定義には
+      # そもそも存在しないため、無ければ追加・あれば更新の両方に対応する。
+      - name: Fix SNS_ALERT_TOPIC_ARN environment variable
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" --arg arn "$SNS_ALERT_TOPIC_ARN" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .environment = (
+                  (.environment // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  (if ($names | index("SNS_ALERT_TOPIC_ARN"))
+                    then ($existing | map(if .name == "SNS_ALERT_TOPIC_ARN" then .value = $arn else . end))
+                    else $existing + [{name: "SNS_ALERT_TOPIC_ARN", value: $arn}]
+                  end)
+                )
               else . end
             )
           ' task-definition.json > task-definition.fixed.json

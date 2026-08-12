@@ -112,7 +112,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "ECS_TASK_DEFINITION", value = aws_ecs_task_definition.worker.family },
         { name = "ECS_CONTAINER_NAME", value = "worker" },
         { name = "ECS_SUBNET_IDS", value = join(",", data.aws_subnets.default_public.ids) },
-        { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id }
+        { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id },
+        { name = "SNS_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },

@@ -45,7 +45,8 @@ const bindings: Bindings = {
   ECS_SUBNET_IDS: process.env.ECS_SUBNET_IDS,
   ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS,
   ADMIN_JWT_SECRET: process.env.ADMIN_JWT_SECRET,
-  ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD
+  ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD,
+  SNS_ALERT_TOPIC_ARN: process.env.SNS_ALERT_TOPIC_ARN
 }
 
 // 2026-08-11追記: マイグレーション専用のランナーが無いため、追加列のような

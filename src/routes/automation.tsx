@@ -12,7 +12,40 @@ import {
 } from '../lib/style-post-runner'
 import { decryptSecret } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
+import { publishAlert } from '../lib/sns-alert'
 import type { Bindings, AppUser } from '../types'
+
+// 管理者サイト(/admin/status)の連続失敗検知しきい値。users.consecutive_failure_countが
+// この値をまたいだ(超えた/下回った)瞬間だけ通知する(実行の度に毎回送ると
+// スパムになるため、状態遷移のときのみ)。
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+
+async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, success: boolean): Promise<void> {
+  const before = await env.DB.prepare('SELECT consecutive_failure_count, email, salon_name FROM users WHERE id = ?')
+    .bind(userId)
+    .first<{ consecutive_failure_count: number; email: string; salon_name: string | null }>()
+  if (!before) return
+
+  const prevCount = before.consecutive_failure_count
+  const nextCount = success ? 0 : prevCount + 1
+  await env.DB.prepare('UPDATE users SET consecutive_failure_count = ? WHERE id = ?').bind(nextCount, userId).run()
+
+  const wasFailing = prevCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+  const isFailing = nextCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+  if (wasFailing === isFailing) return // 状態遷移が無ければ通知しない
+
+  const salonLabel = before.salon_name || before.email
+  const subject = isFailing
+    ? `[SalonMotion] ${salonLabel} のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しています`
+    : `[SalonMotion] ${salonLabel} のスタイル自動投稿が復旧しました`
+  const message = isFailing
+    ? `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しました。管理者サイト(/admin/status)で状況を確認してください。`
+    : `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が成功し、連続失敗の状態から復旧しました。`
+
+  await publishAlert(env, subject, message).catch((err) => {
+    console.error('アラート通知の送信に失敗しました:', err)
+  })
+}
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
@@ -607,6 +640,8 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     jobStatus = 'failed'
   }
+
+  await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
 
   await c.env.DB.prepare(
     `UPDATE style_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`

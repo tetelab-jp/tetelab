@@ -33,6 +33,10 @@ export type Bindings = {
   // 起動時にadmin_usersが空の場合のみ、この値をハッシュ化して1件だけ投入する
   // (コード内に平文パスワードをハードコードしないため、環境変数経由で渡す)。
   ADMIN_INITIAL_PASSWORD?: string
+  // /admin/status の連続失敗検知アラート用。ARNは非機密情報のため
+  // Secrets Managerではなく通常の環境変数として渡す(infra/monitoring.tfの
+  // 既存SNSトピック、CloudWatchアラーム通知と同じものを使い回す)。
+  SNS_ALERT_TOPIC_ARN?: string
 }
 
 export type AppUser = {

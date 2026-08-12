@@ -60,6 +60,15 @@ data "aws_iam_policy_document" "cloudflare_caller" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn]
   }
+
+  # 管理者サイト(/admin/status)の連続失敗検知アラート用。既存のCloudWatch
+  # アラーム通知と同じSNSトピック(monitoring.tf、inc.tete@gmail.com購読済み)を
+  # 使い回すことで、新たにSES等のメール送信基盤を用意せずに済ませている。
+  statement {
+    sid       = "PublishAlerts"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
 }
 
 resource "aws_iam_user_policy" "cloudflare_caller" {
