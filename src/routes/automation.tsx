@@ -35,6 +35,31 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
 const PROXY_SESSION_POOL = ['salonmotion-pool-1', 'salonmotion-pool-2', 'salonmotion-pool-3', 'salonmotion-pool-4', 'salonmotion-pool-5']
 
+async function markProxySessionSuccess(env: Bindings, userId: number, sessionId: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+     VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id, session_id) DO UPDATE SET
+       consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
+  )
+    .bind(userId, sessionId)
+    .run()
+    .catch(() => {})
+}
+
+async function markProxySessionFailure(env: Bindings, userId: number, sessionId: string, reason: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+     VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id, session_id) DO UPDATE SET
+       consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
+       last_result = ?, last_used_at = CURRENT_TIMESTAMP`
+  )
+    .bind(userId, sessionId, reason, reason)
+    .run()
+    .catch(() => {})
+}
+
 // ---------- 手動実行・履歴画面 ----------
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
@@ -356,29 +381,26 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .first<{ cnt: number }>()
   const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
 
-  // プール内の各セッションIDの連続障害回数を見て、最も調子の良いものを選ぶ
-  // (記録が無いものは0回として扱う。同点の場合は配列の先頭を優先し、
-  // 健全な間はできるだけ同じセッションを使い続ける)。
+  // プール内の各セッションIDを連続障害回数の昇順(=調子の良い順)に並べ、
+  // ワーカー側に候補リストとして渡す。ワーカーは先頭から順にログインを
+  // 試し、失敗した候補もその成否をアプリ側へ報告するため、途中で失敗した
+  // 候補の実績も取りこぼさず記録できる(記録が無いものは0回として扱う。
+  // 同点の場合は配列の元の並び順を優先し、健全な間はできるだけ同じ
+  // セッションを使い続ける)。
   const poolStats = await c.env.DB.prepare(
     `SELECT session_id, consecutive_fail_count FROM proxy_session_pool_stats WHERE user_id = ?`
   )
     .bind(job.user_id)
     .all<{ session_id: string; consecutive_fail_count: number }>()
   const failCounts = new Map((poolStats.results || []).map((r) => [r.session_id, r.consecutive_fail_count]))
-  let bestProxySessionId = PROXY_SESSION_POOL[0]
-  let bestFailCount = failCounts.get(bestProxySessionId) ?? 0
-  for (const sid of PROXY_SESSION_POOL) {
-    const fc = failCounts.get(sid) ?? 0
-    if (fc < bestFailCount) {
-      bestProxySessionId = sid
-      bestFailCount = fc
-    }
-  }
+  const proxySessionCandidates = [...PROXY_SESSION_POOL].sort(
+    (a, b) => (failCounts.get(a) ?? 0) - (failCounts.get(b) ?? 0)
+  )
 
   return c.json({
     loginId,
     password,
-    preferredProxySessionId: hasConcurrentJob ? undefined : bestProxySessionId,
+    proxySessionCandidates: hasConcurrentJob ? undefined : proxySessionCandidates,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -403,6 +425,8 @@ type JobResultBody = {
   blocked: boolean
   logs: string[]
   proxySessionId?: string | null
+  // 途中で失敗した候補セッションも含む、試行した候補ごとのログイン成否。
+  loginAttempts?: { sessionId: string; success: boolean }[]
 }
 
 automation.post('/api/automation/jobs/:id/result', async (c) => {
@@ -446,34 +470,27 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 
   // 2026-08-12追記: プロキシは少数(5個)の専用固定IPプールのため、
   // 使われたセッションID(=プールの1メンバー)ごとに連続障害回数を記録する。
-  // ジョブ全体が成功すればそのセッションの連続障害回数を0にリセットし、
-  // 後続工程がネットワークレベルの障害(net::ERR_*)で失敗した場合は
-  // 連続障害回数を1増やす(次回のジョブ取得時、この回数が最小のセッションが
-  // 優先的に選ばれる仕組み)。プール外のセッションID(同時実行回避時など
-  // ワーカー側がランダムに払い出したもの)は対象外とする。
+  // ワーカーはログイン候補を先頭から順に試すため、途中で失敗した候補
+  // (最終的に使われなかったもの)もloginAttemptsに含まれる。これを
+  // 先に処理しないと、ログインで失敗したセッションの実績が記録されず
+  // 何度も選ばれ続けてしまう。その後、最終的に使われたセッション
+  // (body.proxySessionId)について、ジョブ全体の成否を反映する。
+  // プール外のセッションID(同時実行回避時などのフォールバック)は対象外。
+  for (const attempt of body.loginAttempts || []) {
+    if (!PROXY_SESSION_POOL.includes(attempt.sessionId)) continue
+    if (attempt.success) {
+      await markProxySessionSuccess(c.env, userId, attempt.sessionId)
+    } else {
+      await markProxySessionFailure(c.env, userId, attempt.sessionId, 'login_failed')
+    }
+  }
+
   const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
   if (body.proxySessionId && PROXY_SESSION_POOL.includes(body.proxySessionId)) {
     if (body.success) {
-      await c.env.DB.prepare(
-        `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-         VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
-         ON CONFLICT (user_id, session_id) DO UPDATE SET
-           consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
-      )
-        .bind(userId, body.proxySessionId)
-        .run()
-        .catch(() => {})
+      await markProxySessionSuccess(c.env, userId, body.proxySessionId)
     } else if (networkErrorSignal) {
-      await c.env.DB.prepare(
-        `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-         VALUES (?, ?, 1, 'network_error', CURRENT_TIMESTAMP)
-         ON CONFLICT (user_id, session_id) DO UPDATE SET
-           consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
-           last_result = 'network_error', last_used_at = CURRENT_TIMESTAMP`
-      )
-        .bind(userId, body.proxySessionId)
-        .run()
-        .catch(() => {})
+      await markProxySessionFailure(c.env, userId, body.proxySessionId, 'network_error')
     }
   }
 
