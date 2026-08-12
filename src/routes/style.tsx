@@ -949,6 +949,10 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
   // 出力は常にJPEGになるため拡張子もjpgで統一する。
   const { buffer, contentType } = await processStyleImage(arrayBuffer)
   const key = `style/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
+  // 元ファイル名の拡張子(.png/.heic等)をそのまま保存すると、実際の中身は
+  // JPEGなのにファイル名だけ拡張子が食い違ったまま自動投稿時のアップロード
+  // ファイル名に使われてしまう。出力は常にJPEGなので拡張子もjpgへ統一する。
+  const fileName = `${(file.name || 'style').replace(/\.[^./\\]+$/, '')}.jpg`
 
   await c.env.STYLE_IMAGES.put(key, buffer, {
     httpMetadata: { contentType }
@@ -965,14 +969,14 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
     await c.env.DB.prepare(
       `UPDATE style_images SET r2_key = ?, file_name = ?, compressed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
-      .bind(key, file.name, existingFront.id)
+      .bind(key, fileName, existingFront.id)
       .run()
   } else {
     await c.env.DB.prepare(
       `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order, compressed_at)
        VALUES (?, 'FRONT', ?, ?, 0, CURRENT_TIMESTAMP)`
     )
-      .bind(styleId, key, file.name)
+      .bind(styleId, key, fileName)
       .run()
   }
 }

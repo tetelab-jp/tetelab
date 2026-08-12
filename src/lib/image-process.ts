@@ -98,10 +98,16 @@ export async function processStyleImage(input: Buffer | Uint8Array | ArrayBuffer
   // (250KBという下限は「必要以上に圧縮しすぎない」ための歯止めであり、
   // 既に小さい画像を無理に太らせる意味ではない)。
   let quality = QUALITY_START
-  let buffer = await composed.clone().jpeg({ quality, mozjpeg: true }).toBuffer()
+  // 2026-08-13追記: mozjpeg:trueは(このsharpビルドでは)progressive:falseを
+  // 明示しても常にプログレッシブJPEGを出力してしまう(mozjpegプリセットが
+  // 優先される)ことを実機確認した。投稿先(SALON BOARD)が古いシステムである
+  // 可能性を考慮し、圧縮効率よりベースライン(非プログレッシブ)出力を優先して
+  // mozjpegは使わない。300x800px程度の画像サイズであれば圧縮効率の差は
+  // 実用上ほぼ問題にならない。
+  let buffer = await composed.clone().jpeg({ quality, mozjpeg: false, progressive: false }).toBuffer()
   while (buffer.length > MAX_BYTES && quality > QUALITY_FLOOR) {
     quality -= QUALITY_STEP
-    buffer = await composed.clone().jpeg({ quality, mozjpeg: true }).toBuffer()
+    buffer = await composed.clone().jpeg({ quality, mozjpeg: false, progressive: false }).toBuffer()
   }
 
   return { buffer, contentType: 'image/jpeg' }

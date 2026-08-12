@@ -17,9 +17,12 @@ import {
   draftRegisterStyle,
   submitReflectApplication,
   launchBrowser,
+  closeAnonymizedProxy,
   ReflectionBlockedError,
-  type StylePostInput
+  type StylePostInput,
+  type LaunchedBrowser
 } from './salonboard-automation'
+import type { Page } from 'puppeteer'
 
 type JobPayload = {
   loginId: string
@@ -116,44 +119,62 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
 }
 
+type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any }
+
+/**
+ * 2026-08-13追記: proxy-chain方式では、セッションID(出口IP)ごとに専用の
+ * ローカル取次プロキシをブラウザ起動時に紐付ける必要があるため、以前のように
+ * 1つのブラウザを使い回してページだけ差し替える方式が使えなくなった。
+ * 候補セッションIDごとに、ブラウザの起動からやり直す。
+ */
 async function attemptLogin(
-  browser: import('puppeteer').Browser,
   payload: JobPayload,
   log: (msg: string) => void,
   candidateId?: string
-): Promise<{ page: Awaited<ReturnType<typeof newAutomationPage>>['page']; proxySessionId: string | null; error: any }> {
-  const { page, proxySessionId } = await newAutomationPage(browser, log, candidateId)
+): Promise<LoginAttemptResult> {
+  const launched = await launchBrowser(candidateId)
   try {
-    await loginToSalonBoard(page, payload.loginId, payload.password, log)
-    return { page, proxySessionId, error: null }
+    const page = await newAutomationPage(launched.browser, log)
+    try {
+      await loginToSalonBoard(page, payload.loginId, payload.password, log)
+      return { ...launched, page, error: null }
+    } catch (err: any) {
+      return { ...launched, page, error: err }
+    }
   } catch (err: any) {
-    return { page, proxySessionId, error: err }
+    // newAutomationPage自体が失敗した場合(まれ)
+    return { ...launched, page: null, error: err }
+  }
+}
+
+async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
+  await attempt.browser.close().catch(() => {})
+  if (attempt.anonymizedProxyUrl) {
+    await closeAnonymizedProxy(attempt.anonymizedProxyUrl, true).catch(() => {})
   }
 }
 
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
-  const browser = await launchBrowser()
+  // 2026-08-12追記: アプリ側が実績順に並べた候補セッションIDを先頭から
+  // 順に試す(最大2件まで)。候補が無い場合(例: 同時実行回避時)は
+  // 従来通りpreferredなしでattemptLoginに任せる。
+  const candidates = (payload.proxySessionCandidates || []).slice(0, 2)
+  const loginAttempts: LoginAttempt[] = []
+
+  let attempt = await attemptLogin(payload, log, candidates[0])
+  if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
+
+  for (let i = 1; i < candidates.length && attempt.error; i++) {
+    log(
+      `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
+        `次の候補セッションID(${candidates[i]})で再試行します...`
+    )
+    await closeAttempt(attempt)
+    attempt = await attemptLogin(payload, log, candidates[i])
+    loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+  }
 
   try {
-    // 2026-08-12追記: アプリ側が実績順に並べた候補セッションIDを先頭から
-    // 順に試す(最大2件まで)。候補が無い場合(例: 同時実行回避時)は
-    // 従来通りpreferredなしでnewAutomationPageに任せる。
-    const candidates = (payload.proxySessionCandidates || []).slice(0, 2)
-    const loginAttempts: LoginAttempt[] = []
-
-    let attempt = await attemptLogin(browser, payload, log, candidates[0])
-    if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
-
-    for (let i = 1; i < candidates.length && attempt.error; i++) {
-      log(
-        `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
-          `次の候補セッションID(${candidates[i]})で再試行します...`
-      )
-      await attempt.page.close().catch(() => {})
-      attempt = await attemptLogin(browser, payload, log, candidates[i])
-      loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
-    }
-
     const { page, proxySessionId, error: loginError } = attempt
 
     if (loginError) {
@@ -200,7 +221,7 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
 
     return { success: true, step: 'done', message: '登録・反映申請が完了しました', blocked: false, proxySessionId, loginAttempts }
   } finally {
-    await browser.close().catch(() => {})
+    await closeAttempt(attempt)
   }
 }
 

@@ -19,7 +19,9 @@ import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import { writeFile, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain'
 export type { Browser, Page }
+export { closeAnonymizedProxy }
 
 // 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
 // Akamai系ボット対策を回避できないことが実機検証(プロキシでIPを変えても
@@ -53,38 +55,88 @@ export type StylePostResult = {
 }
 
 /**
+ * SALONBOARD_PROXY_SERVER(例: "http://host:port"、スキーム省略も可)に
+ * ユーザー名/パスワードを埋め込んだ完全なURLを組み立てる。
+ */
+function buildAuthenticatedProxyUrl(serverValue: string, username: string, password: string): string {
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(serverValue) ? serverValue : `http://${serverValue}`
+  const url = new URL(withScheme)
+  url.username = encodeURIComponent(username)
+  url.password = encodeURIComponent(password)
+  return url.toString()
+}
+
+export type LaunchedBrowser = {
+  browser: Browser
+  // ログイン成功実績の記録に使う、実際に使ったプロキシセッションID
+  proxySessionId: string | null
+  // finally節でcloseAnonymizedProxy()に渡し、後片付けするために保持する
+  anonymizedProxyUrl: string | null
+}
+
+/**
  * Fargateタスク内でPuppeteerブラウザを起動する。
  * ジョブ1件につきタスク1つを使い捨てる運用のため、同時起動数の
  * リトライ制御(Cloudflare Browser Rendering版にあった429対応)は不要。
+ *
+ * 2026-08-13追記(page.authenticate方式からproxy-chain方式へ全面変更):
+ * 従来はブラウザに直接プロキシの認証情報を渡す page.authenticate() を
+ * 使っていたが、これは内部でCDPのFetch domain傍受を強制的に有効化する。
+ * 傍受モードは大きめのPOSTボディ(doUploadの画像アップロード等)を継続
+ * (continue)する際に本文を取りこぼし、接続がリセットされる
+ * (net::ERR_EMPTY_RESPONSE / net::ERR_ABORTED)ことが実機で繰り返し
+ * 確認された。画像圧縮(300KB以下への正規化)後もこの症状が再発したため、
+ * 圧縮は対症療法に過ぎず、傍受モード自体を発生させない方式に変更する。
+ *
+ * proxy-chain(npm)のanonymizeProxy()は、認証情報込みの上流プロキシURLを
+ * 渡すと、同じコンテナ内に認証不要のローカル取次サーバー(127.0.0.1:port)を
+ * 立ち上げて返す。ブラウザにはこのローカルアドレスだけを渡すため、
+ * page.authenticate()を呼ぶ必要が無くなり(=Fetch domain傍受も発生しない)、
+ * 大きなPOSTボディも素直に流れることを期待する。
+ *
+ * セッションID(出口IP固定用)は、以前はブラウザ起動後にnewAutomationPage()
+ * 側で決めていたが、proxy-chain方式ではローカル取次サーバーのアドレスが
+ * ブラウザ起動時の--proxy-serverに必要なため、この関数の引数として先に
+ * 受け取る必要がある(呼び出し側=index.tsのrunJob()で候補セッションIDを
+ * 決めてから渡す)。
  */
-export async function launchBrowser(): Promise<Browser> {
+export async function launchBrowser(sessionId?: string | null): Promise<LaunchedBrowser> {
   // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
   // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
   const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
 
-  // SALON BOARD側のボット対策の検証用の一時的な迂回策。SALONBOARD_PROXY_SERVER
-  // (例: http://host:port)が設定されている場合のみプロキシ経由でアクセスする。
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
-  if (proxyServer) {
-    args.push(`--proxy-server=${proxyServer}`)
+  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
+  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
 
-    // 2026-08-11追記: 画像アップロード(doUpload、大きめのPOST)がプロキシ経由で
-    // net::ERR_EMPTY_RESPONSEで100%失敗する一方、同じプロキシでの軽いGET
-    // (ログイン・画面遷移)は安定して成功していた。ログイン等でも失敗しないなら
-    // salonboard.com側が一律不安定とは考えにくく、プロキシのCONNECTトンネル越しの
-    // HTTP/2で大きめのPOSTを送った場合に相性問題が起きている可能性を疑い、
-    // HTTP/2を無効化してHTTP/1.1を強制する(プロキシ経由通信でよくある既知の
-    // 回避策)。プロキシ未設定時(直接アクセス)には影響しない。
-    args.push('--disable-http2')
+  let proxySessionId: string | null = null
+  let anonymizedProxyUrl: string | null = null
+
+  if (proxyServer && proxyUsername && proxyPassword) {
+    proxySessionId = sessionId || Math.random().toString(36).slice(2, 10)
+    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
+    const upstreamUrl = buildAuthenticatedProxyUrl(proxyServer, sessionUsername, proxyPassword)
+    anonymizedProxyUrl = await anonymizeProxy(upstreamUrl)
+    args.push(`--proxy-server=${anonymizedProxyUrl}`)
+    console.log(
+      `[launchBrowser] プロキシ経由で起動(proxy-chain中継): セッションID=${proxySessionId}` +
+        `${sessionId ? '(固定・前回成功実績あり)' : '(新規発行)'}`
+    )
+  } else if (proxyServer) {
+    console.log('[launchBrowser] SALONBOARD_PROXY_USERNAME/PASSWORDが未設定のため直接アクセスで起動')
+  } else {
+    console.log('[launchBrowser] プロキシ未設定、直接アクセスで起動')
   }
 
   // 2026-08-10追記: headlessモードは一貫してSALON BOARD側のボット対策に
   // 弾かれることを確認したため、非headless(画面ありモード)で起動する。
   // コンテナ側(Dockerfile)でXvfb経由(`xvfb-run`)での起動が前提。
-  return puppeteerExtra.launch({
+  const browser = await puppeteerExtra.launch({
     headless: false,
     args
   })
+
+  return { browser, proxySessionId, anonymizedProxyUrl }
 }
 
 /**
@@ -95,39 +147,12 @@ export async function launchBrowser(): Promise<Browser> {
  * 非headless(実ブラウザウィンドウ)では正常に動作したことが確認されている。
  * headlessで動かす都合上、典型的なheadless検知ポイント(navigator.webdriver・
  * User-Agent・viewport等)を可能な範囲でごまかす。
+ *
+ * プロキシ認証(proxy-chainのローカル取次サーバーへの接続)は認証不要のため、
+ * ここではpage.authenticate()を呼ばない(launchBrowser()参照)。
  */
-export type NewAutomationPageResult = {
-  page: Page
-  proxySessionId: string | null
-}
-
-export async function newAutomationPage(
-  browser: Browser,
-  log?: AutomationLogger,
-  preferredProxySessionId?: string | null
-): Promise<NewAutomationPageResult> {
+export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
-
-  // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)のユーザー名に
-  // `-session-<任意の文字列>`を付与すると、session値ごとにプール内の別IPが
-  // 割り当てられる。当初はブラウザ起動のたびにランダムなsession値を付与して
-  // いたが、同一サロンアカウントへのログイン元IPが毎回変わることが、逆に
-  // ボット対策側から見て不自然(短時間のIP変動)に映っている可能性がある。
-  // 直近ログイン成功実績のあるセッションID(preferredProxySessionId)が
-  // あればそれを優先的に使い回し(=出口IPを固定)、指定が無い場合のみ
-  // 新規にランダムなセッションIDを発行する。
-  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
-  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
-  let proxySessionId: string | null = null
-  if (proxyUsername && proxyPassword) {
-    proxySessionId = preferredProxySessionId || Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
-    await page.authenticate({ username: sessionUsername, password: proxyPassword })
-    log?.(
-      `[プロキシ] セッションID=${proxySessionId} で出口IPを` +
-        `${preferredProxySessionId ? '固定(前回成功実績あり)' : '新規発行'}`
-    )
-  }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
   // ハンドラが無いと、Puppeteerはダイアログに応答できず固まり、
@@ -149,7 +174,7 @@ export async function newAutomationPage(
   // User-Agentも上書きせず本物の値をそのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
-  return { page, proxySessionId }
+  return page
 }
 
 /**
@@ -604,9 +629,20 @@ async function uploadFrontImage(
       // には一致するが、非表示のモーダル内にあるためクリック不可能だった。
       // プレースホルダー(#FRONT_IMG_ID_IMG)を再クリックしてモーダルを
       // 明示的に開き直してから、ファイル選択をやり直す。
+      //
+      // 2026-08-13追記(副次バグ対応): 上記の再クリックだけでは、失敗後の
+      // モーダルがブラウザ側からは開いているように見えても、SALON BOARD側の
+      // 内部状態(送信済みフラグ等)が前回失敗時のまま残り、2回目のクリックで
+      // doUpload自体が発火しない事例が実機で確認された(diagnoseUploadWithoutProxy
+      // より上のコメント、および2026-08-12付ログ参照)。モーダルを一度Escapeで
+      // 明示的に閉じてから間を置いて開き直すことで、内部状態をより確実に
+      // リセットさせる。
       if (attempt > 1) {
+        await page.keyboard.press('Escape').catch(() => {})
+        await new Promise((resolve) => setTimeout(resolve, 1000))
         await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
         await page.click('#FRONT_IMG_ID_IMG')
+        await new Promise((resolve) => setTimeout(resolve, 500))
       }
       const currentFileInput =
         attempt === 1
