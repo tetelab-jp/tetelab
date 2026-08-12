@@ -26,6 +26,45 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
+// 2026-08-12追記: Bright Dataのプロキシ契約を確認したところ、実際には
+// 少数(5個)の専用固定IPのプールであることが判明した(一般家庭回線を
+// 都度借りるローテーション型ではない)。そのため「新しいセッションID=
+// 未知のIP」ではなく、常にこの5つの中のどれかを使うことになる。
+// このプール内の各セッションIDごとに連続障害回数を記録し(DB:
+// proxy_session_pool_stats)、その時点で最も調子の良い(連続障害回数が
+// 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
+// 2026-08-12追記(重大バグ修正): セッションIDにハイフン(-)を含めると、
+// Bright Data側のユーザー名解析(brd-customer-...-session-<ID>という
+// 形式でIDを読み取る仕組み)がID内のハイフンを別パラメータの区切りと
+// 誤認識し、HTTP 407(プロキシ認証エラー)で全滅する不具合があった。
+// そのため英数字のみのIDに変更する。
+const PROXY_SESSION_POOL = ['salonmotionpool1', 'salonmotionpool2', 'salonmotionpool3', 'salonmotionpool4', 'salonmotionpool5']
+
+async function markProxySessionSuccess(env: Bindings, userId: number, sessionId: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+     VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id, session_id) DO UPDATE SET
+       consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
+  )
+    .bind(userId, sessionId)
+    .run()
+    .catch(() => {})
+}
+
+async function markProxySessionFailure(env: Bindings, userId: number, sessionId: string, reason: string): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
+     VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT (user_id, session_id) DO UPDATE SET
+       consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
+       last_result = ?, last_used_at = CURRENT_TIMESTAMP`
+  )
+    .bind(userId, sessionId, reason, reason)
+    .run()
+    .catch(() => {})
+}
+
 // ---------- 手動実行・履歴画面 ----------
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
@@ -49,6 +88,105 @@ const LOG_RESULT_BORDER: Record<string, string> = {
   success: 'border-green-500',
   blocked: 'border-amber-500',
   failure: 'border-red-500'
+}
+
+type ExecutionLogRow = {
+  id: number
+  dateLabel: string
+  category: string
+  categoryClass: string
+  content: any
+  statusLabel: string
+  statusClass: string
+  borderClass: string
+  errorText: string
+  showToggle: boolean
+}
+
+function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
+  if (rows.length === 0) {
+    return <p class="text-sm text-gray-400">まだログがありません</p>
+  }
+  return (
+    <>
+      {/* PC表示: テーブル */}
+      <div class="hidden md:block overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-400 border-b border-gray-100">
+              <th class="py-2 pl-3">実行日時</th>
+              <th class="py-2">カテゴリ</th>
+              <th class="py-2">内容</th>
+              <th class="py-2">ステータス</th>
+              <th class="py-2">エラー</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr class="border-b border-gray-50">
+                <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
+                  {r.dateLabel}
+                </td>
+                <td class="py-2">
+                  <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
+                </td>
+                <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
+                <td class="py-2">
+                  <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+                </td>
+                <td class="py-2 text-xs text-gray-400 max-w-xs">
+                  <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
+                  {r.showToggle && (
+                    <button
+                      type="button"
+                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                    >
+                      続きを見る
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* モバイル表示: カード */}
+      <div class="md:hidden space-y-3">
+        {rows.map((r) => (
+          <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-gray-500">{r.dateLabel}</span>
+              <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5">
+              <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
+                {r.category}
+              </span>
+              <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+            </div>
+            {r.errorText !== '-' && (
+              <div class="mt-1.5">
+                <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
+                  {r.errorText}
+                </p>
+                {r.showToggle && (
+                  <button
+                    type="button"
+                    class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                    onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                  >
+                    続きを見る
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  )
 }
 
 automation.get('/style/test-run', requireAuth, async (c) => {
@@ -110,6 +248,9 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }
   })
 
+  const styleLogRows = logRows.filter((r) => r.category === 'スタイル')
+  const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
+
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
   const { results: retryTargets } = await c.env.DB.prepare(
     `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
@@ -165,88 +306,30 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
-        {logRows.length === 0 ? (
-          <p class="text-sm text-gray-400">まだログがありません</p>
-        ) : (
-          <>
-            {/* PC表示: テーブル */}
-            <div class="hidden md:block overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-gray-400 border-b border-gray-100">
-                    <th class="py-2 pl-3">実行日時</th>
-                    <th class="py-2">カテゴリ</th>
-                    <th class="py-2">内容</th>
-                    <th class="py-2">ステータス</th>
-                    <th class="py-2">エラー</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logRows.map((r) => (
-                    <tr class="border-b border-gray-50">
-                      <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
-                        {r.dateLabel}
-                      </td>
-                      <td class="py-2">
-                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
-                      </td>
-                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
-                      <td class="py-2">
-                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
-                      </td>
-                      <td class="py-2 text-xs text-gray-400 max-w-xs">
-                        <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
-                        {r.showToggle && (
-                          <button
-                            type="button"
-                            class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                            onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
-                          >
-                            続きを見る
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
 
-            {/* モバイル表示: カード */}
-            <div class="md:hidden space-y-3">
-              {logRows.map((r) => (
-                <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-gray-500">{r.dateLabel}</span>
-                    <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
-                  </div>
-                  <div class="flex items-center gap-2 mt-1.5">
-                    <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
-                      {r.category}
-                    </span>
-                    <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
-                  </div>
-                  {r.errorText !== '-' && (
-                    <div class="mt-1.5">
-                      <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
-                        {r.errorText}
-                      </p>
-                      {r.showToggle && (
-                        <button
-                          type="button"
-                          class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                          onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
-                        >
-                          続きを見る
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+        <div class="flex gap-1 mb-4 border-b border-gray-100">
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-pink-500 text-pink-600"
+            data-tab="style"
+          >
+            スタイル（{styleLogRows.length}）
+          </button>
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400"
+            data-tab="blog"
+          >
+            ブログ（{blogLogRows.length}）
+          </button>
+        </div>
+
+        <div data-tab-panel="style">
+          <ExecutionLogTable rows={styleLogRows} />
+        </div>
+        <div data-tab-panel="blog" class="hidden">
+          <ExecutionLogTable rows={blogLogRows} />
+        </div>
       </div>
 
       <script src="/static/test-run.js"></script>
@@ -308,15 +391,10 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
-       FROM salon_credentials WHERE user_id = ?`
+    `SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{
-      salonboard_login_id_enc: string
-      salonboard_password_enc: string
-      last_successful_proxy_session_id: string | null
-    }>()
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -352,10 +430,26 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .first<{ cnt: number }>()
   const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
 
+  // プール内の各セッションIDを連続障害回数の昇順(=調子の良い順)に並べ、
+  // ワーカー側に候補リストとして渡す。ワーカーは先頭から順にログインを
+  // 試し、失敗した候補もその成否をアプリ側へ報告するため、途中で失敗した
+  // 候補の実績も取りこぼさず記録できる(記録が無いものは0回として扱う。
+  // 同点の場合は配列の元の並び順を優先し、健全な間はできるだけ同じ
+  // セッションを使い続ける)。
+  const poolStats = await c.env.DB.prepare(
+    `SELECT session_id, consecutive_fail_count FROM proxy_session_pool_stats WHERE user_id = ?`
+  )
+    .bind(job.user_id)
+    .all<{ session_id: string; consecutive_fail_count: number }>()
+  const failCounts = new Map((poolStats.results || []).map((r) => [r.session_id, r.consecutive_fail_count]))
+  const proxySessionCandidates = [...PROXY_SESSION_POOL].sort(
+    (a, b) => (failCounts.get(a) ?? 0) - (failCounts.get(b) ?? 0)
+  )
+
   return c.json({
     loginId,
     password,
-    preferredProxySessionId: hasConcurrentJob ? undefined : cred.last_successful_proxy_session_id || undefined,
+    proxySessionCandidates: hasConcurrentJob ? undefined : proxySessionCandidates,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -380,6 +474,8 @@ type JobResultBody = {
   blocked: boolean
   logs: string[]
   proxySessionId?: string | null
+  // 途中で失敗した候補セッションも含む、試行した候補ごとのログイン成否。
+  loginAttempts?: { sessionId: string; success: boolean }[]
 }
 
 automation.post('/api/automation/jobs/:id/result', async (c) => {
@@ -421,35 +517,30 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .catch(() => {})
   }
 
-  // 2026-08-11追記: ログインに成功した(CAPTCHA等を回避できた)プロキシセッション
-  // IDを記録し、次回以降のジョブで優先的に使い回す(出口IPを固定する)ために
-  // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
-  // のnewAutomationPage/index.tsのrunJob参照)。
-  //
-  // 2026-08-12追記(重大バグ修正): 従来はログイン成功のみを条件に保存していたが、
-  // ログインは通っても画像アップロード等の後続工程がプロキシ側の障害
-  // (net::ERR_EMPTY_RESPONSE等)で失敗するセッションが存在し、そのIDが
-  // 「実績あり」として記録され続けると、以降のジョブが毎回同じ壊れた
-  // セッション(出口IP)を使い回して同じ失敗を繰り返す状態になっていた。
-  // そのため保存はジョブ全体が成功した場合のみに限定し、後続工程が
-  // ネットワークレベルの障害(net::ERR_*)で失敗した場合は記録済みの
-  // セッションIDをクリアして、次回は新しい出口IPを発行させる。
+  // 2026-08-12追記: プロキシは少数(5個)の専用固定IPプールのため、
+  // 使われたセッションID(=プールの1メンバー)ごとに連続障害回数を記録する。
+  // ワーカーはログイン候補を先頭から順に試すため、途中で失敗した候補
+  // (最終的に使われなかったもの)もloginAttemptsに含まれる。これを
+  // 先に処理しないと、ログインで失敗したセッションの実績が記録されず
+  // 何度も選ばれ続けてしまう。その後、最終的に使われたセッション
+  // (body.proxySessionId)について、ジョブ全体の成否を反映する。
+  // プール外のセッションID(同時実行回避時などのフォールバック)は対象外。
+  for (const attempt of body.loginAttempts || []) {
+    if (!PROXY_SESSION_POOL.includes(attempt.sessionId)) continue
+    if (attempt.success) {
+      await markProxySessionSuccess(c.env, userId, attempt.sessionId)
+    } else {
+      await markProxySessionFailure(c.env, userId, attempt.sessionId, 'login_failed')
+    }
+  }
+
   const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
-  if (body.success && body.proxySessionId) {
-    await c.env.DB.prepare(
-      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`
-    )
-      .bind(body.proxySessionId, userId)
-      .run()
-      .catch(() => {})
-  } else if (networkErrorSignal) {
-    await c.env.DB.prepare(
-      `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`
-    )
-      .bind(userId)
-      .run()
-      .catch(() => {})
+  if (body.proxySessionId && PROXY_SESSION_POOL.includes(body.proxySessionId)) {
+    if (body.success) {
+      await markProxySessionSuccess(c.env, userId, body.proxySessionId)
+    } else if (networkErrorSignal) {
+      await markProxySessionFailure(c.env, userId, body.proxySessionId, 'network_error')
+    }
   }
 
   let jobStatus: string

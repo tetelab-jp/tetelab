@@ -25,6 +25,23 @@ if (testRunBtn) {
   })
 }
 
+// 実行履歴のスタイル/ブログタブ切り替え
+document.querySelectorAll('.log-tab-btn').forEach(function (btn) {
+  btn.addEventListener('click', function () {
+    var tab = btn.getAttribute('data-tab')
+    document.querySelectorAll('.log-tab-btn').forEach(function (b) {
+      var active = b === btn
+      b.classList.toggle('border-pink-500', active)
+      b.classList.toggle('text-pink-600', active)
+      b.classList.toggle('border-transparent', !active)
+      b.classList.toggle('text-gray-400', !active)
+    })
+    document.querySelectorAll('[data-tab-panel]').forEach(function (panel) {
+      panel.classList.toggle('hidden', panel.getAttribute('data-tab-panel') !== tab)
+    })
+  })
+})
+
 document.querySelectorAll('.retry-btn').forEach(function (btn) {
   btn.addEventListener('click', async function () {
     var styleId = btn.getAttribute('data-style-id')

@@ -104,6 +104,34 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(検索順位計測テーブル)に失敗しました:', err)
   }
+  try {
+    // 2026-08-12追記: プロキシが少数(実測5個)の専用固定IPプールであることが
+    // 判明したため、単一の「直近成功セッション」だけを覚える方式(0005)から、
+    // プール内の各セッションIDごとに連続障害回数を記録し、その時点で最も
+    // 調子の良いものを選ぶ方式に変更した(詳細はmigrations-pg/0006_*.sql参照)。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS proxy_session_pool_stats (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL,
+         session_id TEXT NOT NULL,
+         consecutive_fail_count INTEGER NOT NULL DEFAULT 0,
+         last_result TEXT,
+         last_used_at TIMESTAMP,
+         UNIQUE(user_id, session_id)
+       )`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(proxy_session_pool_stats)に失敗しました:', err)
+  }
+  try {
+    // テンプレート作成・適用画面にも担当スタイリスト欄を追加するための拡張列
+    // (詳細はmigrations-pg/0007_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE templates ADD COLUMN IF NOT EXISTS stylist_id INTEGER REFERENCES stylists(id) ON DELETE SET NULL`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(templates.stylist_id)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {

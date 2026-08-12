@@ -168,7 +168,25 @@ export async function loginToSalonBoard(
   log('ログインページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/login/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
-  await page.waitForSelector('input[name="userId"]', { timeout: 15000 })
+  // 2026-08-12追記(診断用): ログインフォームの入力欄が現れず
+  // waitForSelectorがタイムアウトする事例が発生したため、その際に
+  // 実際に何が表示されていたか(CAPTCHA等のブロック画面か、通信断による
+  // 空白/エラーページか)を後から判別できるよう診断情報を残す。
+  try {
+    await page.waitForSelector('input[name="userId"]', { timeout: 15000 })
+  } catch (err: any) {
+    const currentUrl = page.url()
+    const pageText = await page
+      .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
+      .catch(() => '(画面テキスト取得失敗)')
+    const cleanedText = pageText.replace(/\s+/g, ' ').trim()
+    log(`ログインフォーム表示待ちタイムアウト時のURL: ${currentUrl}`)
+    log(`ログインフォーム表示待ちタイムアウト時のページ冒頭: ${cleanedText}`)
+    throw new Error(
+      `ログインページの表示に失敗しました(入力欄が現れませんでした)` +
+        ` [診断情報] url=${currentUrl} pageText="${cleanedText}"`
+    )
+  }
   await page.type('input[name="userId"]', loginId, { delay: 20 })
   await page.type('input[name="password"]', password, { delay: 20 })
 

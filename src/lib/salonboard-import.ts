@@ -17,9 +17,15 @@
 //   - ページネーション用グローバル関数(doSelectFirst/doSelectPrevious/
 //     doSelectLink/doSelectNext/doSelectLast等)の実在は確認済みだが、
 //     複数ページが存在するアカウントでの実際のonclick文字列は未検証。
+//   - 2026-08-12追記: ハッシュタグは<input type="hidden"
+//     name="frmStyleEditStyleDto.hashTagList[N]" value="タグ名" class="hashTagList">
+//     として並んでおり、この値をそのまま取り込める(実HTML確認済み)。
+//   - 2026-08-12追記: 画像URL(imgbp.salonboard.com)はsalonboard.comとは
+//     別オリジンの公開CDNのため、ブラウザ内でfetch()するとCORSに阻まれる。
+//     ワーカー側から直接fetchするよう修正済み。
 //
 // ⚠️ まだ未確定の事項:
-//   - ハッシュタグ・モデル属性欄の実セレクタ（未調査、空配列/空オブジェクト固定）
+//   - モデル属性欄の実セレクタ（未調査、空オブジェクト固定）
 // ============================================
 
 /// <reference lib="dom" />
@@ -226,6 +232,13 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       (el) => (el as HTMLInputElement).value
     )
 
+    // 2026-08-12追記(実HTML確認済み): 登録済みハッシュタグは
+    // <input type="hidden" name="frmStyleEditStyleDto.hashTagList[N]" value="タグ名" class="hashTagList">
+    // として<ul class="jsc_style_edit-editCommon__tagList">内に並んでいる。
+    const hashtags = Array.from(document.querySelectorAll('input.hashTagList'))
+      .map((el) => (el as HTMLInputElement).value)
+      .filter(Boolean)
+
     const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
 
     return {
@@ -235,6 +248,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       lengthValue: val(lengthSelector),
       menuValues,
       menuDetailText: val('#menuDetailTxt'),
+      hashtags,
       stylistSelectValue: val('#stylistCheckCd'),
       // docs/phase3-mvp-design.md 9章で確定済み: クーポンは隠しフィールド
       // frmStyleEditStyleDto.couponId にCP+14桁形式で入る
@@ -263,7 +277,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
     lengthValue: detail.lengthValue,
     menuValues: detail.menuValues,
     menuDetailText: detail.menuDetailText,
-    hashtags: [], // ⚠️ ハッシュタグ欄のセレクタ未確認のため空配列固定
+    hashtags: detail.hashtags,
     modelAttributes: {}, // ⚠️ モデル属性欄のセレクタ未確認のため空オブジェクト固定
     stylistSelectValue: detail.stylistSelectValue,
     couponSelectValue: couponIsOrphaned ? null : detail.couponSelectValue || null,
@@ -285,6 +299,17 @@ export async function importSelectedStyles(
 ): Promise<{ importedCount: number; errors: string[] }> {
   let importedCount = 0
   const errors: string[] = []
+
+  // 2026-08-12追記: sort_orderを指定しないと0のまま挿入され、既存スタイルの
+  // 先頭グループと同点になり並び順の先頭付近に割り込んでしまうため、
+  // 取り込み開始時点の最大sort_order+1から連番で採番し、リストの最後尾に
+  // 追加されるようにする。
+  const nextSortOrderRow = await env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ?'
+  )
+    .bind(userId)
+    .first<{ next_order: number }>()
+  let nextSortOrder = nextSortOrderRow?.next_order ?? 0
 
   for (const styleId of styleIds) {
     try {
@@ -326,8 +351,8 @@ export async function importSelectedStyles(
            user_id, stylist_id, coupon_id, source_type, source_salonboard_style_key, title, comment,
            category_value, length_value, menu_values_json, menu_detail_text, hashtags_json,
            model_attributes_json, auto_post_enabled_flag, internal_save_status,
-           salonboard_register_status, reflection_request_status
-         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success')`
+           salonboard_register_status, reflection_request_status, sort_order
+         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success', ?)`
       )
         .bind(
           userId,
@@ -344,7 +369,8 @@ export async function importSelectedStyles(
           JSON.stringify(detail.menuValues),
           detail.menuDetailText.slice(0, 50),
           JSON.stringify(detail.hashtags),
-          JSON.stringify(detail.modelAttributes)
+          JSON.stringify(detail.modelAttributes),
+          nextSortOrder++
         )
         .run()
 
@@ -352,16 +378,15 @@ export async function importSelectedStyles(
 
       if (detail.imageUrl) {
         try {
-          const base64 = await page.evaluate(async (url: string) => {
-            const res = await fetch(url, { credentials: 'include' })
-            const buf = await res.arrayBuffer()
-            const bytes = new Uint8Array(buf)
-            let binary = ''
-            for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
-            return btoa(binary)
-          }, detail.imageUrl)
-
-          const bytes = new Uint8Array(Buffer.from(base64, 'base64'))
+          // 2026-08-12修正(重大バグ): 画像URL(imgbp.salonboard.com)は
+          // salonboard.comとは別オリジンの公開CDNであり、page.evaluate内で
+          // fetch()するとブラウザのCORS制限に阻まれ失敗していた(<img>タグでの
+          // 表示自体はCORSの対象外のため、画面上には正しく表示されるが、
+          // JS側からのfetch()だけが失敗する)。認証不要な公開URLのため、
+          // ブラウザを介さずワーカー側から直接fetchする。
+          const res = await fetch(detail.imageUrl)
+          if (!res.ok) throw new Error(`画像の取得に失敗しました(status=${res.status})`)
+          const bytes = new Uint8Array(await res.arrayBuffer())
 
           const key = `style/${userId}/imported-${styleId}-${Date.now()}.jpg`
           await env.STYLE_IMAGES.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } })
