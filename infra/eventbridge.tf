@@ -53,9 +53,12 @@ resource "aws_iam_role_policy" "scheduler_invoke" {
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
-      Effect   = "Allow"
-      Action   = "events:InvokeApiDestination"
-      Resource = aws_cloudwatch_event_api_destination.cron[0].arn
+      Effect = "Allow"
+      Action = "events:InvokeApiDestination"
+      Resource = [
+        aws_cloudwatch_event_api_destination.cron[0].arn,
+        aws_cloudwatch_event_api_destination.cron_ranking[0].arn
+      ]
     }]
   })
 }
@@ -72,6 +75,34 @@ resource "aws_scheduler_schedule" "cron" {
 
   target {
     arn      = aws_cloudwatch_event_api_destination.cron[0].arn
+    role_arn = aws_iam_role.scheduler[0].arn
+  }
+}
+
+# 検索順位計測の定期測定。/api/cron/run-ranking を5分間隔で叩く。
+# エンドポイント側で「今日/今週まだ未実行かつ run_time を過ぎたユーザー」だけを
+# 実行するため、頻繁に叩いても実際の計測は設定時刻に1回だけ走る。
+# 認証は既存のcron接続(Bearer CRON_SECRET)を流用する。
+resource "aws_cloudwatch_event_api_destination" "cron_ranking" {
+  count               = local.has_domain ? 1 : 0
+  name                = "${var.project_name}-cron-ranking-target"
+  invocation_endpoint = "${local.app_public_url}/api/cron/run-ranking"
+  http_method         = "POST"
+  connection_arn      = aws_cloudwatch_event_connection.cron[0].arn
+}
+
+resource "aws_scheduler_schedule" "cron_ranking" {
+  count      = local.has_domain ? 1 : 0
+  name       = "${var.project_name}-run-ranking"
+  group_name = aws_scheduler_schedule_group.app[0].name
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+  schedule_expression = "rate(5 minutes)"
+
+  target {
+    arn      = aws_cloudwatch_event_api_destination.cron_ranking[0].arn
     role_arn = aws_iam_role.scheduler[0].arn
   }
 }
