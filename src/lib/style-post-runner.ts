@@ -62,6 +62,24 @@ export async function getStyleRowForJob(env: Bindings, styleId: number): Promise
   return env.DB.prepare(`${READY_STYLE_SELECT} WHERE s.id = ?`).bind(styleId).first<ReadyStyleRow>()
 }
 
+/**
+ * 登録スタイル一覧(StyleListSection)の表示順(No.)を、実行ログ記録時点の
+ * スナップショットとして取得する。並び順(sort_order)は後から変更されうるため、
+ * execution_logs.style_noへ都度保存し、後で並びが変わっても実行時点のNo.を
+ * 表示できるようにする。
+ */
+export async function getStyleNo(env: Bindings, userId: number, styleId: number): Promise<number | null> {
+  const row = await env.DB.prepare(
+    `SELECT no FROM (
+       SELECT id, ROW_NUMBER() OVER (ORDER BY sort_order ASC, id DESC) AS no
+       FROM styles WHERE user_id = ?
+     ) ranked WHERE id = ?`
+  )
+    .bind(userId, styleId)
+    .first<{ no: number }>()
+  return row?.no ?? null
+}
+
 function randomJobToken(): string {
   const bytes = new Uint8Array(32)
   crypto.getRandomValues(bytes)
@@ -121,11 +139,12 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
     await env.DB.prepare(`UPDATE styles SET salonboard_register_status = 'failed', last_error = ? WHERE id = ?`)
       .bind(`ジョブ起動に失敗しました: ${message}`, styleId)
       .run()
+    const styleNo = await getStyleNo(env, userId, styleId)
     await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', ?)`
     )
-      .bind(userId, styleId, `ジョブ起動失敗: ${message}`)
+      .bind(userId, styleId, styleNo, `ジョブ起動失敗: ${message}`)
       .run()
     throw err
   }
@@ -360,11 +379,12 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
     )
       .bind(j.style_id)
       .run()
+    const styleNo = await getStyleNo(env, j.user_id, j.style_id)
     await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
     )
-      .bind(j.user_id, j.style_id)
+      .bind(j.user_id, j.style_id, styleNo)
       .run()
   }
   return staleJobs.length
