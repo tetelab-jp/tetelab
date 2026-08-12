@@ -161,17 +161,48 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
   const candidates = (payload.proxySessionCandidates || []).slice(0, 2)
   const loginAttempts: LoginAttempt[] = []
 
+  const { imageBase64, ...styleRest } = payload.style
+  const styleInput: StylePostInput = {
+    ...styleRest,
+    imageBuffer: base64ToArrayBuffer(imageBase64)
+  }
+
+  // 2026-08-13追記: 画像アップロード(net::ERR_ABORTED等)が特定のプロキシ
+  // セッション(出口IP)に固有の一時的な問題で失敗するケースが実機で確認された
+  // (同条件のはずの直後のジョブが失敗する/成功するがランダムに入れ替わる)。
+  // draftRegisterStyle()はdoRegisterクリックまでSALON BOARD側に何も保存
+  // しない(新規スタイル作成フォームを開くだけの純粋なクライアント側操作)ため、
+  // ここまでの失敗であれば別セッションで最初からやり直しても二重登録の
+  // リスクが無い。そのため、ログイン失敗だけでなく下書き登録(画像アップロード
+  // 含む)の失敗も、候補セッションが残っていれば同じ予算(最大2件)の中で
+  // 別セッションに切り替えて再試行する。doRegister成功後(=実際に保存された
+  // 後)はセッション切り替えでの再試行は行わない(二重登録を避けるため)。
   let attempt = await attemptLogin(payload, log, candidates[0])
   if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
 
-  for (let i = 1; i < candidates.length && attempt.error; i++) {
+  let draftError: any = attempt.error ? null : new Error('未試行')
+  const tryDraft = async (): Promise<void> => {
+    if (attempt.error) return
+    try {
+      await draftRegisterStyle(attempt.page!, styleInput, log)
+      draftError = null
+    } catch (err: any) {
+      draftError = err
+    }
+  }
+  if (!attempt.error) await tryDraft()
+
+  for (let i = 1; i < candidates.length && (attempt.error || draftError); i++) {
     log(
-      `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
-        `次の候補セッションID(${candidates[i]})で再試行します...`
+      `[プロキシ] セッションID(${candidates[i - 1]})での` +
+        `${attempt.error ? 'ログイン' : 'スタイル下書き登録(画像アップロード含む)'}に失敗したため、` +
+        `次の候補セッションID(${candidates[i]})で最初からやり直します...`
     )
     await closeAttempt(attempt)
     attempt = await attemptLogin(payload, log, candidates[i])
     loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+    draftError = attempt.error ? null : new Error('未試行')
+    if (!attempt.error) await tryDraft()
   }
 
   try {
@@ -191,19 +222,11 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
     // ここまで到達していればログイン成功(=このセッションIDはCAPTCHA等を
     // 回避できた実績あり)。以降の工程の成否に関わらず、次回以降のセッション
     // 選定に使えるようこのproxySessionIdを結果に含めて返す。
-    const { imageBase64, ...styleRest } = payload.style
-    const styleInput: StylePostInput = {
-      ...styleRest,
-      imageBuffer: base64ToArrayBuffer(imageBase64)
-    }
-
-    try {
-      await draftRegisterStyle(page!, styleInput, log)
-    } catch (err: any) {
+    if (draftError) {
       return {
         success: false,
         step: 'draft_register',
-        message: String(err?.message || err),
+        message: String(draftError?.message || draftError),
         blocked: false,
         proxySessionId,
         loginAttempts
