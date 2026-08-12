@@ -90,6 +90,105 @@ const LOG_RESULT_BORDER: Record<string, string> = {
   failure: 'border-red-500'
 }
 
+type ExecutionLogRow = {
+  id: number
+  dateLabel: string
+  category: string
+  categoryClass: string
+  content: any
+  statusLabel: string
+  statusClass: string
+  borderClass: string
+  errorText: string
+  showToggle: boolean
+}
+
+function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
+  if (rows.length === 0) {
+    return <p class="text-sm text-gray-400">まだログがありません</p>
+  }
+  return (
+    <>
+      {/* PC表示: テーブル */}
+      <div class="hidden md:block overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="text-left text-gray-400 border-b border-gray-100">
+              <th class="py-2 pl-3">実行日時</th>
+              <th class="py-2">カテゴリ</th>
+              <th class="py-2">内容</th>
+              <th class="py-2">ステータス</th>
+              <th class="py-2">エラー</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr class="border-b border-gray-50">
+                <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
+                  {r.dateLabel}
+                </td>
+                <td class="py-2">
+                  <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
+                </td>
+                <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
+                <td class="py-2">
+                  <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+                </td>
+                <td class="py-2 text-xs text-gray-400 max-w-xs">
+                  <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
+                  {r.showToggle && (
+                    <button
+                      type="button"
+                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                    >
+                      続きを見る
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* モバイル表示: カード */}
+      <div class="md:hidden space-y-3">
+        {rows.map((r) => (
+          <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
+            <div class="flex items-center justify-between gap-2">
+              <span class="text-xs text-gray-500">{r.dateLabel}</span>
+              <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5">
+              <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
+                {r.category}
+              </span>
+              <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+            </div>
+            {r.errorText !== '-' && (
+              <div class="mt-1.5">
+                <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
+                  {r.errorText}
+                </p>
+                {r.showToggle && (
+                  <button
+                    type="button"
+                    class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                    onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                  >
+                    続きを見る
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
 automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
@@ -149,6 +248,9 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }
   })
 
+  const styleLogRows = logRows.filter((r) => r.category === 'スタイル')
+  const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
+
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
   const { results: retryTargets } = await c.env.DB.prepare(
     `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
@@ -204,88 +306,30 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
-        {logRows.length === 0 ? (
-          <p class="text-sm text-gray-400">まだログがありません</p>
-        ) : (
-          <>
-            {/* PC表示: テーブル */}
-            <div class="hidden md:block overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-gray-400 border-b border-gray-100">
-                    <th class="py-2 pl-3">実行日時</th>
-                    <th class="py-2">カテゴリ</th>
-                    <th class="py-2">内容</th>
-                    <th class="py-2">ステータス</th>
-                    <th class="py-2">エラー</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logRows.map((r) => (
-                    <tr class="border-b border-gray-50">
-                      <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
-                        {r.dateLabel}
-                      </td>
-                      <td class="py-2">
-                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
-                      </td>
-                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
-                      <td class="py-2">
-                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
-                      </td>
-                      <td class="py-2 text-xs text-gray-400 max-w-xs">
-                        <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
-                        {r.showToggle && (
-                          <button
-                            type="button"
-                            class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                            onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
-                          >
-                            続きを見る
-                          </button>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
 
-            {/* モバイル表示: カード */}
-            <div class="md:hidden space-y-3">
-              {logRows.map((r) => (
-                <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
-                  <div class="flex items-center justify-between gap-2">
-                    <span class="text-xs text-gray-500">{r.dateLabel}</span>
-                    <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
-                  </div>
-                  <div class="flex items-center gap-2 mt-1.5">
-                    <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
-                      {r.category}
-                    </span>
-                    <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
-                  </div>
-                  {r.errorText !== '-' && (
-                    <div class="mt-1.5">
-                      <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
-                        {r.errorText}
-                      </p>
-                      {r.showToggle && (
-                        <button
-                          type="button"
-                          class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                          onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
-                        >
-                          続きを見る
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
+        <div class="flex gap-1 mb-4 border-b border-gray-100">
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-pink-500 text-pink-600"
+            data-tab="style"
+          >
+            スタイル（{styleLogRows.length}）
+          </button>
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400"
+            data-tab="blog"
+          >
+            ブログ（{blogLogRows.length}）
+          </button>
+        </div>
+
+        <div data-tab-panel="style">
+          <ExecutionLogTable rows={styleLogRows} />
+        </div>
+        <div data-tab-panel="blog" class="hidden">
+          <ExecutionLogTable rows={blogLogRows} />
+        </div>
       </div>
 
       <script src="/static/test-run.js"></script>
