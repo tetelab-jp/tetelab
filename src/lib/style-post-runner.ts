@@ -37,6 +37,7 @@ export type ReadyStyleRow = {
   length_value: string | null
   menu_values_json: string
   menu_detail_text: string | null
+  hashtags_json: string
   stylist_select_value: string | null
   coupon_select_value: string | null
   front_r2_key: string | null
@@ -46,7 +47,7 @@ export type ReadyStyleRow = {
 export const READY_STYLE_SELECT = `
   SELECT
     s.id, s.title, s.comment, s.category_value, s.length_value,
-    s.menu_values_json, s.menu_detail_text,
+    s.menu_values_json, s.menu_detail_text, s.hashtags_json,
     st.salonboard_stylist_key AS stylist_select_value,
     cp.salonboard_coupon_key AS coupon_select_value,
     si.r2_key AS front_r2_key, si.file_name AS front_file_name
