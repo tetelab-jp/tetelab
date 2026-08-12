@@ -141,9 +141,10 @@ function parseKeywords(body: Record<string, unknown>): string[] {
 // data-has-salon/data-has-areaはクライアント側の送信前チェック(ranking.js)用マーカー。
 function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
   const hasSalon = !!salon?.salonName
-  const hasArea = !!salon?.middleAreaCd
+  const hasMiddle = !!salon?.middleAreaCd
+  const hasSmall = !!salon?.smallAreaCd
   return (
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div id="salon-auto-field" data-has-salon={hasSalon ? '1' : '0'}>
         <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
         {hasSalon ? (
@@ -156,17 +157,26 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
           </p>
         )}
       </div>
-      <div id="area-auto-field" data-has-area={hasArea ? '1' : '0'}>
-        <label class="block text-sm font-medium text-gray-700 mb-1">対策エリア（中・小）</label>
-        {hasArea ? (
+      <div id="area-auto-field" data-has-area={hasMiddle ? '1' : '0'}>
+        <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
+        {hasMiddle ? (
           <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
             {salon!.middleAreaName}
-            {salon!.smallAreaName ? ` / ${salon!.smallAreaName}` : ''}
           </p>
         ) : (
           <p class="text-xs text-amber-600">
             対策エリアが未取得です。「サロンボード連携設定」でサロンボードと同期すると、HPBのサロンページから自動反映されます。
           </p>
+        )}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
+        {hasSmall ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.smallAreaName}
+          </p>
+        ) : (
+          <p class="text-xs text-gray-400">-</p>
         )}
       </div>
     </div>
