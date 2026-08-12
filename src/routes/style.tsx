@@ -747,7 +747,9 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">長さ</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          長さ<span style="color:#d32475">*</span>
+        </label>
         <select name="length_value_sg01" class="length-select w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" data-cat="SG01">
           <option value="">選択してください</option>
           {HAIR_LENGTH_OPTIONS.SG01.map(([v, label]) => (
@@ -763,9 +765,7 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">
-          メニュー内容<span style="color:#d32475">*</span>
-        </label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">メニュー内容（該当するものを選択、任意）</label>
         <div class="flex flex-wrap gap-3 text-sm mb-2">
           {MENU_OPTIONS.map(([v, label]) => (
             <label class="flex items-center gap-1">
@@ -774,6 +774,9 @@ function StyleForm({
             </label>
           ))}
         </div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          メニュー内容（テキスト）<span style="color:#d32475">*</span>
+        </label>
         <textarea
           name="menu_detail_text"
           rows={2}
