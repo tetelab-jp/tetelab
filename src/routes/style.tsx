@@ -264,11 +264,13 @@ async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<Style
 function StyleListSection({
   styles,
   totalCount,
-  selectedCount
+  selectedCount,
+  showCreateLink = true
 }: {
   styles: StyleListRow[]
   totalCount: number
   selectedCount: number
+  showCreateLink?: boolean
 }) {
   return (
     <>
@@ -298,12 +300,14 @@ function StyleListSection({
           >
             全解除
           </button>
-          <a
-            href="/style/new"
-            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
-          >
-            <i class="fas fa-plus mr-1"></i>新規作成
-          </a>
+          {showCreateLink && (
+            <a
+              href="/style/new"
+              class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+            >
+              <i class="fas fa-plus mr-1"></i>新規作成
+            </a>
+          )}
         </div>
       </div>
 
@@ -391,8 +395,8 @@ function TemplateBulkApplySection({
 }) {
   if (templates.length === 0 || !hasStyles) return null
   return (
-    <div class="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
-      <select id="bulk-apply-template-select" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm flex-1 min-w-[10rem]">
+    <div class="bg-white rounded-xl border border-gray-100 p-4 space-y-3">
+      <select id="bulk-apply-template-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
         <option value="">テンプレートを選択</option>
         {templates.map((t) => (
           <option value={t.id}>{t.template_name}</option>
@@ -401,11 +405,11 @@ function TemplateBulkApplySection({
       <button
         id="bulk-apply-btn"
         type="button"
-        class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+        class="w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
       >
-        チェック中のスタイルに適用
+        <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
-      <p class="text-xs text-gray-400 w-full">
+      <p class="text-xs text-gray-400">
         下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名・担当スタイリストを除く）を一括で反映します。
       </p>
     </div>
@@ -1238,6 +1242,25 @@ style.get('/style/schedule', async (c) => {
         <i class="fas fa-clock mr-2 text-pink-500"></i>自動投稿
       </p>
 
+      <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6">
+        <label class="flex items-center gap-3 cursor-pointer w-fit">
+          <span class="relative inline-flex items-center flex-shrink-0">
+            <input
+              type="checkbox"
+              name="enabled"
+              checked={enabled}
+              onchange="this.form.submit()"
+              class="sr-only peer"
+            />
+            <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+            <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+          </span>
+          <span class="text-sm font-medium text-gray-700">
+            自動投稿を有効にする（{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}に分散、最大{DAILY_POST_LIMIT_LABEL}件/日）
+          </span>
+        </label>
+      </form>
+
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
         自動投稿を有効にすると、<b>{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}</b>の間に、自動投稿対象（入力完了済み）の
@@ -1246,20 +1269,6 @@ style.get('/style/schedule', async (c) => {
         現在<b>{selectedCount}件</b>が対象です。
       </div>
 
-      <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-xl">
-        <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
-          <input type="checkbox" name="enabled" checked={enabled} class="w-4 h-4 accent-pink-500" />
-          自動投稿を有効にする（{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}に分散、最大{DAILY_POST_LIMIT_LABEL}件/日）
-        </label>
-
-        <button
-          type="submit"
-          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
-        >
-          保存する
-        </button>
-      </form>
-
       <p class="font-semibold text-gray-800 pt-2">
         <i class="fas fa-flask mr-2 text-pink-500"></i>手動投稿
       </p>
@@ -1267,7 +1276,7 @@ style.get('/style/schedule', async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <button
           id="test-run-btn"
-          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
         >
           <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
@@ -1352,7 +1361,7 @@ style.get('/style/template', async (c) => {
         <p class="font-semibold text-gray-800">
           <i class="fas fa-sliders mr-2 text-pink-500"></i>テンプレート作成（{templates.length}件）
         </p>
-        <a href="/style/template/new" class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">
+        <a href="/style/template/new" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm px-4 py-2 rounded-lg">
           <i class="fas fa-plus mr-1"></i>新規作成
         </a>
       </div>
@@ -1401,7 +1410,7 @@ style.get('/style/template', async (c) => {
 
       <TemplateBulkApplySection templates={templates} hasStyles={styles.length > 0} />
 
-      <StyleListSection styles={styles} totalCount={totalCount} selectedCount={selectedCount} />
+      <StyleListSection styles={styles} totalCount={totalCount} selectedCount={selectedCount} showCreateLink={false} />
 
       <script src="/static/style-library.js"></script>
     </PageLayout>,
