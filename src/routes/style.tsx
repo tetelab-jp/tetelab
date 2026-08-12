@@ -801,6 +801,9 @@ function StyleForm({
           placeholder="奈良美容室,髪質改善,ブリーチ毛ケア"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        <p class="hashtags-error hidden text-xs text-red-500 mt-1">
+          カンマ(,)以外の記号は使用できません。
+        </p>
       </div>
 
       <ModelAttributeFields model={model} />
@@ -1574,6 +1577,9 @@ function TemplateForm({
           value={hashtags.join(',')}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        <p class="hashtags-error hidden text-xs text-red-500 mt-1">
+          カンマ(,)以外の記号は使用できません。
+        </p>
       </div>
 
       <ModelAttributeFields model={model} />
