@@ -41,6 +41,7 @@ export type StylePostInput = {
   menuContentsCdList?: string[] // MC01〜MC04
   menuDetailText: string // menuDetailTxt textarea(最大50文字)
   couponSelectValue?: string // frmStyleEditStyleDto.couponId(CP+14桁形式)
+  hashtags?: string[] // #hashTagTxt(1件最大40文字)へ1件ずつ入力し.jsc_style_edit-editCommon__tag--addBtnで追加(最大20件)
 }
 
 export type AutomationLogger = (message: string) => void
@@ -95,21 +96,37 @@ export async function launchBrowser(): Promise<Browser> {
  * headlessで動かす都合上、典型的なheadless検知ポイント(navigator.webdriver・
  * User-Agent・viewport等)を可能な範囲でごまかす。
  */
-export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
+export type NewAutomationPageResult = {
+  page: Page
+  proxySessionId: string | null
+}
+
+export async function newAutomationPage(
+  browser: Browser,
+  log?: AutomationLogger,
+  preferredProxySessionId?: string | null
+): Promise<NewAutomationPageResult> {
   const page = await browser.newPage()
 
   // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)のユーザー名に
   // `-session-<任意の文字列>`を付与すると、session値ごとにプール内の別IPが
-  // 割り当てられる。ブラウザ起動のたびにランダムなsession値を付与し、
-  // 1つの出口IPがブロックされても他のIPへ自動的にローテーションされるようにする
-  // (src/lib/salonboard-automation.tsと同じ対応)。
+  // 割り当てられる。当初はブラウザ起動のたびにランダムなsession値を付与して
+  // いたが、同一サロンアカウントへのログイン元IPが毎回変わることが、逆に
+  // ボット対策側から見て不自然(短時間のIP変動)に映っている可能性がある。
+  // 直近ログイン成功実績のあるセッションID(preferredProxySessionId)が
+  // あればそれを優先的に使い回し(=出口IPを固定)、指定が無い場合のみ
+  // 新規にランダムなセッションIDを発行する。
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
   const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
+  let proxySessionId: string | null = null
   if (proxyUsername && proxyPassword) {
-    const sessionId = Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${sessionId}`
+    proxySessionId = preferredProxySessionId || Math.random().toString(36).slice(2, 10)
+    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
     await page.authenticate({ username: sessionUsername, password: proxyPassword })
-    log?.(`[プロキシ] セッションID=${sessionId} で出口IPをローテーション`)
+    log?.(
+      `[プロキシ] セッションID=${proxySessionId} で出口IPを` +
+        `${preferredProxySessionId ? '固定(前回成功実績あり)' : '新規発行'}`
+    )
   }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
@@ -132,7 +149,7 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
   // User-Agentも上書きせず本物の値をそのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
-  return page
+  return { page, proxySessionId }
 }
 
 /**
@@ -293,6 +310,35 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     }, input.couponSelectValue)
   }
 
+  // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
+  // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
+  // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
+  // イベントを発生させる必要がある。
+  if (input.hashtags && input.hashtags.length > 0) {
+    for (const rawTag of input.hashtags.slice(0, 20)) {
+      const tag = rawTag.trim().slice(0, 40)
+      if (!tag) continue
+
+      const hashTagInput = await page.$('#hashTagTxt')
+      if (!hashTagInput) {
+        log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
+        break
+      }
+      await hashTagInput.click({ count: 3 })
+      await page.keyboard.press('Backspace').catch(() => {})
+      await hashTagInput.type(tag, { delay: 20 })
+      await sleep(200)
+
+      const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
+      if (!addBtn) {
+        log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
+        break
+      }
+      await addBtn.click()
+      await sleep(200)
+    }
+  }
+
   // ---- 送信前セルフチェック ----
   const preflight = await page.evaluate(() => {
     const val = (id: string) =>
@@ -328,13 +374,23 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 
   // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
   // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
+  //
+  // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
+  // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
+  // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
+  // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
+  // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
+  // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
+  // である「登録が完了しました。」の文言も検知対象に加える。
   const registeredStyleId = await page
     .waitForFunction(
       () => {
         const el = document.getElementById('styleId') as HTMLInputElement | null
         if (el && /^L\d{9}$/.test(el.value)) return el.value
         const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
-        return urlMatch ? urlMatch[1] : false
+        if (urlMatch) return urlMatch[1]
+        if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
+        return false
       },
       { timeout: 20000 }
     )
@@ -343,24 +399,46 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
 
   if (!registeredStyleId) {
     const currentUrl = page.url()
+    // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
+    // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
+    // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
+    // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
+    // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
+    // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
+    // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
+    // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
+    // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
+    // 可能性の傍証)を診断ログに残すのみとする。
+    const isStyleListPage = /styleList/i.test(currentUrl)
     const diag = await page
-      .evaluate(() => {
-        const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
-        const errorEls = Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
-          .map((el) => el.textContent?.trim())
-          .filter((t) => t)
-          .slice(0, 3)
-        return {
-          styleIdElExists: !!styleIdEl,
-          styleIdElValue: styleIdEl?.value ?? null,
-          errorTexts: errorEls
-        }
-      })
+      .evaluate(
+        (styleName: string, isListPage: boolean) => {
+          const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+          const errorEls = isListPage
+            ? []
+            : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+                .map((el) => el.textContent?.trim())
+                .filter((t) => t)
+                .slice(0, 3)
+          const nameMatchCount =
+            isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
+          return {
+            styleIdElExists: !!styleIdEl,
+            styleIdElValue: styleIdEl?.value ?? null,
+            errorTexts: errorEls,
+            isStyleListPage: isListPage,
+            nameMatchCount
+          }
+        },
+        input.styleName.slice(0, 30),
+        isStyleListPage
+      )
       .catch(() => null)
     const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
     log(
-      `登録確認失敗時の詳細: url=${currentUrl} #styleId存在=${diag?.styleIdElExists ?? '不明'} ` +
-        `値=${diag?.styleIdElValue ?? '(なし)'} エラー表示候補=${errorSummary}`
+      `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
+        `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
+        `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
     )
     throw new Error(
       'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
@@ -368,7 +446,11 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
     )
   }
 
-  log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+  if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
+    log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
+  } else {
+    log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+  }
 }
 
 /**
@@ -496,6 +578,18 @@ async function uploadFrontImage(
     const maxAttempts = 3
     let lastError: Error | null = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // 2026-08-11修正(重大バグ): 失敗後のクリックが"Node is either not
+      // clickable or not an Element"で失敗する原因を実機のDOM状態(要素の
+      // offsetParentがnull、座標が全て0)で特定した。モーダルは「ファイル
+      // 未選択状態にリセット」されるのではなく、実際には非表示(モーダルごと
+      // 閉じた状態)になっていた。#formFileの要素自体はDOMに残るためセレクタ
+      // には一致するが、非表示のモーダル内にあるためクリック不可能だった。
+      // プレースホルダー(#FRONT_IMG_ID_IMG)を再クリックしてモーダルを
+      // 明示的に開き直してから、ファイル選択をやり直す。
+      if (attempt > 1) {
+        await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
+        await page.click('#FRONT_IMG_ID_IMG')
+      }
       const currentFileInput =
         attempt === 1
           ? fileInput
@@ -565,7 +659,84 @@ async function uploadFrontImage(
       }
 
       try {
-        await page.click('input.jscImageUploaderModalSubmitButton')
+        // 2026-08-11修正(重大バグ): 実機ログで試行2・3回目に"Node is either
+        // not clickable or not an Element"というクリック失敗が確認された。
+        // isActive検知直後はモーダル内のDOM遷移(ファイル再選択後の再描画等)が
+        // まだ収まっていない可能性があるため、少し待ってからクリックし、
+        // それでも失敗する場合は短い間隔で数回リトライする。
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        let clickError: any = null
+        for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
+          try {
+            await page.click('input.jscImageUploaderModalSubmitButton')
+            clickError = null
+            break
+          } catch (e: any) {
+            clickError = e
+            // 2026-08-11追記(診断用): 待機+リトライを追加してもなお
+            // "not clickable"が解消しないケースが実機で確認された。単純な
+            // アニメーションタイミングの問題ではない可能性があるため、
+            // クリック失敗時の実際のDOM状態(表示状態・座標・一致要素数)を
+            // 記録し、原因特定に使う。
+            try {
+              const buttonState = await page.evaluate(() => {
+                const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
+                return buttons.map((btn) => {
+                  const el = btn as HTMLInputElement
+                  const rect = el.getBoundingClientRect()
+                  const style = window.getComputedStyle(el)
+                  return {
+                    isActiveClass: el.classList.contains('isActive'),
+                    disabled: el.disabled,
+                    offsetParentIsNull: el.offsetParent === null,
+                    display: style.display,
+                    visibility: style.visibility,
+                    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                  }
+                })
+              })
+              log(
+                `[診断:クリック失敗詳細](試行${attempt}/${maxAttempts}, クリック試行${clickAttempt}/3) ` +
+                  `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
+              )
+            } catch (evalErr: any) {
+              log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
+            }
+            await new Promise((resolve) => setTimeout(resolve, 500))
+          }
+        }
+        if (clickError) throw clickError
+
+        // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
+        // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
+        // 画像IDが表示される。自動化のクリックが本当に同じ登録動作を引き起こして
+        // いるかを確認するため、当初はクリック直後のスクリーンショットをbase64で
+        // 記録していたが、実行履歴画面での表示・コピー時に長すぎる文字列が途中で
+        // 切れてしまい、しかもそれ以降(試行2・3回目分)のログまで一緒に失われる
+        // 実害が確認された。そのため画像ではなく、短いテキストで済むDOM状態の
+        // チェックに変更する。
+        try {
+          await new Promise((resolve) => setTimeout(resolve, 500))
+          const domSnapshot = await page.evaluate(() => {
+            // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
+            // 誤検知するため、"loading"で判定する("upload"は含まない)。
+            const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
+              .map((el) => el.className)
+              .filter((c) => typeof c === 'string' && c.length > 0)
+              .slice(0, 5)
+            const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
+            const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
+            return {
+              loadingLikeClasses: loadingLike,
+              submitButtonStillInDom: !!submitButton,
+              submitButtonDisabled: submitButton ? submitButton.disabled : null,
+              completionSpanText: completionSpan ? completionSpan.textContent : null
+            }
+          })
+          log(`[診断:DOM状態](試行${attempt}/${maxAttempts}) クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
+        } catch (e: any) {
+          log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+        }
 
         log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
         await page.waitForFunction(
@@ -577,8 +748,18 @@ async function uploadFrontImage(
         )
         lastError = null
         break
-      } catch {
-        const diag = uploadEvents.length > 0 ? uploadEvents.join(' / ') : '(doUploadへのリクエストが観測されませんでした)'
+      } catch (clickOrWaitError: any) {
+        // 2026-08-11修正(診断用): 従来はcatchの中身を受け取っておらず、
+        // 「登録する」クリック自体が例外で失敗した場合(要素が操作可能に
+        // ならない等のPuppeteerのアクショナビリティチェック失敗)の実際の
+        // エラーメッセージが握りつぶされていた。試行2回目以降で
+        // [診断:DOM状態]のログすら出ない(=クリックの行で例外が飛んでいる)
+        // ことが実機で確認されたため、原因特定のためにこのメッセージも記録する。
+        const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
+        const diag =
+          uploadEvents.length > 0
+            ? uploadEvents.join(' / ')
+            : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
         lastError = new Error(
           '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
             `45秒待っても検知できませんでした [診断] ${diag}`

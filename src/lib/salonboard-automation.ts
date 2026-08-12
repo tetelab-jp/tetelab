@@ -55,7 +55,7 @@ export type StylePostInput = {
   couponSelectValue?: string // frmStyleEditStyleDto.couponId（CP+14桁形式）。docs/phase3-mvp-design.md 9章参照
   // ⚠️ モデル属性(髪量/髪質/顔型/太さ/クセ/年代)は意図的に含めていない。
   // HANDOFF.md 4-5「自動化では触らずデフォルト('99'=未設定)のままでよい」との確定方針のため。
-  // アプリのUI上でモデル情報を入力できるが、現時点ではTETE AOUT内部の記録用メタデータであり、
+  // アプリのUI上でモデル情報を入力できるが、現時点ではSalonMotion内部の記録用メタデータであり、
   // SALON BOARDへは送信されない。
 }
 

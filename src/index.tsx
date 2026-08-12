@@ -46,6 +46,66 @@ const bindings: Bindings = {
   ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS
 }
 
+// 2026-08-11追記: マイグレーション専用のランナーが無いため、追加列のような
+// 後方互換な(既存データを壊さない)スキーマ変更はアプリ起動時に冪等
+// (IF NOT EXISTS)に自動適用する。詳細はmigrations-pg/0002_*.sql参照。
+;(async () => {
+  try {
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_successful_proxy_session_id TEXT`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_successful_proxy_session_at TIMESTAMP`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_credentials拡張列)に失敗しました:', err)
+  }
+  try {
+    // 実行履歴(style_post_runs)の一覧ステータスが常に'processing'のまま
+    // 更新されない不具合の修正用: どのジョブがどの実行(run)に属するかを
+    // 記録できるようにする(詳細はmigrations-pg/0003_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS run_id INTEGER REFERENCES style_post_runs(id) ON DELETE SET NULL`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_post_jobs.run_id)に失敗しました:', err)
+  }
+  try {
+    // 個別実行ログのNo.表示を、実行時点の登録スタイル一覧の並び順で
+    // スナップショットしておくための拡張列(詳細はmigrations-pg/0004_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE execution_logs ADD COLUMN IF NOT EXISTS style_no INTEGER`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(execution_logs.style_no)に失敗しました:', err)
+  }
+  try {
+    // 検索順位計測の新規テーブル群。専用ランナーが無いため起動時に冪等作成する。
+    // スキーマの正本は migrations-pg/0005_ranking.sql。
+    const rankingDdl = [
+      `CREATE TABLE IF NOT EXISTS salonboard_salons (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, salon_key TEXT, salon_name TEXT NOT NULL, hpb_sln_id TEXT, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_salonboard_salons_user_id ON salonboard_salons(user_id)`,
+      `CREATE TABLE IF NOT EXISTS ranking_areas (id SERIAL PRIMARY KEY, level INTEGER NOT NULL, service_area_cd TEXT NOT NULL, middle_area_cd TEXT, small_area_cd TEXT, name TEXT NOT NULL, url TEXT, parent_id INTEGER REFERENCES ranking_areas(id) ON DELETE CASCADE, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_areas_parent ON ranking_areas(parent_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_areas_level ON ranking_areas(level)`,
+      `CREATE TABLE IF NOT EXISTS ranking_queries (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, name TEXT, salon_name TEXT NOT NULL, service_area_cd TEXT NOT NULL, middle_area_cd TEXT, small_area_cd TEXT, area_label TEXT, is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_queries_user_id ON ranking_queries(user_id)`,
+      `CREATE TABLE IF NOT EXISTS ranking_query_keywords (id SERIAL PRIMARY KEY, query_id INTEGER NOT NULL REFERENCES ranking_queries(id) ON DELETE CASCADE, keyword TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_query_keywords_query_id ON ranking_query_keywords(query_id)`,
+      `CREATE TABLE IF NOT EXISTS ranking_runs (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, trigger TEXT NOT NULL DEFAULT 'manual', status TEXT NOT NULL DEFAULT 'running', started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, finished_at TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_runs_user_id ON ranking_runs(user_id)`,
+      `CREATE TABLE IF NOT EXISTS ranking_results (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, run_id INTEGER REFERENCES ranking_runs(id) ON DELETE CASCADE, query_id INTEGER REFERENCES ranking_queries(id) ON DELETE SET NULL, salon_name TEXT NOT NULL, area_label TEXT, service_area_cd TEXT NOT NULL, middle_area_cd TEXT, small_area_cd TEXT, keyword TEXT NOT NULL, rank INTEGER, result_count INTEGER, pages_scanned INTEGER, matched_sln_id TEXT, status TEXT NOT NULL DEFAULT 'ok', error_message TEXT, measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_results_user_id ON ranking_results(user_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_results_query_id ON ranking_results(query_id)`,
+      `CREATE INDEX IF NOT EXISTS idx_ranking_results_user_measured ON ranking_results(user_id, measured_at)`,
+      `CREATE TABLE IF NOT EXISTS ranking_schedules (id SERIAL PRIMARY KEY, user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE, enabled INTEGER NOT NULL DEFAULT 0, frequency TEXT NOT NULL DEFAULT 'daily', run_time TEXT, last_run_at TIMESTAMP, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)`
+    ]
+    for (const ddl of rankingDdl) {
+      await bindings.DB.prepare(ddl).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(検索順位計測テーブル)に失敗しました:', err)
+  }
+})()
+
 app.use('*', async (c, next) => {
   c.env = bindings
   await next()

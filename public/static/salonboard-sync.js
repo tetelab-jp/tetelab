@@ -3,8 +3,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('sync-stylists-coupons-status')
   if (!btn) return
 
+  const originalText = btn.textContent
+
   btn.addEventListener('click', async () => {
     btn.disabled = true
+    btn.textContent = 'サロンボードと同期中...'
+    btn.classList.remove('bg-pink-500', 'hover:bg-pink-600')
+    btn.classList.add('bg-gray-400')
     statusEl.textContent = 'サロンボードと同期中...（1分ほどかかる場合があります）'
     try {
       const res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
@@ -22,6 +27,9 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.textContent = '通信エラーが発生しました'
     } finally {
       btn.disabled = false
+      btn.textContent = originalText
+      btn.classList.remove('bg-gray-400')
+      btn.classList.add('bg-pink-500', 'hover:bg-pink-600')
     }
   })
 })

@@ -4,7 +4,7 @@ import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
-import { formatJstDateTime } from '../lib/date-format'
+import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -16,11 +16,33 @@ dashboard.use('*', requireAuth)
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
   const cred = await c.env.DB.prepare(
-    'SELECT id, consent_given, updated_at, connection_status FROM salon_credentials WHERE user_id = ?'
+    'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, salonboard_login_id_enc, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ id: number; consent_given: number; updated_at: string; connection_status: string }>()
+    .first<{
+      id: number
+      consent_given: number
+      updated_at: string
+      connection_status: string
+      last_stylist_synced_at: string | null
+      last_coupon_synced_at: string | null
+      salonboard_login_id_enc: string
+      last_error: string | null
+    }>()
   const isConnected = cred?.connection_status === 'success'
+
+  let maskedLoginId = ''
+  if (cred) {
+    const encKey = c.env.ENCRYPTION_KEY
+    if (encKey) {
+      try {
+        const loginId = await decryptSecret(cred.salonboard_login_id_enc, encKey)
+        maskedLoginId = maskLoginId(loginId)
+      } catch {
+        maskedLoginId = '(復号エラー: ENCRYPTION_KEYが変更された可能性があります)'
+      }
+    }
+  }
 
   const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
     .bind(user.id)
@@ -36,36 +58,53 @@ dashboard.get('/dashboard', async (c) => {
     .bind(user.id)
     .first<{ selected: number }>()
 
+  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
+  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ cnt: number }>()
+
   return c.render(
     <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-          <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
-            {isConnected ? (
-              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
-            ) : cred ? (
-              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
-            ) : (
-              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
-            )}
+      {cred && (
+        <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+          <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
+          <p class="text-sm text-gray-500 leading-relaxed">
+            作業開始の前に必ずこちらから同期をしてください。
+            <br />
+            登録されているスタイリスト・クーポンの一覧を取得し、スタイル投稿フォームで選べるようにします。
+            <br />
+            ※サロンボードのスタイリストやクーポンを追加・変更した場合は再度同期してください。
           </p>
+          <button
+            id="sync-stylists-coupons-btn"
+            type="button"
+            class="w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            サロンボードと同期する
+          </button>
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            <div class="bg-gray-50 rounded-lg p-3">
+              <p class="text-xs text-gray-400">スタイリスト</p>
+              <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
+              <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
+                <span>最終同期:</span>
+                <span class="whitespace-nowrap">{cred.last_stylist_synced_at ? formatJstDate(cred.last_stylist_synced_at) : '未実施'}</span>
+              </p>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3">
+              <p class="text-xs text-gray-400">クーポン</p>
+              <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
+              <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
+                <span>最終同期:</span>
+                <span class="whitespace-nowrap">{cred.last_coupon_synced_at ? formatJstDate(cred.last_coupon_synced_at) : '未実施'}</span>
+              </p>
+            </div>
+          </div>
+          <p id="sync-stylists-coupons-status" class="text-sm"></p>
         </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">スタイル画像（選択中/総数）</p>
-          <p class="text-lg font-bold text-gray-800">
-            {styleSelectedRow?.selected ?? 0} / {styleTotalRow?.total ?? 0} 枚
-          </p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
-          <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">自動投稿方式</p>
-          <p class="text-base font-bold text-gray-800">Browser Rendering</p>
-        </div>
-      </div>
+      )}
 
       {!isConnected && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 flex items-start gap-3">
@@ -95,10 +134,10 @@ dashboard.get('/dashboard', async (c) => {
             <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
           </p>
           <p class="text-sm text-gray-600 mb-3">
-            画像ライブラリに事前登録し、チェックした画像のみ自動投稿されます。
+            登録スタイルに事前登録し、チェックした画像のみ自動投稿されます。
           </p>
           <a href="/style/library" class="text-sm font-semibold text-pink-600 hover:underline">
-            画像ライブラリを開く <i class="fas fa-arrow-right ml-1"></i>
+            登録スタイルを開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
@@ -114,16 +153,105 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      <div class="bg-white rounded-xl border border-gray-100 p-5">
-        <p class="font-semibold mb-2">
-          <i class="fas fa-road mr-2 text-pink-500"></i>開発ロードマップ
-        </p>
-        <ul class="text-sm text-gray-600 space-y-1 list-disc list-inside">
-          <li>✅ Phase 1: ログイン・サロンボードID/Pass登録</li>
-          <li>✅ Phase 2: スタイル画像ライブラリ・自動投稿スケジュール、ブログ基本設定・AI生成</li>
-          <li>⏳ Phase 3: AWS Fargate上のPuppeteerによる自動投稿の実行</li>
-        </ul>
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
+          <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+            {isConnected ? (
+              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+            ) : cred ? (
+              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+            ) : (
+              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+            )}
+          </p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">スタイル画像（選択中/総数）</p>
+          <p class="text-lg font-bold text-gray-800">
+            {styleSelectedRow?.selected ?? 0} / {styleTotalRow?.total ?? 0} 枚
+          </p>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
+          <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
+        </div>
       </div>
+
+      <div class="max-w-2xl space-y-6">
+        <p class="font-semibold">
+          <i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定
+        </p>
+
+        {cred && (
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
+            <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
+            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
+            <div class="mt-3 pt-3 border-t border-gray-100">
+              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
+              {cred.connection_status === 'success' ? (
+                <p class="text-sm font-semibold text-green-600">
+                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
+                </p>
+              ) : cred.connection_status === 'failed' ? (
+                <div>
+                  <p class="text-sm font-semibold text-red-600">
+                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+                  </p>
+                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
+                </div>
+              ) : (
+                <p class="text-sm font-semibold text-gray-500">
+                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                </p>
+              )}
+              <p class="text-xs text-gray-400 mt-1">
+                上の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
+              </p>
+            </div>
+          </div>
+        )}
+
+        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
+            <input
+              required
+              type="text"
+              name="salonboard_login_id"
+              autocomplete="off"
+              placeholder="サロンボードのログインIDを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
+            <input
+              required
+              type="password"
+              name="salonboard_password"
+              autocomplete="new-password"
+              placeholder="サロンボードのパスワードを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <label class="flex items-start gap-2 text-sm text-gray-600">
+            <input required type="checkbox" name="consent" class="mt-1" />
+            <span>
+              本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
+            </span>
+          </label>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            {cred ? '更新する' : '登録する'}
+          </button>
+        </form>
+      </div>
+
+      {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
     { title: 'ダッシュボード' }
   )
@@ -137,15 +265,13 @@ dashboard.get('/settings/salonboard', async (c) => {
   const error = c.req.query('error')
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, consent_given, updated_at, last_stylist_synced_at, last_coupon_synced_at, connection_status, last_error FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, consent_given, updated_at, connection_status, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
     .first<{
       salonboard_login_id_enc: string
       consent_given: number
       updated_at: string
-      last_stylist_synced_at: string | null
-      last_coupon_synced_at: string | null
       connection_status: string
       last_error: string | null
     }>()
@@ -162,13 +288,6 @@ dashboard.get('/settings/salonboard', async (c) => {
       }
     }
   }
-
-  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ?')
-    .bind(user.id)
-    .first<{ cnt: number }>()
-  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ?')
-    .bind(user.id)
-    .first<{ cnt: number }>()
 
   return c.render(
     <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
@@ -219,51 +338,20 @@ dashboard.get('/settings/salonboard', async (c) => {
                 </p>
               )}
               <p class="text-xs text-gray-400 mt-1">
-                下の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
+                <a href="/dashboard" class="text-pink-600 hover:underline">ダッシュボード</a>の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
               </p>
             </div>
           </div>
         )}
 
-        {cred && (
-          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
-            <p class="font-semibold">
-              <i class="fas fa-rotate mr-2 text-pink-500"></i>スタイリスト・クーポンの同期
-            </p>
-            <p class="text-sm text-gray-500 leading-relaxed">
-              サロンボードに登録されているスタイリスト・クーポンの一覧を取得し、このアプリのスタイル投稿フォームで選べるようにします。
-              スタイリストやクーポンを追加・変更した場合は再度同期してください。
-            </p>
-            <div class="grid grid-cols-2 gap-3 text-sm">
-              <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-400">スタイリスト</p>
-                <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
-                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_stylist_synced_at ? formatJstDateTime(cred.last_stylist_synced_at) : '未実施'}</p>
-              </div>
-              <div class="bg-gray-50 rounded-lg p-3">
-                <p class="text-xs text-gray-400">クーポン</p>
-                <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
-                <p class="text-xs text-gray-400 mt-1">最終同期: {cred.last_coupon_synced_at ? formatJstDateTime(cred.last_coupon_synced_at) : '未実施'}</p>
-              </div>
-            </div>
-            <button
-              id="sync-stylists-coupons-btn"
-              type="button"
-              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              <i class="fas fa-rotate mr-1"></i>サロンボードと同期する
-            </button>
-            <p id="sync-stylists-coupons-status" class="text-sm"></p>
-          </div>
-        )}
-
-        <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
             <input
               required
               type="text"
               name="salonboard_login_id"
+              autocomplete="off"
               placeholder="サロンボードのログインIDを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
@@ -274,6 +362,7 @@ dashboard.get('/settings/salonboard', async (c) => {
               required
               type="password"
               name="salonboard_password"
+              autocomplete="new-password"
               placeholder="サロンボードのパスワードを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
@@ -292,8 +381,6 @@ dashboard.get('/settings/salonboard', async (c) => {
           </button>
         </form>
       </div>
-
-      {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
     { title: 'サロンボード連携設定' }
   )

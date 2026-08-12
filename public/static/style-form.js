@@ -84,4 +84,99 @@ document.addEventListener('DOMContentLoaded', () => {
       setValue('model_age', model.age || '99')
     })
   }
+
+  // ハッシュタグ欄: 半角カンマ(,)以外の記号が入力された場合はエラー表示する。
+  // 文字・数字・カンマ・空白のみを許可し、それ以外の記号(#!?など)を弾く。
+  const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
+  const hashtagsError = form ? form.querySelector('.hashtags-error') : null
+  const HASHTAGS_ALLOWED_PATTERN = /^[\p{L}\p{N},\s]*$/u
+
+  function isHashtagsValid() {
+    if (!hashtagsInput) return true
+    return HASHTAGS_ALLOWED_PATTERN.test(hashtagsInput.value)
+  }
+
+  function updateHashtagsError() {
+    if (!hashtagsInput || !hashtagsError) return
+    hashtagsError.classList.toggle('hidden', isHashtagsValid())
+  }
+
+  if (hashtagsInput) {
+    hashtagsInput.addEventListener('input', updateHashtagsError)
+    updateHashtagsError()
+  }
+
+  // 必須項目の入力チェック: 未入力の間は作成/更新ボタンを非活性風の見た目にし、
+  // 実際に送信しようとした場合はポップアップで警告して送信を止める。
+  // フォームの種類(スタイル/テンプレート)によって存在するフィールドが異なるため、
+  // 対象フィールドが存在する場合のみチェック対象に加える。
+  const submitBtn = form ? form.querySelector('button[type="submit"]') : null
+  if (form && submitBtn) {
+    const hasExistingImage = form.dataset.hasExistingImage === 'true'
+
+    function isRequiredFieldsFilled() {
+      const checks = [isHashtagsValid()]
+
+      const imageInput = form.querySelector('input[name="image"]')
+      if (imageInput) {
+        checks.push((imageInput.files && imageInput.files.length > 0) || hasExistingImage)
+      }
+
+      const templateNameInput = form.querySelector('input[name="template_name"]')
+      if (templateNameInput) {
+        checks.push(templateNameInput.value.trim() !== '')
+      }
+
+      const stylistSelect = form.querySelector('select[name="stylist_id"]')
+      if (stylistSelect) {
+        checks.push(stylistSelect.value !== '')
+      }
+
+      const commentField = form.querySelector('textarea[name="comment"]')
+      if (commentField) {
+        checks.push(commentField.value.trim() !== '')
+      }
+
+      const titleInput = form.querySelector('input[name="title"], input[name="title_template"]')
+      if (titleInput) {
+        checks.push(titleInput.value.trim() !== '')
+      }
+
+      if (categoryRadios.length > 0) {
+        checks.push(!!form.querySelector('.category-radio:checked'))
+      }
+
+      const menuDetailField = form.querySelector('textarea[name="menu_detail_text"]')
+      if (menuDetailField) {
+        checks.push(menuDetailField.value.trim() !== '')
+      }
+
+      return checks.every(Boolean)
+    }
+
+    function updateSubmitButtonAppearance() {
+      if (isRequiredFieldsFilled()) {
+        submitBtn.classList.remove('opacity-50', 'cursor-not-allowed')
+      } else {
+        submitBtn.classList.add('opacity-50', 'cursor-not-allowed')
+      }
+    }
+
+    form.addEventListener('input', updateSubmitButtonAppearance)
+    form.addEventListener('change', updateSubmitButtonAppearance)
+    updateSubmitButtonAppearance()
+
+    form.addEventListener('submit', (e) => {
+      if (!isHashtagsValid()) {
+        e.preventDefault()
+        updateHashtagsError()
+        alert('ハッシュタグに半角カンマ(,)以外の記号が含まれています。')
+        return
+      }
+      if (!isRequiredFieldsFilled()) {
+        e.preventDefault()
+        alert('必須項目が入力されていません。')
+      }
+    })
+  }
 })

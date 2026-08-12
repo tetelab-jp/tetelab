@@ -33,6 +33,11 @@ env:
   ECS_CONTAINER_NAME: app
   ECS_CLUSTER: salonboard-worker
   ECS_SERVICE: salonboard-worker-app
+  # infra/ecs-app.tfのaws_ecs_task_definition.appはlifecycle.ignore_changesで
+  # container_definitionsの差分を無視する設定になっており、ドメイン設定後に
+  # terraform applyしてもAPP_BASE_URL(Fargateワーカーへのコールバック先)が
+  # 更新されない。デプロイの度にここで正しい値に上書きする。
+  APP_BASE_URL: https://salonmotion.com
 
 permissions:
   id-token: write # OIDCでAWS認証するために必要
@@ -72,6 +77,17 @@ jobs:
             --task-definition "$ECS_TASK_FAMILY" \
             --query taskDefinition \
             > task-definition.json
+
+      - name: Fix APP_BASE_URL environment variable
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" --arg url "$APP_BASE_URL" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .environment |= map(if .name == "APP_BASE_URL" then .value = $url else . end)
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
 
       - name: Render new task definition with the built image
         id: render-task-def

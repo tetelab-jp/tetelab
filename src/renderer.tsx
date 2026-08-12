@@ -12,7 +12,9 @@ export const renderer = jsxRenderer(({ children, title }) => {
       <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>{title ? `${title} | TETE AOUT` : 'TETE AOUT'}</title>
+        <title>{title ? `${title} | SalonMotion` : 'SalonMotion'}</title>
+        <link href="/static/logo-icon.png" rel="icon" type="image/png" />
+        <link href="/static/logo-icon.png" rel="apple-touch-icon" />
         <link href="/static/tailwind.css" rel="stylesheet" />
         <link href="/static/fontawesome/css/all.min.css" rel="stylesheet" />
         <link href="/static/style.css" rel="stylesheet" />

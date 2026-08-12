@@ -7,10 +7,11 @@ import {
   retryStylePost,
   currentJstTimeLabel,
   getStyleRowForJob,
+  getStyleNo,
   sweepStaleJobs
 } from '../lib/style-post-runner'
 import { decryptSecret } from '../lib/crypto'
-import { formatJstDateTime } from '../lib/date-format'
+import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
@@ -32,34 +33,33 @@ const EXECUTION_TYPE_LABEL: Record<string, string> = {
   request_reflection: '反映申請'
 }
 
-const LOG_STATUS_DOT: Record<string, string> = {
-  success: 'bg-green-500',
-  blocked: 'bg-amber-500',
-  failure: 'bg-red-500'
+const LOG_RESULT_LABEL: Record<string, string> = {
+  success: '完了',
+  blocked: 'ブロック',
+  failure: '失敗'
+}
+
+const LOG_RESULT_COLOR: Record<string, string> = {
+  success: 'bg-green-50 text-green-600',
+  blocked: 'bg-amber-50 text-amber-600',
+  failure: 'bg-red-50 text-red-600'
+}
+
+const LOG_RESULT_BORDER: Record<string, string> = {
+  success: 'border-green-500',
+  blocked: 'border-amber-500',
+  failure: 'border-red-500'
 }
 
 automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
-  const { results: runs } = await c.env.DB.prepare(
-    `SELECT id, scheduled_time, total_images, status, error_message, executed_at, created_at
-     FROM style_post_runs WHERE user_id = ? ORDER BY id DESC LIMIT 10`
-  )
-    .bind(user.id)
-    .all<{
-      id: number
-      scheduled_time: string
-      total_images: number
-      status: string
-      error_message: string | null
-      executed_at: string | null
-      created_at: string
-    }>()
-
   const { results: logs } = await c.env.DB.prepare(
-    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.created_at, s.title AS style_title
+    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.style_no, l.post_id, l.created_at,
+            s.title AS style_title, p.title AS post_title
      FROM execution_logs l
      LEFT JOIN styles s ON s.id = l.style_id
+     LEFT JOIN posts p ON p.id = l.post_id
      WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 30`
   )
     .bind(user.id)
@@ -69,9 +69,46 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       message: string
       execution_type: string | null
       style_id: number | null
+      style_no: number | null
+      post_id: number | null
       created_at: string
       style_title: string | null
+      post_title: string | null
     }>()
+
+  const logRows = (logs || []).map((l) => {
+    const category = l.post_id ? 'ブログ' : 'スタイル'
+    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 2000)
+    return {
+      id: l.id,
+      dateLabel: formatJstDate(l.created_at),
+      category,
+      categoryClass: category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600',
+      content: (
+        <>
+          {l.execution_type && (
+            <span class="text-xs font-semibold text-gray-400 mr-1">
+              [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+            </span>
+          )}
+          {l.style_id ? (
+            <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+              No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
+            </a>
+          ) : l.post_id ? (
+            l.post_title || `投稿${l.post_id}`
+          ) : (
+            '-'
+          )}
+        </>
+      ),
+      statusLabel: LOG_RESULT_LABEL[l.status] || l.status,
+      statusClass: LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500',
+      borderClass: LOG_RESULT_BORDER[l.status] || 'border-gray-300',
+      errorText: errorText || '-',
+      showToggle: errorText.length > 150
+    }
+  })
 
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
   const { results: retryTargets } = await c.env.DB.prepare(
@@ -90,24 +127,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="手動実行・実行履歴">
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-        <i class="fas fa-triangle-exclamation mr-2"></i>
-        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
-        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
-        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次下の実行履歴に反映されます（数十秒〜数分かかります）。
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <button
-          id="test-run-btn"
-          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
-        >
-          <i class="fas fa-flask mr-2"></i>手動実行する
-        </button>
-        <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
-      </div>
-
+    <PageLayout active="style-test-run" salonName={user.salon_name} title="実行履歴">
       {retryTargets && retryTargets.length > 0 && (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
@@ -144,92 +164,94 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-3"><i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>実行履歴</p>
-        {!runs || runs.length === 0 ? (
-          <p class="text-sm text-gray-400">まだ実行履歴がありません</p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">実行時刻区分</th>
-                <th class="py-2">対象枚数</th>
-                <th class="py-2">ステータス</th>
-                <th class="py-2">エラー</th>
-                <th class="py-2">実行日時</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((r) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">{r.scheduled_time}</td>
-                  <td class="py-2">{r.total_images}</td>
-                  <td class="py-2">
-                    <span
-                      class={
-                        'px-2 py-0.5 rounded text-xs font-semibold ' +
-                        (r.status === 'done'
-                          ? 'bg-green-50 text-green-600'
-                          : r.status === 'failed'
-                          ? 'bg-red-50 text-red-600'
-                          : 'bg-gray-50 text-gray-500')
-                      }
-                    >
-                      {r.status}
-                    </span>
-                  </td>
-                  <td class="py-2 text-xs text-gray-400 max-w-xs truncate">{r.error_message || '-'}</td>
-                  <td class="py-2 text-xs text-gray-400">{formatJstDateTime(r.executed_at || r.created_at)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
-        {!logs || logs.length === 0 ? (
+        {logRows.length === 0 ? (
           <p class="text-sm text-gray-400">まだログがありません</p>
         ) : (
-          <ul class="text-sm space-y-2">
-            {logs.map((l) => (
-              <li class="flex items-start gap-2">
-                <span class={'mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ' + (LOG_STATUS_DOT[l.status] || 'bg-gray-400')}></span>
-                <div class="min-w-0">
-                  <p class={'text-gray-700' + (l.message.length > 150 ? ' line-clamp-3' : '')}>
-                    {l.execution_type && (
-                      <span class="text-xs font-semibold text-gray-400 mr-1">
-                        [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
-                      </span>
-                    )}
-                    {l.style_id ? (
-                      <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-                        {l.style_title || `スタイル${l.style_id}`}
-                      </a>
-                    ) : null}
-                    {l.style_id ? ' — ' : ''}
-                    {l.message}
-                  </p>
-                  {l.message.length > 150 && (
-                    <button
-                      type="button"
-                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-3'); this.textContent = p.classList.contains('line-clamp-3') ? '続きを見る' : '閉じる'"
-                    >
-                      続きを見る
-                    </button>
+          <>
+            {/* PC表示: テーブル */}
+            <div class="hidden md:block overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead>
+                  <tr class="text-left text-gray-400 border-b border-gray-100">
+                    <th class="py-2 pl-3">実行日時</th>
+                    <th class="py-2">カテゴリ</th>
+                    <th class="py-2">内容</th>
+                    <th class="py-2">ステータス</th>
+                    <th class="py-2">エラー</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logRows.map((r) => (
+                    <tr class="border-b border-gray-50">
+                      <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
+                        {r.dateLabel}
+                      </td>
+                      <td class="py-2">
+                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
+                      </td>
+                      <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
+                      <td class="py-2">
+                        <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+                      </td>
+                      <td class="py-2 text-xs text-gray-400 max-w-xs">
+                        <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
+                        {r.showToggle && (
+                          <button
+                            type="button"
+                            class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                            onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                          >
+                            続きを見る
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* モバイル表示: カード */}
+            <div class="md:hidden space-y-3">
+              {logRows.map((r) => (
+                <div class={'rounded-lg border-l-4 bg-gray-50 p-3 ' + r.borderClass}>
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="text-xs text-gray-500">{r.dateLabel}</span>
+                    <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
+                  </div>
+                  <div class="flex items-center gap-2 mt-1.5">
+                    <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
+                      {r.category}
+                    </span>
+                    <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+                  </div>
+                  {r.errorText !== '-' && (
+                    <div class="mt-1.5">
+                      <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
+                        {r.errorText}
+                      </p>
+                      {r.showToggle && (
+                        <button
+                          type="button"
+                          class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                          onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                        >
+                          続きを見る
+                        </button>
+                      )}
+                    </div>
                   )}
-                  <p class="text-xs text-gray-400">{formatJstDateTime(l.created_at)}</p>
                 </div>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
       <script src="/static/test-run.js"></script>
     </PageLayout>,
-    { title: '手動実行・実行履歴' }
+    { title: '実行履歴' }
   )
 })
 
@@ -243,6 +265,7 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
       success: summary.dispatchedCount > 0,
       dispatchedCount: summary.dispatchedCount,
       failedToDispatchCount: summary.failedToDispatchCount,
+      totalImages: summary.totalImages,
       status: summary.status
     })
   } catch (err: any) {
@@ -285,10 +308,15 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
+       FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+    }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -311,9 +339,23 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .run()
 
+  // 手動実行で複数スタイルを同時投入すると、複数のFargateタスクが同じ
+  // 「直近成功実績のあるプロキシセッションID(出口IP固定)」を同時に使い回し、
+  // 特に画像アップロードのリクエストがnet::ERR_EMPTY_RESPONSEで失敗する事例を
+  // 確認した(プロキシ側が同一セッションへの同時並行リクエストを捌けていない
+  // 可能性が高い)。同じユーザーで他に実行中のジョブがある場合は、セッション
+  // 使い回しを行わず、ワーカー側に新規セッションを選ばせて競合を避ける。
+  const concurrentRunningRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM style_post_jobs WHERE user_id = ? AND status = 'running' AND id != ?`
+  )
+    .bind(job.user_id, jobId)
+    .first<{ cnt: number }>()
+  const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
+
   return c.json({
     loginId,
     password,
+    preferredProxySessionId: hasConcurrentJob ? undefined : cred.last_successful_proxy_session_id || undefined,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -325,7 +367,8 @@ automation.get('/api/automation/jobs/:id', async (c) => {
       hairLengthValue: row.length_value || '',
       menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
       menuDetailText: row.menu_detail_text || '',
-      couponSelectValue: row.coupon_select_value || undefined
+      couponSelectValue: row.coupon_select_value || undefined,
+      hashtags: JSON.parse(row.hashtags_json || '[]')
     }
   })
 })
@@ -336,6 +379,7 @@ type JobResultBody = {
   message: string
   blocked: boolean
   logs: string[]
+  proxySessionId?: string | null
 }
 
 automation.post('/api/automation/jobs/:id/result', async (c) => {
@@ -343,10 +387,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, job_token, status, run_id FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
+    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string; run_id: number | null }>()
 
   if (!job || authHeader !== `Bearer ${job.job_token}`) {
     return c.json({ error: 'unauthorized' }, 401)
@@ -362,6 +406,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const { style_id: styleId, user_id: userId } = job
   const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
   const messageWithDiagnostics = (body.message + diagnostics).slice(0, 2000)
+  const styleNo = await getStyleNo(c.env, userId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
   if (body.step === 'login' && !body.success) {
@@ -376,6 +421,37 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .catch(() => {})
   }
 
+  // 2026-08-11追記: ログインに成功した(CAPTCHA等を回避できた)プロキシセッション
+  // IDを記録し、次回以降のジョブで優先的に使い回す(出口IPを固定する)ために
+  // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
+  // のnewAutomationPage/index.tsのrunJob参照)。
+  //
+  // 2026-08-12追記(重大バグ修正): 従来はログイン成功のみを条件に保存していたが、
+  // ログインは通っても画像アップロード等の後続工程がプロキシ側の障害
+  // (net::ERR_EMPTY_RESPONSE等)で失敗するセッションが存在し、そのIDが
+  // 「実績あり」として記録され続けると、以降のジョブが毎回同じ壊れた
+  // セッション(出口IP)を使い回して同じ失敗を繰り返す状態になっていた。
+  // そのため保存はジョブ全体が成功した場合のみに限定し、後続工程が
+  // ネットワークレベルの障害(net::ERR_*)で失敗した場合は記録済みの
+  // セッションIDをクリアして、次回は新しい出口IPを発行させる。
+  const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
+  if (body.success && body.proxySessionId) {
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP
+       WHERE user_id = ?`
+    )
+      .bind(body.proxySessionId, userId)
+      .run()
+      .catch(() => {})
+  } else if (networkErrorSignal) {
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`
+    )
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
   let jobStatus: string
   if (body.success) {
     await c.env.DB.prepare(
@@ -385,16 +461,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', 'success', '反映申請成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', '反映申請成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     jobStatus = 'success'
   } else if (body.step === 'reflect') {
@@ -407,16 +483,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(reflectStatus, messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
     )
-      .bind(userId, styleId)
+      .bind(userId, styleId, styleNo)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'request_reflection', ?, ?)`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'request_reflection', ?, ?)`
     )
-      .bind(userId, styleId, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
+      .bind(userId, styleId, styleNo, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
       .run()
     jobStatus = reflectStatus
   } else {
@@ -427,10 +503,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, execution_type, status, message)
-       VALUES (NULL, ?, ?, 'register_style', 'failure', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', ?)`
     )
-      .bind(userId, styleId, `スタイル登録失敗: ${messageWithDiagnostics}`)
+      .bind(userId, styleId, styleNo, `スタイル登録失敗: ${messageWithDiagnostics}`)
       .run()
     jobStatus = 'failed'
   }
@@ -440,6 +516,37 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   )
     .bind(jobStatus, body.step, messageWithDiagnostics, jobId)
     .run()
+
+  // 2026-08-11追記(不具合修正): 実行履歴(style_post_runs)一覧のステータスが
+  // 各ジョブの結果を集計せず常に'processing'のまま表示され続けていた。
+  // このジョブが属するrunに紐づく全ジョブが完了(pending/running以外)に
+  // なった時点で、run全体のステータスを確定させる。
+  if (job.run_id) {
+    const { results: pendingJobs } = await c.env.DB.prepare(
+      `SELECT id FROM style_post_jobs WHERE run_id = ? AND status IN ('pending', 'running')`
+    )
+      .bind(job.run_id)
+      .all<{ id: number }>()
+
+    if (!pendingJobs || pendingJobs.length === 0) {
+      const { results: finishedJobs } = await c.env.DB.prepare(
+        `SELECT status FROM style_post_jobs WHERE run_id = ?`
+      )
+        .bind(job.run_id)
+        .all<{ status: string }>()
+
+      const statuses = (finishedJobs || []).map((j) => j.status)
+      const runStatus = statuses.every((s) => s === 'success')
+        ? 'done'
+        : statuses.every((s) => s !== 'success')
+        ? 'failed'
+        : 'partial_failure'
+
+      await c.env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+        .bind(runStatus, job.run_id)
+        .run()
+    }
+  }
 
   return c.json({ ok: true })
 })

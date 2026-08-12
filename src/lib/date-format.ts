@@ -19,3 +19,9 @@ export function formatJstDateTime(sqliteTimestamp: string | null | undefined): s
   const ss = String(jst.getUTCSeconds()).padStart(2, '0')
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`
 }
+
+/** formatJstDateTimeの秒なし版(年/月/日 時:分まで)。 */
+export function formatJstDate(sqliteTimestamp: string | null | undefined): string {
+  const full = formatJstDateTime(sqliteTimestamp)
+  return full.replace(/:\d{2}$/, '')
+}
