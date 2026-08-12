@@ -127,6 +127,7 @@ CREATE TABLE ranking_schedules (
   enabled INTEGER NOT NULL DEFAULT 0,
   frequency TEXT NOT NULL DEFAULT 'daily', -- 'daily' | 'weekly'
   run_time TEXT,                           -- 'HH:MM'(JST想定)
+  last_run_at TIMESTAMP,                   -- 直近の定期実行時刻(二重起動防止・実行済み判定)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

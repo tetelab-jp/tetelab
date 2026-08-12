@@ -92,6 +92,104 @@ async function processMeasureRun(
   }
 }
 
+// --------------------------------------------
+// 定期測定: あるユーザーの登録テンプレート全件を1回のrunでまとめて計測する。
+// --------------------------------------------
+async function runScheduledForUser(env: Bindings, userId: number): Promise<void> {
+  const run = await env.DB.prepare(
+    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'scheduled', 'running')`
+  )
+    .bind(userId)
+    .run()
+  const runId = run.meta.last_row_id as number
+  try {
+    const { results: queries } = await env.DB.prepare(
+      `SELECT id, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
+       FROM ranking_queries WHERE user_id = ? AND is_active = 1 ORDER BY id`
+    )
+      .bind(userId)
+      .all<{
+        id: number
+        salon_name: string
+        service_area_cd: string
+        middle_area_cd: string | null
+        small_area_cd: string | null
+        area_label: string | null
+      }>()
+
+    for (const q of queries) {
+      const { results: kws } = await env.DB.prepare(
+        `SELECT keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
+      )
+        .bind(q.id)
+        .all<{ keyword: string }>()
+
+      for (const { keyword } of kws) {
+        const result = await measureRank(
+          {
+            serviceAreaCd: q.service_area_cd,
+            middleAreaCd: q.middle_area_cd || undefined,
+            smallAreaCd: q.small_area_cd || undefined
+          },
+          q.salon_name,
+          keyword,
+          { proxyUrl: env.RANKING_PROXY_URL, maxPages: MEASURE_MAX_PAGES }
+        )
+        await env.DB.prepare(
+          `INSERT INTO ranking_results
+            (user_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
+             keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(
+            userId,
+            runId,
+            q.id,
+            q.salon_name,
+            q.area_label,
+            q.service_area_cd,
+            q.middle_area_cd,
+            q.small_area_cd,
+            keyword,
+            result.rank,
+            result.resultCount,
+            result.pagesScanned,
+            result.matchedSlnId,
+            result.status,
+            result.errorMessage || null
+          )
+          .run()
+      }
+    }
+    await env.DB.prepare(
+      `UPDATE ranking_runs SET status = 'done', finished_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(runId)
+      .run()
+  } catch (e) {
+    await env.DB.prepare(
+      `UPDATE ranking_runs SET status = 'error', finished_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(runId)
+      .run()
+    console.error('runScheduledForUser failed:', e)
+  }
+}
+
+/** UTCの "YYYY-MM-DD HH:MM:SS" 文字列を JST の Date に変換 */
+function toJstDate(utcTs: string): Date {
+  const isoLike = utcTs.includes('T') ? utcTs : utcTs.replace(' ', 'T')
+  const d = new Date(isoLike.endsWith('Z') ? isoLike : `${isoLike}Z`)
+  return new Date(d.getTime() + 9 * 60 * 60 * 1000)
+}
+
+/** JSTの Date を "YYYY-MM-DD" に */
+function jstYmd(jst: Date): string {
+  return `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    jst.getUTCDate()
+  ).padStart(2, '0')}`
+}
+
 function parseKeywords(body: Record<string, unknown>): string[] {
   const out: string[] = []
   for (let i = 0; i < KEYWORD_SLOTS; i++) {
@@ -708,15 +806,16 @@ ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
 ranking.get('/ranking/schedule', requireAuth, async (c) => {
   const user = c.get('user')
   const sched = await c.env.DB.prepare(
-    `SELECT enabled, frequency, run_time FROM ranking_schedules WHERE user_id = ?`
+    `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ?`
   )
     .bind(user.id)
-    .first<{ enabled: number; frequency: string; run_time: string | null }>()
+    .first<{ enabled: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
 
   const saved = c.req.query('saved') === '1'
   const enabled = sched?.enabled === 1
   const frequency = sched?.frequency || 'daily'
   const runTime = sched?.run_time || '09:00'
+  const lastRunAt = sched?.last_run_at || null
   const areaCounts = await getAreaCounts(c.env)
 
   return c.render(
@@ -728,8 +827,11 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
       )}
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-4">定期測定設定</p>
-        <p class="text-sm text-gray-500 mb-5">
+        <p class="text-sm text-gray-500 mb-2">
           「計測テンプレート設定」に登録した条件を、設定した頻度で自動計測します。
+        </p>
+        <p class="text-xs text-gray-400 mb-5">
+          前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
         </p>
         <form method="post" action="/ranking/schedule" class="space-y-5">
           <label class="flex items-center gap-2 text-sm">
@@ -822,6 +924,58 @@ ranking.post('/ranking/schedule', requireAuth, async (c) => {
       .run()
   }
   return c.redirect('/ranking/schedule?saved=1')
+})
+
+// ============================================
+// 定期測定の実行(外部Cronから CRON_SECRET で叩く。セッション不要)
+// 外部Cronは数分間隔でこのエンドポイントを叩く想定。呼ばれるたびに
+// 「enabledな設定のうち、今日(または今週)まだ実行しておらず、run_timeを
+// 過ぎているユーザー」を実行する。実測はバックグラウンドで進める。
+// ============================================
+ranking.post('/api/cron/run-ranking', async (c) => {
+  const authHeader = c.req.header('Authorization') || ''
+  const expected = c.env.CRON_SECRET
+  if (!expected || authHeader !== `Bearer ${expected}`) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+
+  const nowUtc = new Date()
+  const jstNow = new Date(nowUtc.getTime() + 9 * 60 * 60 * 1000)
+  const jstHHMM = `${String(jstNow.getUTCHours()).padStart(2, '0')}:${String(
+    jstNow.getUTCMinutes()
+  ).padStart(2, '0')}`
+  const jstToday = jstYmd(jstNow)
+
+  const { results: schedules } = await c.env.DB.prepare(
+    `SELECT user_id, frequency, run_time, last_run_at FROM ranking_schedules WHERE enabled = 1`
+  ).all<{ user_id: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
+
+  const triggered: number[] = []
+  for (const s of schedules) {
+    const runTime = s.run_time || '09:00'
+    if (jstHHMM < runTime) continue // まだ実行時刻前
+
+    if (s.last_run_at) {
+      const lastJst = toJstDate(s.last_run_at)
+      if (s.frequency === 'weekly') {
+        const days = (nowUtc.getTime() - lastJst.getTime() + 9 * 3600 * 1000) / (24 * 3600 * 1000)
+        if (days < 7) continue // 今週分は実行済み
+      } else if (jstYmd(lastJst) === jstToday) {
+        continue // 今日分は実行済み
+      }
+    }
+
+    // 二重起動防止のため、実測前に last_run_at を更新してから起動する
+    await c.env.DB.prepare(
+      `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+    )
+      .bind(s.user_id)
+      .run()
+    void runScheduledForUser(c.env, s.user_id).catch((e) => console.error('runScheduledForUser failed:', e))
+    triggered.push(s.user_id)
+  }
+
+  return c.json({ time: jstHHMM, date: jstToday, enabled: schedules.length, triggered })
 })
 
 // ============================================

@@ -75,9 +75,15 @@ app.get('/', async (c) => {
 // 従来通り認証必須のまま、cron用ルートだけは認証不要で到達できるようにする。
 app.route('/', auth)
 app.route('/', automation)
+// rankingもdashboard/style/blogより先にマウントする。
+// ranking内の /api/cron/run-ranking は外部Cronから CRON_SECRET のみで
+// 呼ばれる想定でセッションCookieを持たないため、dashboard/style/blogの
+// .use('*', requireAuth) に先に捕まらないよう、それらより前に置く
+// (automationと同じ理由。ranking自体はブランケットの'*'を持たず、認証が
+// 必要なページは各ルートで requireAuth を付けている)。
+app.route('/', ranking)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
-app.route('/', ranking)
 
 export default app
