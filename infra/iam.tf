@@ -149,6 +149,15 @@ data "aws_iam_policy_document" "github_actions_deploy" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn, aws_iam_role.app_task.arn]
   }
+  # deploy-app.ymlの「Add admin secrets if missing」ステップがadmin用シークレットの
+  # 存在確認(describe-secret)に使う。これが無いと常にAccessDenied→未作成扱いとなり、
+  # ADMIN_INITIAL_PASSWORD等がタスク定義に注入されないまま気づかずスキップされ続ける
+  # (実機で確認済みの不具合)。
+  statement {
+    sid       = "DescribeAdminSecrets"
+    actions   = ["secretsmanager:DescribeSecret"]
+    resources = [aws_secretsmanager_secret.admin_jwt_secret.arn, aws_secretsmanager_secret.admin_initial_password.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "github_actions_deploy" {
