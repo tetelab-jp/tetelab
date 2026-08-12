@@ -24,14 +24,18 @@ import {
 type JobPayload = {
   loginId: string
   password: string
-  // 2026-08-11追記: 直近ログイン成功実績のあるプロキシセッションID(あれば)。
-  // 同一サロンアカウントへのログイン元IPを毎回変えるより、実績のある
-  // IPを使い回す方がボット対策上自然と考えられるため。
-  preferredProxySessionId?: string | null
+  // 2026-08-12追記: プロキシは固定5IPのプールであるため、アプリ側で実績が
+  // 良い順に並べた候補セッションIDのリストを渡す。先頭から順にログインを
+  // 試み、失敗したら次の候補で再試行する(最大2件まで、既存の1回だけ
+  // 再試行する挙動を踏襲)。ここに含まれない適当な乱数セッションIDへ
+  // フォールバックすると、そのIPの実績を後で記録できなくなるため使わない。
+  proxySessionCandidates?: string[] | null
   style: Omit<StylePostInput, 'imageBuffer'> & { imageBase64: string }
 }
 
 type JobStep = 'login' | 'navigate' | 'draft_register' | 'image_upload' | 'reflect' | 'done'
+
+type LoginAttempt = { sessionId: string; success: boolean }
 
 type JobResult = {
   success: boolean
@@ -40,9 +44,12 @@ type JobResult = {
   blocked: boolean
   logs: string[]
   // ログインに成功した(=CAPTCHA等に遭遇しなかった)実際のプロキシセッションID。
-  // アプリ側でsalon_credentials.last_successful_proxy_session_idへ保存し、
-  // 次回以降のジョブで優先的に使い回すために返す。
+  // アプリ側でこのセッションの実績(proxy_session_pool_stats)を更新するために使う。
   proxySessionId?: string | null
+  // 試した候補セッションIDそれぞれのログイン成否。アプリ側で候補ごとの
+  // 実績を個別に記録するために使う(最終的に成功した1件だけでなく、
+  // 先に失敗した候補も記録できるようにするため)。
+  loginAttempts?: LoginAttempt[]
 }
 
 async function main(): Promise<void> {
@@ -109,45 +116,60 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
 }
 
+async function attemptLogin(
+  browser: import('puppeteer').Browser,
+  payload: JobPayload,
+  log: (msg: string) => void,
+  candidateId?: string
+): Promise<{ page: Awaited<ReturnType<typeof newAutomationPage>>['page']; proxySessionId: string | null; error: any }> {
+  const { page, proxySessionId } = await newAutomationPage(browser, log, candidateId)
+  try {
+    await loginToSalonBoard(page, payload.loginId, payload.password, log)
+    return { page, proxySessionId, error: null }
+  } catch (err: any) {
+    return { page, proxySessionId, error: err }
+  }
+}
+
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
   const browser = await launchBrowser()
 
   try {
-    // 2026-08-11追記: まず前回成功実績のあるセッションID(あれば)でログインを
-    // 試み、失敗した場合のみ新しいランダムなセッションID(セカンダリー)で
-    // 1回だけ再試行する。実績のあるIPを毎回使い回すことで、同一アカウントへの
-    // ログイン元IPが頻繁に変わる不自然さを避ける狙い。
-    let { page, proxySessionId } = await newAutomationPage(browser, log, payload.preferredProxySessionId)
+    // 2026-08-12追記: アプリ側が実績順に並べた候補セッションIDを先頭から
+    // 順に試す(最大2件まで)。候補が無い場合(例: 同時実行回避時)は
+    // 従来通りpreferredなしでnewAutomationPageに任せる。
+    const candidates = (payload.proxySessionCandidates || []).slice(0, 2)
+    const loginAttempts: LoginAttempt[] = []
 
-    let loginError: any = null
-    try {
-      await loginToSalonBoard(page, payload.loginId, payload.password, log)
-    } catch (err: any) {
-      loginError = err
+    let attempt = await attemptLogin(browser, payload, log, candidates[0])
+    if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
+
+    for (let i = 1; i < candidates.length && attempt.error; i++) {
+      log(
+        `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
+          `次の候補セッションID(${candidates[i]})で再試行します...`
+      )
+      await attempt.page.close().catch(() => {})
+      attempt = await attemptLogin(browser, payload, log, candidates[i])
+      loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
     }
 
-    if (loginError && payload.preferredProxySessionId) {
-      log(
-        `[プロキシ] 前回成功実績のセッションID(${proxySessionId})でのログインに失敗したため、` +
-          `新しいセッションIDで再試行します...`
-      )
-      await page.close().catch(() => {})
-      ;({ page, proxySessionId } = await newAutomationPage(browser, log))
-      try {
-        await loginToSalonBoard(page, payload.loginId, payload.password, log)
-        loginError = null
-      } catch (err: any) {
-        loginError = err
+    const { page, proxySessionId, error: loginError } = attempt
+
+    if (loginError) {
+      return {
+        success: false,
+        step: 'login',
+        message: String(loginError?.message || loginError),
+        blocked: false,
+        proxySessionId: null,
+        loginAttempts
       }
     }
 
-    if (loginError) {
-      return { success: false, step: 'login', message: String(loginError?.message || loginError), blocked: false, proxySessionId: null }
-    }
-
     // ここまで到達していればログイン成功(=このセッションIDはCAPTCHA等を
-    // 回避できた実績あり)。以降の工程の成否に関わらず、次回以降も優先的に
-    // 使い回せるようこのproxySessionIdを結果に含めて返す。
+    // 回避できた実績あり)。以降の工程の成否に関わらず、次回以降のセッション
+    // 選定に使えるようこのproxySessionIdを結果に含めて返す。
     const { imageBase64, ...styleRest } = payload.style
     const styleInput: StylePostInput = {
       ...styleRest,
@@ -155,27 +177,28 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
     }
 
     try {
-      await draftRegisterStyle(page, styleInput, log)
+      await draftRegisterStyle(page!, styleInput, log)
     } catch (err: any) {
       return {
         success: false,
         step: 'draft_register',
         message: String(err?.message || err),
         blocked: false,
-        proxySessionId
+        proxySessionId,
+        loginAttempts
       }
     }
 
     try {
-      await submitReflectApplication(page, log)
+      await submitReflectApplication(page!, log)
     } catch (err: any) {
       if (err instanceof ReflectionBlockedError) {
-        return { success: false, step: 'reflect', message: err.message, blocked: true, proxySessionId }
+        return { success: false, step: 'reflect', message: err.message, blocked: true, proxySessionId, loginAttempts }
       }
-      return { success: false, step: 'reflect', message: String(err?.message || err), blocked: false, proxySessionId }
+      return { success: false, step: 'reflect', message: String(err?.message || err), blocked: false, proxySessionId, loginAttempts }
     }
 
-    return { success: true, step: 'done', message: '登録・反映申請が完了しました', blocked: false, proxySessionId }
+    return { success: true, step: 'done', message: '登録・反映申請が完了しました', blocked: false, proxySessionId, loginAttempts }
   } finally {
     await browser.close().catch(() => {})
   }
