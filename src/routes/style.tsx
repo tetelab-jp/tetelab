@@ -181,50 +181,25 @@ function jsonForScriptTag(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c')
 }
 
-function statusBadge(status: string, kind: 'internal' | 'register' | 'reflection') {
-  // 2026-08-09追記: 「公開済み/ブロック」の2値表示だと、まだ一度も実行して
-  // いない(not_started)スタイルや、ブロックとは無関係の単純な失敗(failed)まで
-  // 「ブロック」表示になってしまい、「本当にブロックされているのか」が
-  // 分からなくなる問題があった(ユーザー指摘)。実際にサロンボード側の
-  // 「要確認」等でブロックされた場合(blocked)のみ「ブロック」とし、
-  // それ以外は状態ごとに分けて表示する。
-  if (kind === 'reflection') {
-    if (status === 'success') {
-      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開済み</span>
-    }
-    if (status === 'blocked') {
-      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">ブロック</span>
-    }
-    if (status === 'failed') {
-      return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-amber-50 text-amber-600">失敗</span>
-    }
-    return <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-500">未実行</span>
-  }
-
-  const map: Record<string, string> = {
-    draft: 'bg-gray-100 text-gray-500',
-    ready: 'bg-blue-50 text-blue-600',
-    disabled: 'bg-gray-100 text-gray-400',
-    not_started: 'bg-gray-100 text-gray-500',
-    success: 'bg-green-50 text-green-600',
-    failed: 'bg-red-50 text-red-600',
-    pending: 'bg-amber-50 text-amber-600',
-    blocked: 'bg-red-50 text-red-600'
-  }
-  const label: Record<string, string> = {
-    draft: '未完成',
-    ready: '準備完了',
-    disabled: '停止中',
-    not_started: '未実行',
-    success: '成功',
-    failed: '失敗',
-    pending: '反映申請待ち',
-    blocked: 'ブロック'
-  }
+function AutoPostStatusBadges({ s }: { s: StyleListRow }) {
+  const isOn = s.auto_post_enabled_flag === 1
   return (
-    <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + (map[status] || 'bg-gray-100 text-gray-500')}>
-      {label[status] || status}
-    </span>
+    <>
+      <span
+        class={
+          'text-xs px-2 py-0.5 rounded font-semibold ' +
+          (isOn ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400')
+        }
+      >
+        自動投稿{isOn ? 'ON' : 'OFF'}
+      </span>
+      {s.reflection_request_status === 'success' && (
+        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+      )}
+      {(s.reflection_request_status === 'failed' || s.reflection_request_status === 'blocked') && (
+        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>
+      )}
+    </>
   )
 }
 
@@ -265,18 +240,20 @@ function StyleListSection({
   styles,
   totalCount,
   selectedCount,
-  showCreateLink = true
+  showCreateLink = true,
+  heading = '登録済みスタイル'
 }: {
   styles: StyleListRow[]
   totalCount: number
   selectedCount: number
   showCreateLink?: boolean
+  heading?: string
 }) {
   return (
     <>
       <div class="flex items-center justify-between flex-wrap gap-2">
         <p class="font-semibold">
-          <i class="fas fa-portrait mr-2 text-pink-500"></i>登録済みスタイル（{totalCount}件）
+          <i class="fas fa-portrait mr-2 text-pink-500"></i>{heading}（{totalCount}件）
         </p>
         <div class="flex items-center gap-3">
           <span class="text-sm text-gray-600">
@@ -354,8 +331,7 @@ function StyleListSection({
                   </a>
                   <p class="text-xs text-gray-400 mt-0.5">{s.stylist_name || '担当未設定'}</p>
                   <div class="flex flex-wrap gap-1 mt-1">
-                    {statusBadge(s.internal_save_status, 'internal')}
-                    {statusBadge(s.reflection_request_status, 'reflection')}
+                    <AutoPostStatusBadges s={s} />
                   </div>
                 </div>
                 <div class="flex items-center gap-1 md:gap-2 flex-shrink-0">
@@ -430,9 +406,8 @@ style.get('/style/library', async (c) => {
           <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
         </p>
         <p class="text-sm text-gray-600 leading-relaxed">
-          店舗全体のスタイルをここで一元管理します。新規作成したスタイルに「自動投稿対象」のチェックを入れると、
-          自動投稿・手動投稿（<a href="/style/schedule" class="text-pink-600 hover:underline">設定はこちら</a>）で
-          設定した時刻に、サロンボードへの登録＋反映申請まで自動で実行されます。
+          自動更新するスタイルを一元管理します。
+          新規作成したスタイルに「自動投稿対象」のチェックを入れると、サロンボードへの登録＋反映申請まで自動で実行されます。
         </p>
       </div>
 
@@ -489,7 +464,7 @@ style.get('/style/import', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex flex-col items-center md:items-start">
         <button
           id="fetch-list-btn"
           disabled={!cred}
@@ -1410,7 +1385,13 @@ style.get('/style/template', async (c) => {
 
       <TemplateBulkApplySection templates={templates} hasStyles={styles.length > 0} />
 
-      <StyleListSection styles={styles} totalCount={totalCount} selectedCount={selectedCount} showCreateLink={false} />
+      <StyleListSection
+        styles={styles}
+        totalCount={totalCount}
+        selectedCount={selectedCount}
+        showCreateLink={false}
+        heading="テンプレート反映スタイル"
+      />
 
       <script src="/static/style-library.js"></script>
     </PageLayout>,
