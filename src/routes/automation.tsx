@@ -338,10 +338,23 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .run()
 
+  // 手動実行で複数スタイルを同時投入すると、複数のFargateタスクが同じ
+  // 「直近成功実績のあるプロキシセッションID(出口IP固定)」を同時に使い回し、
+  // 特に画像アップロードのリクエストがnet::ERR_EMPTY_RESPONSEで失敗する事例を
+  // 確認した(プロキシ側が同一セッションへの同時並行リクエストを捌けていない
+  // 可能性が高い)。同じユーザーで他に実行中のジョブがある場合は、セッション
+  // 使い回しを行わず、ワーカー側に新規セッションを選ばせて競合を避ける。
+  const concurrentRunningRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM style_post_jobs WHERE user_id = ? AND status = 'running' AND id != ?`
+  )
+    .bind(job.user_id, jobId)
+    .first<{ cnt: number }>()
+  const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
+
   return c.json({
     loginId,
     password,
-    preferredProxySessionId: cred.last_successful_proxy_session_id || undefined,
+    preferredProxySessionId: hasConcurrentJob ? undefined : cred.last_successful_proxy_session_id || undefined,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
