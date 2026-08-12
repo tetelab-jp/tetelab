@@ -165,3 +165,92 @@ export async function syncCoupons(page: Page, env: Bindings, userId: number, log
   log(`クーポン ${count}件を同期しました`)
   return count
 }
+
+// ============================================
+// サロン情報(サロン名 / サロンID)の同期
+// ログイン後のヘッダーから取得する:
+//   - サロン名: <li class="shop_login_name">Voler -カラー専門店-</li>
+//   - サロンID: <input type="hidden" name="STORE_ID" value="H000750928">
+// STORE_ID(H000750928)はHPBの公開サロンページ /slnH000750928/ と対応するため、
+// 'sln'+STORE_ID = slnH000750928 を hpb_sln_id として保存する
+// (フリーワード対策のサロン名ドロップダウン/将来のID照合で利用)。
+// ============================================
+
+export type SyncedSalonInfo = {
+  storeId: string // 例 'H000750928'
+  salonName: string // 例 'Voler -カラー専門店-'
+}
+
+/**
+ * ログイン済みpageの現在ページのヘッダーからサロン名とサロンIDを取得する。
+ * どちらも見つからなければ null。
+ */
+export async function fetchSalonInfoFromSalonBoard(page: Page): Promise<SyncedSalonInfo | null> {
+  return page.evaluate(() => {
+    const nameEl = document.querySelector('li.shop_login_name')
+    const salonName = (nameEl?.textContent || '').trim()
+    const storeInput = document.querySelector('input[name="STORE_ID"]') as HTMLInputElement | null
+    const storeId = (storeInput?.value || '').trim()
+    if (!salonName && !storeId) return null
+    return { storeId, salonName }
+  })
+}
+
+/**
+ * 取得したサロン情報を salonboard_salons へupsertする。
+ * 照合は (user_id, salon_key=STORE_ID)。STORE_IDが取れない場合はサロン名で照合。
+ */
+export async function upsertSalonInfo(env: Bindings, userId: number, info: SyncedSalonInfo): Promise<void> {
+  const salonName = info.salonName || '(サロン名未取得)'
+  const storeId = info.storeId || null
+  const hpbSlnId = storeId ? `sln${storeId}` : null
+
+  let existing: { id: number } | null = null
+  if (storeId) {
+    existing = await env.DB.prepare(
+      `SELECT id FROM salonboard_salons WHERE user_id = ? AND salon_key = ?`
+    )
+      .bind(userId, storeId)
+      .first<{ id: number }>()
+  } else {
+    existing = await env.DB.prepare(
+      `SELECT id FROM salonboard_salons WHERE user_id = ? AND salon_name = ?`
+    )
+      .bind(userId, salonName)
+      .first<{ id: number }>()
+  }
+
+  if (existing) {
+    await env.DB.prepare(
+      `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(salonName, storeId, hpbSlnId, existing.id)
+      .run()
+  } else {
+    await env.DB.prepare(
+      `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, hpb_sln_id) VALUES (?, ?, ?, ?)`
+    )
+      .bind(userId, storeId, salonName, hpbSlnId)
+      .run()
+  }
+}
+
+/**
+ * サロン情報同期の一連の処理(ログイン済みのpageを渡すこと)。
+ */
+export async function syncSalonInfo(
+  page: Page,
+  env: Bindings,
+  userId: number,
+  log: AutomationLogger
+): Promise<SyncedSalonInfo | null> {
+  log('サロン情報(名前/ID)を取得中...')
+  const info = await fetchSalonInfoFromSalonBoard(page)
+  if (info) {
+    await upsertSalonInfo(env, userId, info)
+    log(`サロン情報を同期しました: ${info.salonName} (${info.storeId})`)
+  } else {
+    log('サロン情報が取得できませんでした(ヘッダー未検出)')
+  }
+  return info
+}
