@@ -177,9 +177,20 @@ const bindings: Bindings = {
     // 列のDEFAULTもここで揃えておく。既存行の値は変更しない)。
     await bindings.DB.prepare(`ALTER TABLE users ALTER COLUMN style_enabled SET DEFAULT 0`).run()
     await bindings.DB.prepare(`ALTER TABLE users ALTER COLUMN blog_enabled SET DEFAULT 0`).run()
-    // SEO機能(/seo)用。style_enabled/blog_enabledと同様、管理者サイト(/admin/tool)で
-    // 有効化するまで使わせない運用のため、新規追加時からDEFAULT 0にしておく。
+    // SEO機能(/seo、フリーワード対策)用。新規登録サロンはstyle_enabled/blog_enabledと
+    // 同様に管理者サイト(/admin/tool)で有効化するまで使わせない運用のためDEFAULT 0。
+    // ただし、この列を追加する時点で既にフリーワード対策機能は全サロンへ提供済み
+    // (docs/freeword-seo-handoff.md参照)だったため、列追加(=既存行が一律DEFAULT値で
+    // 埋まる)によって既存サロン全員が意図せずOFFになってしまう。そのため列追加後、
+    // 「1件も有効なサロンがいない」(=まだこの補正が行われていない状態)を検知した
+    // 場合に限り、既存行を一括で有効化する一度限りの補正を行う(管理者が意図的に
+    // OFFにしたサロンが1件でも出てくれば、この条件は二度と成立しなくなる)。
     await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS seo_enabled INTEGER NOT NULL DEFAULT 0`).run()
+    const anySeoEnabledRow = await bindings.DB.prepare('SELECT 1 FROM users WHERE seo_enabled = 1 LIMIT 1').first()
+    const totalUsersRow = await bindings.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>()
+    if (!anySeoEnabledRow && (totalUsersRow?.cnt ?? 0) > 0) {
+      await bindings.DB.prepare('UPDATE users SET seo_enabled = 1').run()
+    }
   } catch (err) {
     console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
   }
