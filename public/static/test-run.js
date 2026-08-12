@@ -9,8 +9,10 @@ if (testRunBtn) {
       var res = await fetch('/api/automation/test-run', { method: 'POST' })
       var data = await res.json()
       if (data.success) {
+        var remaining = (data.totalImages || 1) - data.dispatchedCount - (data.failedToDispatchCount || 0)
         status.textContent =
-          'ジョブ投入完了: ' + data.dispatchedCount + '件（投入失敗 ' + (data.failedToDispatchCount || 0) + '件）。' +
+          '1件目を投入しました' + (data.failedToDispatchCount ? '（投入失敗 ' + data.failedToDispatchCount + '件）' : '') + '。' +
+          (remaining > 0 ? '残り' + remaining + '件は前の投稿の完了を待って順番に投入されます。' : '') +
           '結果は完了次第、実行履歴に反映されます（数十秒〜数分かかります）。'
       } else {
         status.textContent = 'エラー: ' + (data.error || '不明なエラー')

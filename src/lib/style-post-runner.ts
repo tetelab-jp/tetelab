@@ -20,6 +20,16 @@ import { runStylePostTask } from './aws-ecs'
 // SalonMotion側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
 
+// 手動実行で複数スタイルを同時に投入すると、同一サロンボードアカウントへ
+// 複数のFargateタスク(=複数の出口IP)が同時にログインする状態になり、
+// (1)プロキシ側が同一セッションへの同時並行アクセスを捌けずアップロードが
+// 失敗する、(2)IPを分けたとしても「同一アカウントへの複数IPからの同時
+// ログイン」自体が不自然でボット検知のリスクになる、という2つの問題が
+// あることが実運用で判明した。そのため2件目以降は、前のジョブが完了する
+// (またはこの上限時間が経過する)まで待ってから順に投入する。
+const JOB_WAIT_POLL_INTERVAL_MS = 8000
+const JOB_WAIT_MAX_MS = 8 * 60 * 1000 // sweepStaleJobsの10分タイムアウトより少し短く設定
+
 export type RunSummary = {
   runId: number
   totalImages: number
@@ -92,7 +102,7 @@ function randomJobToken(): string {
  * 実際のログイン・登録・反映申請はFargateタスク側で行われ、結果は
  * 後で /api/automation/jobs/:id/result へのコールバックとして届く。
  */
-async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number, runId?: number): Promise<void> {
+async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number, runId?: number): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY || !env.AWS_REGION) {
     throw new Error('AWSの認証情報(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION)が未設定です')
@@ -129,6 +139,7 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
     await env.DB.prepare(`UPDATE style_post_jobs SET status = 'running', ecs_task_arn = ? WHERE id = ?`)
       .bind(taskArn, jobId)
       .run()
+    return jobId
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
     await env.DB.prepare(
@@ -147,6 +158,44 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
       .bind(userId, styleId, styleNo, `ジョブ起動失敗: ${message}`)
       .run()
     throw err
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** 指定ジョブが完了(pending/running以外の状態)になるまで待つ。複数スタイルの手動実行を1件ずつ順に処理するために使う。 */
+async function waitForJobTerminal(env: Bindings, jobId: number): Promise<void> {
+  const deadline = Date.now() + JOB_WAIT_MAX_MS
+  while (Date.now() < deadline) {
+    const row = await env.DB.prepare(`SELECT status FROM style_post_jobs WHERE id = ?`).bind(jobId).first<{ status: string }>()
+    if (!row || (row.status !== 'pending' && row.status !== 'running')) return
+    await sleep(JOB_WAIT_POLL_INTERVAL_MS)
+  }
+}
+
+/**
+ * 2件目以降のスタイルを、前のジョブが完了してから順に投入する。
+ * HTTPレスポンスをすぐ返せるよう、呼び出し側ではawaitせずバックグラウンドで進める。
+ */
+async function dispatchRemainingStylesSequentially(
+  env: Bindings,
+  userId: number,
+  runId: number,
+  remaining: { id: number }[],
+  previousJobId: number | null
+): Promise<void> {
+  let prevJobId = previousJobId
+  for (const t of remaining) {
+    if (prevJobId !== null) {
+      await waitForJobTerminal(env, prevJobId)
+    }
+    try {
+      prevJobId = await dispatchStylePostJob(env, userId, t.id, runId)
+    } catch {
+      prevJobId = null
+    }
   }
 }
 
@@ -187,21 +236,27 @@ export async function runStyleAutomationForUser(
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
-  let dispatchedCount = 0
-  let failedToDispatchCount = 0
-  for (const t of targets) {
-    try {
-      await dispatchStylePostJob(env, userId, t.id, runId)
-      dispatchedCount++
-    } catch {
-      failedToDispatchCount++
-    }
+  // 複数スタイルを同時に投入すると同一アカウントへ複数IPが同時ログインする
+  // 状態になり不自然でボット検知のリスクとなるため、1件目のみここで
+  // 投入し、2件目以降は前のジョブが完了してから順に投入する。
+  // ALBのアイドルタイムアウト(60秒)内にHTTPレスポンスを返す必要があるため、
+  // 2件目以降の投入はawaitせずバックグラウンドで進める。
+  let firstDispatchFailed = false
+  let firstJobId: number | null = null
+  try {
+    firstJobId = await dispatchStylePostJob(env, userId, targets[0].id, runId)
+  } catch {
+    firstDispatchFailed = true
   }
 
-  // 各ジョブの最終結果(成功/失敗/ブロック)はFargateからの非同期コールバックで
-  // 個別に反映される。ここでは「何件投入できたか」までしか分からないため、
-  // style_post_runs.status は 'processing' のまま残す(集計の確定は行わない)。
-  const runStatus = dispatchedCount > 0 ? 'processing' : 'failed'
+  if (targets.length > 1) {
+    void dispatchRemainingStylesSequentially(env, userId, runId, targets.slice(1), firstJobId)
+  }
+
+  // 2件目以降(および1件目のFargate側の最終結果)はバックグラウンドで進行・
+  // コールバックで反映されるため、ここでは 'processing' のまま残す
+  // (集計の確定は行わない)。
+  const runStatus = firstDispatchFailed && targets.length === 1 ? 'failed' : 'processing'
   await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
     .bind(runStatus, runId)
     .run()
@@ -209,9 +264,9 @@ export async function runStyleAutomationForUser(
   return {
     runId,
     totalImages: targets.length,
-    dispatchedCount,
-    failedToDispatchCount,
-    status: dispatchedCount > 0 ? 'dispatched' : 'failed'
+    dispatchedCount: firstDispatchFailed ? 0 : 1,
+    failedToDispatchCount: firstDispatchFailed ? 1 : 0,
+    status: firstDispatchFailed && targets.length === 1 ? 'failed' : 'dispatched'
   }
 }
 

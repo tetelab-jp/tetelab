@@ -265,6 +265,7 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
       success: summary.dispatchedCount > 0,
       dispatchedCount: summary.dispatchedCount,
       failedToDispatchCount: summary.failedToDispatchCount,
+      totalImages: summary.totalImages,
       status: summary.status
     })
   } catch (err: any) {
