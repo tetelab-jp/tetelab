@@ -66,6 +66,34 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // No.欄の手入力による並び替え
+  document.querySelectorAll('.style-order-input').forEach((input) => {
+    input.addEventListener('change', async (e) => {
+      const target = e.target
+      const imageId = Number(target.getAttribute('data-image-id'))
+      const newPosition = Number(target.value)
+      if (!newPosition || newPosition < 1) {
+        alert('1以上の数値を入力してください')
+        location.reload()
+        return
+      }
+
+      try {
+        const res = await fetch('/api/style/reorder', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ styleId: imageId, newPosition })
+        })
+        const data = await res.json()
+        if (!data.success) alert('順番の変更に失敗しました: ' + (data.error || '不明なエラー'))
+      } catch (err) {
+        alert('通信エラーが発生しました')
+      } finally {
+        location.reload()
+      }
+    })
+  })
+
   // 画像削除
   document.querySelectorAll('.delete-btn').forEach((btn) => {
     btn.addEventListener('click', async (e) => {

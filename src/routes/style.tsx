@@ -296,7 +296,7 @@ function StyleListSection({
         ) : (
           <>
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
-              <span class="w-8 flex-shrink-0 text-center">No</span>
+              <span class="w-10 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0"></span>
               <span class="w-20 flex-shrink-0">画像</span>
               <span class="flex-1 min-w-0">スタイル名 / スタイリスト</span>
@@ -305,7 +305,13 @@ function StyleListSection({
             <div id="style-list" class="divide-y divide-gray-100">
             {styles.map((s, idx) => (
               <div class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3" data-image-id={s.id}>
-                <span class="hidden md:block w-8 flex-shrink-0 text-center text-xs text-gray-400">{idx + 1}</span>
+                <input
+                  type="number"
+                  min="1"
+                  value={idx + 1}
+                  class="style-order-input hidden md:block w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5"
+                  data-image-id={s.id}
+                />
                 <input
                   type="checkbox"
                   class="style-checkbox w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0"
@@ -407,7 +413,7 @@ style.get('/style/library', async (c) => {
         </p>
         <p class="text-sm text-gray-600 leading-relaxed">
           自動更新するスタイルを一元管理します。
-          新規作成したスタイルに「自動投稿対象」のチェックを入れると、サロンボードへの登録＋反映申請まで自動で実行されます。
+          チェックを入れると「自動投稿対象」になり、サロンボードへの登録＋反映申請まで自動で実行されます。
         </p>
       </div>
 
@@ -1049,6 +1055,37 @@ style.post('/api/style/toggle', async (c) => {
     .first<{ cnt: number }>()
 
   return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
+})
+
+// No.欄の手入力による並び替え。対象スタイルを指定位置(1始まり)へ移動し、
+// 残りのスタイルの並び順を詰め直してsort_orderへ連番で書き戻す。
+style.post('/api/style/reorder', async (c) => {
+  const user = c.get('user')
+  const { styleId, newPosition } = await c.req.json<{ styleId: number; newPosition: number }>()
+
+  const { results } = await c.env.DB.prepare(
+    'SELECT id FROM styles WHERE user_id = ? ORDER BY sort_order ASC, id DESC'
+  )
+    .bind(user.id)
+    .all<{ id: number }>()
+
+  const ids = (results || []).map((r) => r.id)
+  const currentIndex = ids.indexOf(styleId)
+  if (currentIndex === -1) {
+    return c.json({ success: false, error: '対象のスタイルが見つかりません' }, 404)
+  }
+
+  ids.splice(currentIndex, 1)
+  const targetIndex = Math.min(Math.max(Math.trunc(newPosition) - 1, 0), ids.length)
+  ids.splice(targetIndex, 0, styleId)
+
+  for (let i = 0; i < ids.length; i++) {
+    await c.env.DB.prepare('UPDATE styles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
+      .bind(i, ids[i], user.id)
+      .run()
+  }
+
+  return c.json({ success: true })
 })
 
 style.post('/api/style/bulk-select', async (c) => {
