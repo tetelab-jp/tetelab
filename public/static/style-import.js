@@ -1,5 +1,6 @@
 document.addEventListener('DOMContentLoaded', () => {
   const fetchBtn = document.getElementById('fetch-list-btn')
+  const fetchBtnLabel = document.getElementById('fetch-list-btn-label')
   const statusEl = document.getElementById('import-status')
   const listContainer = document.getElementById('import-list-container')
   const listEl = document.getElementById('import-list')
@@ -8,7 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
   if (fetchBtn) {
     fetchBtn.addEventListener('click', async () => {
       fetchBtn.disabled = true
-      statusEl.textContent = 'サロンボードから一覧を取得中...（数十秒かかる場合があります）'
+      if (fetchBtnLabel) fetchBtnLabel.textContent = '取得中'
+      statusEl.textContent = 'サロンボードからデータを取得中\n少しお待ちください'
       try {
         const res = await fetch('/api/style/import/fetch-list', { method: 'POST' })
         const data = await res.json()
@@ -74,6 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusEl.textContent = '通信エラーが発生しました'
       } finally {
         fetchBtn.disabled = false
+        if (fetchBtnLabel) fetchBtnLabel.textContent = 'サロンボードからスタイル取得'
       }
     })
   }
@@ -97,13 +100,15 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         const data = await res.json()
         if (data.success) {
-          statusEl.textContent = '完了: ' + data.importedCount + '件取り込みました'
           if (data.errors && data.errors.length > 0) {
-            statusEl.textContent += '（一部失敗: ' + data.errors.join(', ') + '）'
+            statusEl.textContent =
+              '完了: ' + data.importedCount + '件取り込みました（一部失敗: ' + data.errors.join(', ') + '）'
+          } else {
+            statusEl.textContent = '登録スタイルページをご確認ください'
           }
           setTimeout(() => {
             window.location.href = '/style/library'
-          }, 2000)
+          }, 5000)
         } else {
           statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
         }

@@ -449,8 +449,8 @@ style.get('/style/library', async (c) => {
           <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
         </p>
         <p class="text-sm text-gray-600 leading-relaxed">
-          自動更新するスタイルを一元管理します。
-          チェックを入れると「自動投稿対象」になり、サロンボードへの登録＋反映申請まで自動で実行されます。
+          自動更新するスタイルを管理します。
+          チェックを入れると「自動投稿対象」になり、サロンボードへの登録＋反映申請まで実行されます。
         </p>
       </div>
 
@@ -517,11 +517,12 @@ style.get('/style/import', async (c) => {
         <button
           id="fetch-list-btn"
           disabled={!cred}
-          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
         >
-          <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードから一覧取得
+          <i class="fas fa-cloud-arrow-down mr-2"></i>
+          <span id="fetch-list-btn-label">サロンボードからスタイル取得</span>
         </button>
-        <p id="import-status" class="text-sm text-gray-500 mt-3"></p>
+        <p id="import-status" class="text-sm text-gray-500 mt-3 whitespace-pre-line"></p>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">

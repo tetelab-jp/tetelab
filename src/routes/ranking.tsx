@@ -241,42 +241,72 @@ function KeywordFields({ keywords }: { keywords?: string[] }) {
   )
 }
 
-type Cell = { rank: number | null; status: string } | undefined
+type Cell = { rank: number | null; status: string; resultCount: number | null } | undefined
 
-// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)
-function RankPivotCell({ current, prev }: { current: Cell; prev: Cell }) {
-  if (!current) return <span class="text-gray-300">-</span>
+// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)。
+// showResultCount(最新列のみtrue)の場合、検索結果の該当店舗数を添える。
+function RankPivotCell({
+  current,
+  prev,
+  showResultCount
+}: {
+  current: Cell
+  prev: Cell
+  showResultCount?: boolean
+}) {
+  if (!current) return <span class="text-gray-300 text-xs">-</span>
   if (current.status === 'error') return <span class="text-xs text-red-500">エラー</span>
+
+  const resultCountEl =
+    showResultCount && current.resultCount != null ? (
+      <span class="block text-[10px] leading-tight text-gray-400 mt-0.5">{current.resultCount}店舗中</span>
+    ) : null
+
   if (current.rank == null) {
     return (
-      <span class="text-gray-400 text-sm">
-        圏外
-        {prev && prev.rank != null && <span class="block text-xs text-red-500">▼ 前回{prev.rank}位</span>}
+      <span class="inline-flex flex-col items-center">
+        <span class="text-gray-400 text-xs font-medium">圏外</span>
+        {resultCountEl}
+        {prev && prev.rank != null && (
+          <span class="block text-[10px] leading-tight text-red-500 mt-0.5">▼ 前回{prev.rank}位</span>
+        )}
       </span>
     )
   }
-  let badge = <span class="block text-xs text-gray-400">-</span>
+
+  let badge: unknown = null
   if (prev) {
     if (prev.rank == null) {
-      badge = <span class="block text-xs text-green-600">▲ 前回圏外</span>
+      badge = <span class="block text-[10px] leading-tight font-semibold text-green-600 mt-0.5">▲前回圏外</span>
     } else {
       const diff = prev.rank - current.rank
       badge =
         diff > 0 ? (
-          <span class="block text-xs text-green-600">▲{diff}</span>
+          <span class="block text-[10px] leading-tight font-semibold text-green-600 mt-0.5">▲{diff}</span>
         ) : diff < 0 ? (
-          <span class="block text-xs text-red-500">▼{-diff}</span>
+          <span class="block text-[10px] leading-tight font-semibold text-red-500 mt-0.5">▼{-diff}</span>
         ) : (
-          <span class="block text-xs text-gray-400">±0</span>
+          <span class="block text-[10px] leading-tight font-medium text-gray-400 mt-0.5">±0</span>
         )
     }
   }
+
   return (
-    <span>
-      <span class="font-semibold text-gray-900">{current.rank}</span>
+    <span class="inline-flex flex-col items-center">
+      <span class="inline-flex items-center justify-center min-w-[2rem] px-1.5 py-0.5 rounded-full bg-pink-50 text-pink-700 font-bold text-sm">
+        {current.rank}
+      </span>
+      {resultCountEl}
       {badge}
     </span>
   )
+}
+
+/** 計測日を「8/12」のような短い表記にする */
+function shortDate(sqliteTimestamp: string): string {
+  const ymd = formatJstDateTime(sqliteTimestamp).slice(0, 10)
+  const [, m, d] = ymd.split('-')
+  return `${Number(m)}/${Number(d)}`
 }
 
 const MEASURE_RUN_COLUMNS = 12
@@ -325,13 +355,24 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
     if (runs.length > 0) {
       const runIds = runs.map((r) => r.id)
       const { results: cellRows } = await c.env.DB.prepare(
-        `SELECT run_id, keyword, area_scope, rank, status FROM ranking_results
+        `SELECT run_id, keyword, area_scope, rank, result_count, status FROM ranking_results
          WHERE user_id = ? AND query_id = ? AND run_id IN (${runIds.map(() => '?').join(',')})`
       )
         .bind(user.id, primaryQuery.id, ...runIds)
-        .all<{ run_id: number; keyword: string; area_scope: string; rank: number | null; status: string }>()
+        .all<{
+          run_id: number
+          keyword: string
+          area_scope: string
+          rank: number | null
+          result_count: number | null
+          status: string
+        }>()
       for (const r of cellRows) {
-        cellMap.set(`${r.run_id}||${r.keyword}||${r.area_scope}`, { rank: r.rank, status: r.status })
+        cellMap.set(`${r.run_id}||${r.keyword}||${r.area_scope}`, {
+          rank: r.rank,
+          status: r.status,
+          resultCount: r.result_count
+        })
       }
     }
   }
@@ -354,17 +395,24 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center justify-between mb-2">
-          <p class="font-semibold text-gray-900">
-            {primaryQuery ? `${primaryQuery.salon_name} ／ ${primaryQuery.area_label || '-'}` : '対策キーワード設定が未登録です'}
-          </p>
-          <a href="/seo/keywords" class="text-xs text-pink-600 hover:underline">
-            <i class="fas fa-pen mr-1"></i>対策キーワードを編集
-          </a>
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center flex-shrink-0">
+            <i class="fas fa-store text-pink-500"></i>
+          </div>
+          <div class="min-w-0">
+            {primaryQuery ? (
+              <>
+                <p class="font-semibold text-gray-900 truncate">{primaryQuery.salon_name}</p>
+                <p class="text-xs text-gray-400 truncate">{primaryQuery.area_label || '-'}</p>
+              </>
+            ) : (
+              <p class="font-semibold text-gray-900">対策キーワード設定が未登録です</p>
+            )}
+          </div>
         </div>
 
         {keywordsList.length === 0 ? (
-          <p class="text-sm text-gray-400">
+          <p class="text-sm text-gray-400 mt-4">
             登録済みのキーワードがありません。
             <a href="/seo/keywords" class="text-pink-600 hover:underline ml-1">
               対策キーワード設定
@@ -373,7 +421,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
           </p>
         ) : (
           <>
-            <p class="text-xs text-gray-400 mb-3">
+            <p class="text-xs text-gray-400 mt-4 mb-3">
               登録済みキーワード{keywordsList.length}件を、中エリア・小エリアの両方で計測します。
             </p>
             <p id="measure-status" class="text-sm text-pink-600 mb-2"></p>
@@ -390,10 +438,10 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
         )}
       </div>
 
-      {/* 計測結果(対策KW×計測日の表。左が最新) */}
+      {/* 計測結果(対策KW×計測日の表。左が最新、右へ横スクロールで過去分) */}
       <div class="flex items-center justify-between">
         <p class="font-semibold">
-          <i class="fas fa-table mr-2 text-pink-500"></i>KW順位
+          <i class="fas fa-table mr-2 text-pink-500"></i>キーワードの順位
         </p>
         {hasRunning && (
           <span class="text-xs text-pink-600">
@@ -409,22 +457,44 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
       ) : (
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div class="overflow-x-auto">
-            <table class="w-full text-sm text-center border-collapse">
+            <table class="text-sm text-center border-collapse">
               <thead>
                 <tr class="bg-gray-50 border-b border-gray-100">
-                  <th class="py-2 px-4 text-left text-gray-500 sticky left-0 bg-gray-50">対策KW</th>
-                  {runs.map((run) => (
-                    <th class="py-2 px-2 text-gray-500 font-medium border-l border-gray-100" colspan={2}>
-                      {formatJstDateTime(run.measuredAt).slice(0, 10)}
+                  <th class="w-24 py-2 px-2 text-left text-xs text-gray-500 sticky left-0 z-10 bg-gray-50">
+                    キーワード
+                  </th>
+                  {runs.map((run, i) => (
+                    <th
+                      class={
+                        'w-14 py-2 px-1 text-xs text-gray-500 font-medium border-l border-gray-100 whitespace-nowrap' +
+                        (i === 0 ? ' sticky left-24 z-10 bg-gray-50' : '')
+                      }
+                      colspan={2}
+                    >
+                      {shortDate(run.measuredAt)}
                     </th>
                   ))}
                 </tr>
-                <tr class="bg-gray-50 border-b border-gray-100">
-                  <th class="py-1 px-4"></th>
-                  {runs.map(() => (
+                <tr class="bg-gray-50 border-b-2 border-gray-200">
+                  <th class="w-24 py-1 px-2 sticky left-0 z-10 bg-gray-50"></th>
+                  {runs.map((_, i) => (
                     <>
-                      <th class="py-1 px-2 text-xs text-gray-400 font-normal border-l border-gray-100">中エリア</th>
-                      <th class="py-1 px-2 text-xs text-gray-400 font-normal">小エリア</th>
+                      <th
+                        class={
+                          'w-14 py-1 px-1 text-[10px] text-gray-400 font-normal border-l border-gray-100' +
+                          (i === 0 ? ' sticky left-24 z-10 bg-gray-50' : '')
+                        }
+                      >
+                        中エリア
+                      </th>
+                      <th
+                        class={
+                          'w-14 py-1 px-1 text-[10px] text-gray-400 font-normal' +
+                          (i === 0 ? ' sticky left-[152px] z-10 bg-gray-50 border-r-2 border-gray-200' : '')
+                        }
+                      >
+                        小エリア
+                      </th>
                     </>
                   ))}
                 </tr>
@@ -432,20 +502,36 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
               <tbody>
                 {keywordsList.map((kw) => (
                   <tr class="border-b border-gray-50">
-                    <td class="py-2 px-4 text-left text-gray-700 font-medium sticky left-0 bg-white">{kw}</td>
+                    <td
+                      class="w-24 py-2 px-2 text-left text-gray-700 font-medium text-xs truncate sticky left-0 z-10 bg-white"
+                      title={kw}
+                    >
+                      {kw}
+                    </td>
                     {runs.map((run, i) => {
                       const nextRun = runs[i + 1]
                       const middleCurrent = cellMap.get(`${run.id}||${kw}||middle`)
                       const smallCurrent = cellMap.get(`${run.id}||${kw}||small`)
                       const middlePrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||middle`) : undefined
                       const smallPrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||small`) : undefined
+                      const isLatest = i === 0
                       return (
                         <>
-                          <td class="py-2 px-2 border-l border-gray-100">
-                            <RankPivotCell current={middleCurrent} prev={middlePrev} />
+                          <td
+                            class={
+                              'w-14 py-2 px-1 border-l border-gray-100' +
+                              (isLatest ? ' sticky left-24 z-10 bg-white' : '')
+                            }
+                          >
+                            <RankPivotCell current={middleCurrent} prev={middlePrev} showResultCount={isLatest} />
                           </td>
-                          <td class="py-2 px-2">
-                            <RankPivotCell current={smallCurrent} prev={smallPrev} />
+                          <td
+                            class={
+                              'w-14 py-2 px-1' +
+                              (isLatest ? ' sticky left-[152px] z-10 bg-white border-r-2 border-gray-200' : '')
+                            }
+                          >
+                            <RankPivotCell current={smallCurrent} prev={smallPrev} showResultCount={isLatest} />
                           </td>
                         </>
                       )
