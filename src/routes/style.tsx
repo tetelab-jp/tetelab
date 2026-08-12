@@ -392,7 +392,7 @@ function TemplateBulkApplySection({
         <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
       <p class="text-xs text-gray-400">
-        下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名・担当スタイリストを除く）を一括で反映します。
+        下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
       </p>
     </div>
   )
@@ -594,6 +594,7 @@ type TemplateForAutofill = {
   length_value: string | null
   menu_values_json: string
   menu_detail_text: string | null
+  stylist_id: number | null
   coupon_id: number | null
   hashtags_json: string
   model_attributes_json: string | null
@@ -602,7 +603,7 @@ type TemplateForAutofill = {
 async function loadActiveTemplates(c: AppContext, user: AppUser) {
   const { results } = await c.env.DB.prepare(
     `SELECT id, template_name, title_template, comment_template, category_value, length_value,
-            menu_values_json, menu_detail_text, coupon_id, hashtags_json, model_attributes_json
+            menu_values_json, menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json
      FROM templates WHERE user_id = ? AND active_flag = 1 ORDER BY id DESC`
   )
     .bind(user.id)
@@ -1107,8 +1108,10 @@ style.post('/api/style/bulk-select', async (c) => {
 })
 
 // テンプレート一括適用(docs/phase3-mvp-design.md 5-4)。
-// 画像・担当スタイリストは変更せず、テンプレート項目(タイトルを除く)のみ反映する。
+// 画像は変更せず、テンプレート項目(タイトルを除く。担当スタイリストは含む)を反映する。
 // タイトルは各スタイル固有のものとして扱い、一括適用では上書きしない。
+// 2026-08-12追記: 担当スタイリストもテンプレート側の必須項目として追加し、
+// 一括適用時に対象スタイルの担当スタイリストを上書きするようにした。
 const BULK_APPLY_MAX_STYLES = 100
 
 style.post('/api/style/bulk-apply-template', async (c) => {
@@ -1124,7 +1127,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
 
   const template = await c.env.DB.prepare(
     `SELECT id, comment_template, category_value, length_value, menu_values_json,
-            menu_detail_text, coupon_id, hashtags_json, model_attributes_json
+            menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json
      FROM templates WHERE id = ? AND user_id = ?`
   )
     .bind(templateId, user.id)
@@ -1145,10 +1148,14 @@ style.post('/api/style/bulk-apply-template', async (c) => {
         continue
       }
 
+      // テンプレートに担当スタイリストが設定されていればそれで上書きする。
+      // (未設定の旧テンプレートの場合のみ、スタイル側の既存値を維持する)
+      const effectiveStylistId = template.stylist_id ?? owned.stylist_id
+
       await c.env.DB.prepare(
         `UPDATE styles SET
            comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
-           menu_detail_text = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
+           menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND user_id = ?`
       )
@@ -1158,6 +1165,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
           template.length_value,
           template.menu_values_json,
           template.menu_detail_text,
+          effectiveStylistId,
           template.coupon_id,
           template.hashtags_json,
           template.model_attributes_json,
@@ -1178,7 +1186,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
         !!template.comment_template &&
         !!template.length_value &&
         !!template.menu_detail_text &&
-        !!owned.stylist_id
+        !!effectiveStylistId
 
       await c.env.DB.prepare('UPDATE styles SET internal_save_status = ? WHERE id = ?')
         .bind(isReady ? 'ready' : 'draft', styleId)
@@ -1448,6 +1456,7 @@ type TemplateDetailRow = {
   length_value: string | null
   menu_values_json: string
   menu_detail_text: string | null
+  stylist_id: number | null
   coupon_id: number | null
   hashtags_json: string
   model_attributes_json: string | null
@@ -1457,10 +1466,12 @@ type TemplateDetailRow = {
 function TemplateForm({
   mode,
   detail,
+  stylists,
   coupons
 }: {
   mode: 'new' | 'edit'
   detail: TemplateDetailRow | null
+  stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
 }) {
   const category = detail?.category_value || 'SG01'
@@ -1482,6 +1493,23 @@ function TemplateForm({
           value={detail?.template_name || ''}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">
+          担当スタイリスト<span style="color:#d32475">*</span>
+        </label>
+        <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+          <option value="">未設定</option>
+          {stylists.map((s) => (
+            <option value={s.id} selected={detail?.stylist_id === s.id}>{s.name}</option>
+          ))}
+        </select>
+        {stylists.length === 0 && (
+          <p class="text-xs text-amber-600 mt-1">
+            スタイリストが未登録です。<a href="/settings/salonboard" class="underline">連携設定</a>から同期してください。
+          </p>
+        )}
       </div>
 
       <div>
@@ -1629,6 +1657,7 @@ function parseTemplateForm(body: Record<string, any>) {
     menuDetailText: String(body.menu_detail_text || '').trim().slice(0, 50),
     hashtags,
     modelAttributes: parseModelAttributesForm(body),
+    stylistId: body.stylist_id ? Number(body.stylist_id) : null,
     couponId: body.coupon_id ? Number(body.coupon_id) : null,
     active: body.active === 'on' || body.active === 'true'
   }
@@ -1636,10 +1665,10 @@ function parseTemplateForm(body: Record<string, any>) {
 
 style.get('/style/template/new', async (c) => {
   const user = c.get('user')
-  const { coupons } = await loadFormMasters(c, user)
+  const { stylists, coupons } = await loadFormMasters(c, user)
   return c.render(
     <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート新規作成">
-      <TemplateForm mode="new" detail={null} coupons={coupons} />
+      <TemplateForm mode="new" detail={null} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート新規作成' }
   )
@@ -1657,8 +1686,8 @@ style.post('/style/template/new', async (c) => {
   await c.env.DB.prepare(
     `INSERT INTO templates (
        user_id, template_name, title_template, comment_template, category_value, length_value,
-       menu_values_json, menu_detail_text, coupon_id, hashtags_json, model_attributes_json, active_flag
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       menu_values_json, menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json, active_flag
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
@@ -1669,6 +1698,7 @@ style.post('/style/template/new', async (c) => {
       parsed.lengthValue,
       JSON.stringify(parsed.menuValues),
       parsed.menuDetailText,
+      parsed.stylistId,
       parsed.couponId,
       JSON.stringify(parsed.hashtags),
       JSON.stringify(parsed.modelAttributes),
@@ -1685,7 +1715,7 @@ style.get('/style/template/:id/edit', async (c) => {
 
   const detail = await c.env.DB.prepare(
     `SELECT id, template_name, title_template, comment_template, category_value, length_value, menu_values_json,
-            menu_detail_text, coupon_id, hashtags_json, model_attributes_json, active_flag
+            menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json, active_flag
      FROM templates WHERE id = ? AND user_id = ?`
   )
     .bind(id, user.id)
@@ -1693,11 +1723,11 @@ style.get('/style/template/:id/edit', async (c) => {
 
   if (!detail) return c.notFound()
 
-  const { coupons } = await loadFormMasters(c, user)
+  const { stylists, coupons } = await loadFormMasters(c, user)
 
   return c.render(
     <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート編集">
-      <TemplateForm mode="edit" detail={detail} coupons={coupons} />
+      <TemplateForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート編集' }
   )
@@ -1716,7 +1746,7 @@ style.post('/style/template/:id/edit', async (c) => {
   await c.env.DB.prepare(
     `UPDATE templates SET
        template_name = ?, title_template = ?, comment_template = ?, category_value = ?, length_value = ?,
-       menu_values_json = ?, menu_detail_text = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
+       menu_values_json = ?, menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
        active_flag = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND user_id = ?`
   )
@@ -1728,6 +1758,7 @@ style.post('/style/template/:id/edit', async (c) => {
       parsed.lengthValue,
       JSON.stringify(parsed.menuValues),
       parsed.menuDetailText,
+      parsed.stylistId,
       parsed.couponId,
       JSON.stringify(parsed.hashtags),
       JSON.stringify(parsed.modelAttributes),
