@@ -118,14 +118,16 @@
     })
   }
 
-  // 「+キーワードを追加」ボタン(隠れているキーワード入力枠を表示、最大20個)
+  // 「+キーワードを追加」ボタン(クリック1回につき隠れている枠を1個ずつ表示、最大20個)
   var addKeywordBtn = document.getElementById('add-keyword-btn')
   if (addKeywordBtn) {
     addKeywordBtn.addEventListener('click', function () {
-      document.querySelectorAll('.keyword-slot.hidden').forEach(function (el) {
-        el.classList.remove('hidden')
-      })
-      addKeywordBtn.classList.add('hidden')
+      var hiddenSlots = document.querySelectorAll('.keyword-slot.hidden')
+      if (hiddenSlots.length === 0) return
+      hiddenSlots[0].classList.remove('hidden')
+      if (hiddenSlots.length <= 1) {
+        addKeywordBtn.classList.add('hidden')
+      }
     })
   }
 })()
