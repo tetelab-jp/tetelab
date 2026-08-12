@@ -33,7 +33,12 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // このプール内の各セッションIDごとに連続障害回数を記録し(DB:
 // proxy_session_pool_stats)、その時点で最も調子の良い(連続障害回数が
 // 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
-const PROXY_SESSION_POOL = ['salonmotion-pool-1', 'salonmotion-pool-2', 'salonmotion-pool-3', 'salonmotion-pool-4', 'salonmotion-pool-5']
+// 2026-08-12追記(重大バグ修正): セッションIDにハイフン(-)を含めると、
+// Bright Data側のユーザー名解析(brd-customer-...-session-<ID>という
+// 形式でIDを読み取る仕組み)がID内のハイフンを別パラメータの区切りと
+// 誤認識し、HTTP 407(プロキシ認証エラー)で全滅する不具合があった。
+// そのため英数字のみのIDに変更する。
+const PROXY_SESSION_POOL = ['salonmotionpool1', 'salonmotionpool2', 'salonmotionpool3', 'salonmotionpool4', 'salonmotionpool5']
 
 async function markProxySessionSuccess(env: Bindings, userId: number, sessionId: string): Promise<void> {
   await env.DB.prepare(
