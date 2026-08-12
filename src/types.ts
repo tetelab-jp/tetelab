@@ -46,6 +46,7 @@ export type AppUser = {
   is_active: number
   style_enabled: number
   blog_enabled: number
+  seo_enabled: number
 }
 
 export type AdminUser = {

@@ -28,7 +28,7 @@ export async function requireAuth(
 
   // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled FROM users WHERE id = ?'
+    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled FROM users WHERE id = ?'
   )
     .bind(payload.sub)
     .first<AppUser>()
@@ -69,6 +69,18 @@ export async function requireBlogEnabled(
   const user = c.get('user')
   if (user.blog_enabled === 0) {
     return redirectOrUnauthorized(c, 'ブログ自動投稿機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
+  }
+  await next()
+}
+
+/** requireStyleEnabledのSEO版。/seo/*・/api/seo/* ルートで使う想定。 */
+export async function requireSeoEnabled(
+  c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
+  next: Next
+) {
+  const user = c.get('user')
+  if (user.seo_enabled === 0) {
+    return redirectOrUnauthorized(c, 'SEO機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
   }
   await next()
 }

@@ -44,6 +44,7 @@ blog.get('/blog/master', async (c) => {
 
   return c.render(
     <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
       active="blog-master"
       salonName={user.salon_name}
       title="ブログ基本設定"
@@ -245,6 +246,7 @@ blog.get('/blog/posts', async (c) => {
 
   return c.render(
     <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
       active="blog-posts"
       salonName={user.salon_name}
       title="ブログ投稿作成"

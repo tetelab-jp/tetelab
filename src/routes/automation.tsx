@@ -302,6 +302,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
   return c.render(
     <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
       active="style-test-run"
       salonName={user.salon_name}
       title="実行履歴"

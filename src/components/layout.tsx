@@ -11,8 +11,9 @@ export type NavKey =
   | 'style-test-run'
   | 'blog-master'
   | 'blog-posts'
+  | 'seo-top'
 
-const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' | 'settings' }[] = [
+const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' | 'seo' | 'settings' }[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
@@ -20,23 +21,27 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
+  { key: 'seo-top', href: '/seo', icon: 'fa-magnifying-glass-chart', label: 'SEO', group: 'seo' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
 ]
 
-const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' }[] = [
+const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'seo' | 'settings' }[] = [
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
+  { title: 'SEO', key: 'seo' },
   { title: '設定・確認', key: 'settings' }
 ]
 
-// 管理者サイト(/admin/tool)でスタイル/ブログ機能をOFFにされたサロンでは、
+// 管理者サイト(/admin/tool)でスタイル/ブログ/SEO機能をOFFにされたサロンでは、
 // 該当機能のナビ項目自体を非表示にする(リンク先はrequireStyleEnabled/
-// requireBlogEnabledでどのみちブロックされるが、押せるリンクを残さないため)。
-function isNavItemVisible(item: { group: string }, styleEnabled: boolean, blogEnabled: boolean) {
+// requireBlogEnabled/requireSeoEnabledでどのみちブロックされるが、押せる
+// リンクを残さないため)。
+function isNavItemVisible(item: { group: string }, styleEnabled: boolean, blogEnabled: boolean, seoEnabled: boolean) {
   if (item.group === 'style') return styleEnabled
   if (item.group === 'blog') return blogEnabled
+  if (item.group === 'seo') return seoEnabled
   return true
 }
 
@@ -44,12 +49,14 @@ export function Sidebar({
   active,
   salonName,
   styleEnabled = true,
-  blogEnabled = true
+  blogEnabled = true,
+  seoEnabled = true
 }: {
   active: NavKey
   salonName: string | null
   styleEnabled?: boolean
   blogEnabled?: boolean
+  seoEnabled?: boolean
 }) {
   const groups = NAV_GROUPS
   return (
@@ -60,7 +67,7 @@ export function Sidebar({
 
       {groups.map((group) => {
         const items = NAV_ITEMS.filter(
-          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled)
+          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
         )
         if (items.length === 0) return null
         return (
@@ -98,18 +105,20 @@ export function Sidebar({
 function MobileNavPanel({
   active,
   styleEnabled,
-  blogEnabled
+  blogEnabled,
+  seoEnabled
 }: {
   active: NavKey
   styleEnabled: boolean
   blogEnabled: boolean
+  seoEnabled: boolean
 }) {
   return (
     <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div class="space-y-4">
         {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
           const items = NAV_ITEMS.filter(
-            (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled)
+            (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
           )
           if (items.length === 0 && group.key !== 'settings') return null
           return (
@@ -152,12 +161,14 @@ export function TopBar({
   title,
   active,
   styleEnabled = true,
-  blogEnabled = true
+  blogEnabled = true,
+  seoEnabled = true
 }: {
   title: string
   active: NavKey
   styleEnabled?: boolean
   blogEnabled?: boolean
+  seoEnabled?: boolean
 }) {
   return (
     <header class="sticky top-0 z-20 border-b border-gray-100 bg-white">
@@ -170,7 +181,7 @@ export function TopBar({
           <summary class="list-none cursor-pointer w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
             <i class="fas fa-bars text-xl"></i>
           </summary>
-          <MobileNavPanel active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
+          <MobileNavPanel active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} seoEnabled={seoEnabled} />
         </details>
       </div>
       <div class="hidden md:flex items-center gap-3 px-6 py-4">
@@ -206,6 +217,7 @@ export function PageLayout({
   title,
   styleEnabled = true,
   blogEnabled = true,
+  seoEnabled = true,
   children
 }: {
   active: NavKey
@@ -213,13 +225,20 @@ export function PageLayout({
   title: string
   styleEnabled?: boolean
   blogEnabled?: boolean
+  seoEnabled?: boolean
   children: any
 }) {
   return (
     <div class="flex">
-      <Sidebar active={active} salonName={salonName} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
+      <Sidebar
+        active={active}
+        salonName={salonName}
+        styleEnabled={styleEnabled}
+        blogEnabled={blogEnabled}
+        seoEnabled={seoEnabled}
+      />
       <div class="flex-1 min-w-0">
-        <TopBar title={title} active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
+        <TopBar title={title} active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} seoEnabled={seoEnabled} />
         <MobileGroupNav active={active} />
         <main class="p-6 space-y-6">{children}</main>
       </div>
