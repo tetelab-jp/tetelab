@@ -15,6 +15,9 @@ export type Bindings = {
   OPENAI_BASE_URL?: string
   CRON_SECRET?: string // 外部クロンからの /api/cron/run-style-posts 呼び出し認証用
 
+  // ---- 検索順位計測(HPB公開検索ページのfetch) ----
+  RANKING_PROXY_URL?: string // 任意。HPBがデータセンターIPを弾く場合のHTTP(S)プロキシ
+
   // ---- AWS ECS/Fargate連携(SALON BOARD投稿ワーカー) ----
   APP_BASE_URL?: string // 自身の公開URL。FargateタスクにJOB_API_BASEとして渡す
   AWS_ACCESS_KEY_ID?: string
