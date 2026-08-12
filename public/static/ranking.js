@@ -39,7 +39,7 @@
   }
 
   async function loadAreas(level, service, middle) {
-    var url = '/ranking/api/areas?level=' + level + '&service=' + encodeURIComponent(service)
+    var url = '/seo/api/areas?level=' + level + '&service=' + encodeURIComponent(service)
     if (middle) url += '&middle=' + encodeURIComponent(middle)
     var res = await fetch(url)
     var data = await res.json()
@@ -128,7 +128,7 @@
       measureRunBtn.disabled = true
       if (status) status.textContent = '測定を開始しています...'
       try {
-        var res = await fetch('/ranking/measure', {
+        var res = await fetch('/seo/measure', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ queryIds: ids })
@@ -206,7 +206,7 @@
       areaRefreshStatus.textContent =
         '取得を開始しました。数分かかります。完了後にこのページを再読み込みすると件数が更新されます...'
       try {
-        var res = await fetch('/ranking/areas/refresh', { method: 'POST' })
+        var res = await fetch('/seo/areas/refresh', { method: 'POST' })
         var data = await res.json()
         if (!data.success) {
           areaRefreshStatus.textContent = 'エラー: ' + (data.error || '失敗')

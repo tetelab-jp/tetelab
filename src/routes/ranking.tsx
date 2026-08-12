@@ -283,7 +283,7 @@ function RankCell({
 // ============================================
 // 計測(テンプレートを選んで測定 + ログをコンテナ表示)
 // ============================================
-ranking.get('/ranking', requireAuth, async (c) => {
+ranking.get('/seo', requireAuth, async (c) => {
   const user = c.get('user')
 
   const { results: templates } = await c.env.DB.prepare(
@@ -366,7 +366,7 @@ ranking.get('/ranking', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <div class="flex items-center justify-between mb-4">
           <p class="font-semibold text-gray-900">計測するキーワード設定を選択</p>
-          <a href="/ranking/keywords" class="text-xs text-pink-600 hover:underline">
+          <a href="/seo/keywords" class="text-xs text-pink-600 hover:underline">
             <i class="fas fa-plus mr-1"></i>対策キーワード設定を追加
           </a>
         </div>
@@ -374,7 +374,7 @@ ranking.get('/ranking', requireAuth, async (c) => {
         {templates.length === 0 ? (
           <p class="text-sm text-gray-400">
             登録済みの対策キーワード設定がありません。
-            <a href="/ranking/keywords" class="text-pink-600 hover:underline ml-1">
+            <a href="/seo/keywords" class="text-pink-600 hover:underline ml-1">
               対策キーワード設定
             </a>
             で登録してください。
@@ -473,7 +473,7 @@ ranking.get('/ranking', requireAuth, async (c) => {
 })
 
 // 計測実行(選択したテンプレートをバックグラウンドで測定 / JSON)
-ranking.post('/ranking/measure', requireAuth, async (c) => {
+ranking.post('/seo/measure', requireAuth, async (c) => {
   const user = c.get('user')
   let body: Record<string, unknown>
   try {
@@ -513,7 +513,7 @@ ranking.post('/ranking/measure', requireAuth, async (c) => {
 // ============================================
 // 対策キーワード設定(登録フォーム + 登録済み一覧)
 // ============================================
-ranking.get('/ranking/keywords', requireAuth, async (c) => {
+ranking.get('/seo/keywords', requireAuth, async (c) => {
   const user = c.get('user')
   const salons = await getSalonOptions(c.env, user.id, user.salon_name)
 
@@ -536,7 +536,7 @@ ranking.get('/ranking/keywords', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
 
-        <form id="ranking-form" method="post" action="/ranking/templates" class="space-y-5">
+        <form id="ranking-form" method="post" action="/seo/templates" class="space-y-5">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               サロン名 <span class="text-pink-500">*</span>
@@ -630,13 +630,13 @@ ranking.get('/ranking/keywords', requireAuth, async (c) => {
               {queries.map((q) => (
                 <tr class="border-b border-gray-50">
                   <td class="py-2">
-                    <a href={`/ranking/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
+                    <a href={`/seo/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
                       {q.name || `${q.salon_name}（無名）`}
                     </a>
                   </td>
                   <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
                   <td class="py-2 text-right">
-                    <a href={`/ranking/templates/${q.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">
+                    <a href={`/seo/templates/${q.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">
                       編集
                     </a>
                   </td>
@@ -653,7 +653,7 @@ ranking.get('/ranking/keywords', requireAuth, async (c) => {
 })
 
 // 対策キーワードの作成(「登録」モーダル)
-ranking.post('/ranking/templates', requireAuth, async (c) => {
+ranking.post('/seo/templates', requireAuth, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
 
@@ -666,7 +666,7 @@ ranking.post('/ranking/templates', requireAuth, async (c) => {
   const keywords = parseKeywords(body)
 
   if (!salon || !serviceAreaCd || keywords.length === 0) {
-    return c.redirect('/ranking/keywords?error=1')
+    return c.redirect('/seo/keywords?error=1')
   }
 
   const q = await c.env.DB.prepare(
@@ -687,13 +687,13 @@ ranking.post('/ranking/templates', requireAuth, async (c) => {
       .run()
   }
 
-  return c.redirect('/ranking/keywords?registered=1')
+  return c.redirect('/seo/keywords?registered=1')
 })
 
 // ============================================
 // 対策キーワード編集
 // ============================================
-ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
+ranking.get('/seo/templates/:id/edit', requireAuth, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const q = await c.env.DB.prepare(
@@ -710,7 +710,7 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
       small_area_cd: string | null
       area_label: string | null
     }>()
-  if (!q) return c.redirect('/ranking/keywords')
+  if (!q) return c.redirect('/seo/keywords')
 
   const { results: kwRows } = await c.env.DB.prepare(
     `SELECT keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
@@ -740,7 +740,7 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
     <PageLayout active="ranking-keywords" salonName={user.salon_name} title="対策キーワード編集">
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-3xl">
         <p class="font-semibold mb-5 text-gray-900">対策キーワード編集</p>
-        <form id="ranking-form" method="post" action={`/ranking/templates/${q.id}`} class="space-y-5">
+        <form id="ranking-form" method="post" action={`/seo/templates/${q.id}`} class="space-y-5">
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
               登録名 <span class="text-pink-500">*</span>
@@ -783,7 +783,7 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
           <div class="flex items-center justify-between pt-2">
             <button
               type="submit"
-              formaction={`/ranking/templates/${q.id}/delete`}
+              formaction={`/seo/templates/${q.id}/delete`}
               class="text-sm text-gray-400 hover:text-red-500"
             >
               <i class="fas fa-trash mr-1"></i>削除
@@ -802,7 +802,7 @@ ranking.get('/ranking/templates/:id/edit', requireAuth, async (c) => {
   )
 })
 
-ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
+ranking.post('/seo/templates/:id', requireAuth, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const body = (await c.req.parseBody()) as Record<string, unknown>
@@ -810,7 +810,7 @@ ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
   const owned = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE id = ? AND user_id = ?`)
     .bind(id, user.id)
     .first<{ id: number }>()
-  if (!owned) return c.redirect('/ranking/keywords')
+  if (!owned) return c.redirect('/seo/keywords')
 
   const name = String(body.name || '').trim()
   const salon = String(body.salon || '').trim()
@@ -839,10 +839,10 @@ ranking.post('/ranking/templates/:id', requireAuth, async (c) => {
       .run()
   }
 
-  return c.redirect('/ranking/keywords')
+  return c.redirect('/seo/keywords')
 })
 
-ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
+ranking.post('/seo/templates/:id/delete', requireAuth, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   if (Number.isFinite(id)) {
@@ -850,13 +850,13 @@ ranking.post('/ranking/templates/:id/delete', requireAuth, async (c) => {
       .bind(id, user.id)
       .run()
   }
-  return c.redirect('/ranking/keywords')
+  return c.redirect('/seo/keywords')
 })
 
 // ============================================
 // 定期測定設定
 // ============================================
-ranking.get('/ranking/schedule', requireAuth, async (c) => {
+ranking.get('/seo/schedule', requireAuth, async (c) => {
   const user = c.get('user')
   const sched = await c.env.DB.prepare(
     `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ?`
@@ -886,7 +886,7 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
         <p class="text-xs text-gray-400 mb-5">
           前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
         </p>
-        <form method="post" action="/ranking/schedule" class="space-y-5">
+        <form method="post" action="/seo/schedule" class="space-y-5">
           <label class="flex items-center gap-2 text-sm">
             <input type="checkbox" name="enabled" value="1" checked={enabled} class="w-4 h-4" />
             定期測定を有効にする
@@ -948,12 +948,12 @@ ranking.get('/ranking/schedule', requireAuth, async (c) => {
 })
 
 // 全国エリアの一括クロール(バックグラウンド起動)
-ranking.post('/ranking/areas/refresh', requireAuth, async (c) => {
+ranking.post('/seo/areas/refresh', requireAuth, async (c) => {
   void crawlAllAreas(c.env, { force: true }).catch((e) => console.error('crawlAllAreas failed:', e))
   return c.json({ success: true })
 })
 
-ranking.post('/ranking/schedule', requireAuth, async (c) => {
+ranking.post('/seo/schedule', requireAuth, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
   const enabled = body.enabled ? 1 : 0
@@ -976,7 +976,7 @@ ranking.post('/ranking/schedule', requireAuth, async (c) => {
       .bind(user.id, enabled, frequency, runTime)
       .run()
   }
-  return c.redirect('/ranking/schedule?saved=1')
+  return c.redirect('/seo/schedule?saved=1')
 })
 
 // ============================================
@@ -1030,7 +1030,7 @@ ranking.post('/api/cron/run-ranking', async (c) => {
 // ============================================
 // エリアのカスケード用JSON API(中/小エリアをオンデマンド取得)
 // ============================================
-ranking.get('/ranking/api/areas', requireAuth, async (c) => {
+ranking.get('/seo/api/areas', requireAuth, async (c) => {
   const level = c.req.query('level')
   const service = String(c.req.query('service') || '').trim()
   const middle = String(c.req.query('middle') || '').trim()

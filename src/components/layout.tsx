@@ -29,9 +29,9 @@ const NAV_ITEMS: {
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
-  { key: 'ranking-keywords', href: '/ranking/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
-  { key: 'ranking-measure', href: '/ranking', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
-  { key: 'ranking-schedule', href: '/ranking/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
+  { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
+  { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
+  { key: 'ranking-schedule', href: '/seo/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
 ]
