@@ -1,5 +1,5 @@
 import { Hono, type Context } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
@@ -11,6 +11,7 @@ type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
 const style = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
 style.use('*', requireAuth)
+style.use('*', requireStyleEnabled)
 
 // ---------- 共通ヘルパー ----------
 
@@ -418,7 +419,12 @@ style.get('/style/library', async (c) => {
   const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
 
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル一覧">
+    <PageLayout
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル一覧"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-2">
           <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
@@ -474,7 +480,12 @@ style.get('/style/import', async (c) => {
     .first<{ id: number }>()
 
   return c.render(
-    <PageLayout active="style-import" salonName={user.salon_name} title="既存スタイルの取り込み">
+    <PageLayout
+      active="style-import"
+      salonName={user.salon_name}
+      title="既存スタイルの取り込み"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {!cred && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
           <i class="fas fa-triangle-exclamation mr-2"></i>
@@ -855,7 +866,12 @@ style.get('/style/new', async (c) => {
     loadActiveTemplates(c, user)
   ])
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル新規作成">
+    <PageLayout
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル新規作成"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <StyleForm mode="new" detail={null} stylists={stylists} coupons={coupons} templates={templates} />
     </PageLayout>,
     { title: 'スタイル新規作成' }
@@ -993,7 +1009,12 @@ style.get('/style/:id/edit', async (c) => {
   const { stylists, coupons } = await loadFormMasters(c, user)
 
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル編集">
+    <PageLayout
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル編集"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <StyleForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} templates={[]} />
     </PageLayout>,
     { title: 'スタイル編集' }
@@ -1272,7 +1293,12 @@ style.get('/style/schedule', async (c) => {
   const selectedCount = selectedRow?.cnt ?? 0
 
   return c.render(
-    <PageLayout active="style-schedule" salonName={user.salon_name} title="自動投稿・手動投稿">
+    <PageLayout
+      active="style-schedule"
+      salonName={user.salon_name}
+      title="自動投稿・手動投稿"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1391,7 +1417,12 @@ style.get('/style/template', async (c) => {
   const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート作成・適用">
+    <PageLayout
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート作成・適用"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1688,7 +1719,12 @@ style.get('/style/template/new', async (c) => {
   const user = c.get('user')
   const { stylists, coupons } = await loadFormMasters(c, user)
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート新規作成">
+    <PageLayout
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート新規作成"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <TemplateForm mode="new" detail={null} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート新規作成' }
@@ -1747,7 +1783,12 @@ style.get('/style/template/:id/edit', async (c) => {
   const { stylists, coupons } = await loadFormMasters(c, user)
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート編集">
+    <PageLayout
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート編集"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <TemplateForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート編集' }

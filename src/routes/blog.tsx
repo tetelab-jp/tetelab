@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireBlogEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { generateBlogContent } from '../lib/ai-generate'
 import type { Bindings, AppUser } from '../types'
@@ -7,6 +7,7 @@ import type { Bindings, AppUser } from '../types'
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
 blog.use('*', requireAuth)
+blog.use('*', requireBlogEnabled)
 
 type MasterRow = { id: number; name: string; is_active: number }
 
@@ -34,7 +35,12 @@ blog.get('/blog/master', async (c) => {
   ])
 
   return c.render(
-    <PageLayout active="blog-master" salonName={user.salon_name} title="ブログ基本設定">
+    <PageLayout
+      active="blog-master"
+      salonName={user.salon_name}
+      title="ブログ基本設定"
+      styleEnabled={user.style_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -230,7 +236,12 @@ blog.get('/blog/posts', async (c) => {
   const hasMaster = (authors.results?.length || 0) > 0 && (categories.results?.length || 0) > 0
 
   return c.render(
-    <PageLayout active="blog-posts" salonName={user.salon_name} title="ブログ投稿作成">
+    <PageLayout
+      active="blog-posts"
+      salonName={user.salon_name}
+      title="ブログ投稿作成"
+      styleEnabled={user.style_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>投稿予約を保存しました

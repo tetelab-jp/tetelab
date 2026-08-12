@@ -383,4 +383,226 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
   return c.redirect('/dashboard')
 })
 
+// ---------- ツール設定(サロンごとのスタイル/ブログ機能オンオフ) ----------
+// OFFにすると、salon側のrequireStyleEnabled/requireBlogEnabledミドルウェアに
+// より該当ルート・API・バッチ(cronの投稿対象)から完全にブロックされる
+// (src/lib/auth-middleware.ts、src/routes/automation.tsxの/api/cron/run-style-posts参照)。
+
+const TOOL_PAGE_SIZE = 20
+
+type ToolSalonRow = {
+  id: number
+  email: string
+  salon_name: string | null
+  style_enabled: number
+  blog_enabled: number
+  seq: number
+}
+
+function buildToolListUrl(page: number, q: string) {
+  const params = new URLSearchParams()
+  if (page > 1) params.set('page', String(page))
+  if (q) params.set('q', q)
+  const qs = params.toString()
+  return '/admin/tool' + (qs ? `?${qs}` : '')
+}
+
+function FeatureToggleForm({
+  action,
+  page,
+  q,
+  enabled,
+  onLabel,
+  offLabel
+}: {
+  action: string
+  page: number
+  q: string
+  enabled: boolean
+  onLabel: string
+  offLabel: string
+}) {
+  return (
+    <form method="post" action={action}>
+      <input type="hidden" name="page" value={page} />
+      <input type="hidden" name="q" value={q} />
+      <label class="flex items-center gap-2 cursor-pointer w-fit">
+        <span class="relative inline-flex items-center flex-shrink-0">
+          <input type="checkbox" checked={enabled} onchange="this.form.submit()" class="sr-only peer" />
+          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+        </span>
+        <span class={'text-xs font-semibold ' + (enabled ? 'text-pink-600' : 'text-gray-400')}>
+          {enabled ? onLabel : offLabel}
+        </span>
+      </label>
+    </form>
+  )
+}
+
+admin.get('/admin/tool', async (c) => {
+  const adminUser = c.get('admin')
+  const q = (c.req.query('q') || '').trim()
+  const page = Math.max(1, parseInt(c.req.query('page') || '1', 10) || 1)
+  const offset = (page - 1) * TOOL_PAGE_SIZE
+  const likePattern = `%${q}%`
+
+  const countRow = await c.env.DB.prepare(
+    `SELECT COUNT(*) as cnt FROM users WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
+  )
+    .bind(q, likePattern, likePattern)
+    .first<{ cnt: number }>()
+  const totalCount = countRow?.cnt ?? 0
+  const totalPages = Math.max(1, Math.ceil(totalCount / TOOL_PAGE_SIZE))
+
+  const { results: salons } = await c.env.DB.prepare(
+    `SELECT id, email, salon_name, style_enabled, blog_enabled,
+       ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
+     FROM users
+     WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
+     ORDER BY is_active DESC, created_at ASC
+     LIMIT ? OFFSET ?`
+  )
+    .bind(q, likePattern, likePattern, TOOL_PAGE_SIZE, offset)
+    .all<ToolSalonRow>()
+
+  return c.render(
+    <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="ツール設定">
+      <form method="get" action="/admin/tool" class="flex gap-2">
+        <input
+          type="text"
+          name="q"
+          value={q}
+          placeholder="サロン名・メールアドレスで検索"
+          class="flex-1 max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+        />
+        <button
+          type="submit"
+          class="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200 text-sm font-medium text-gray-700 transition"
+        >
+          検索
+        </button>
+        {q && (
+          <a
+            href="/admin/tool"
+            class="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-gray-600 transition"
+          >
+            クリア
+          </a>
+        )}
+      </form>
+
+      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">No.</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
+                <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
+                <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {salons.map((salon) => (
+                <tr>
+                  <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
+                  <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
+                  <td class="px-4 py-3 text-gray-500">{salon.email}</td>
+                  <td class="px-4 py-3">
+                    <FeatureToggleForm
+                      action={`/admin/tool/${salon.id}/toggle-style`}
+                      page={page}
+                      q={q}
+                      enabled={salon.style_enabled === 1}
+                      onLabel="有効"
+                      offLabel="無効"
+                    />
+                  </td>
+                  <td class="px-4 py-3">
+                    <FeatureToggleForm
+                      action={`/admin/tool/${salon.id}/toggle-blog`}
+                      page={page}
+                      q={q}
+                      enabled={salon.blog_enabled === 1}
+                      onLabel="有効"
+                      offLabel="無効"
+                    />
+                  </td>
+                </tr>
+              ))}
+              {salons.length === 0 && (
+                <tr>
+                  <td colspan={5} class="px-4 py-8 text-center text-gray-400">
+                    該当するサロンがありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-between text-sm text-gray-500">
+        <span>
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + TOOL_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex gap-3">
+          {page > 1 && (
+            <a href={buildToolListUrl(page - 1, q)} class="hover:text-pink-600">
+              ← 前へ
+            </a>
+          )}
+          <span class="text-gray-400">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages && (
+            <a href={buildToolListUrl(page + 1, q)} class="hover:text-pink-600">
+              次へ →
+            </a>
+          )}
+        </div>
+      </div>
+    </AdminPageLayout>,
+    { title: 'ツール設定' }
+  )
+})
+
+async function toggleSalonFeature(
+  c: any,
+  column: 'style_enabled' | 'blog_enabled',
+  actionName: string
+) {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const target = (await c.env.DB.prepare(`SELECT id, email, ${column} as current_value FROM users WHERE id = ?`)
+    .bind(targetId)
+    .first()) as { id: number; email: string; current_value: number } | null
+  if (target) {
+    const nextValue = target.current_value === 1 ? 0 : 1
+    await c.env.DB.prepare(`UPDATE users SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(nextValue, targetId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      actionName,
+      'user',
+      targetId,
+      `${target.email}: ${column} ${target.current_value} -> ${nextValue}`
+    )
+  }
+
+  return c.redirect(buildToolListUrl(Number(page) || 1, q))
+}
+
+admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_enabled', 'toggle_salon_style_enabled'))
+admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
+
 export default admin

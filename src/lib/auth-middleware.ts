@@ -28,7 +28,7 @@ export async function requireAuth(
 
   // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name, is_active FROM users WHERE id = ?'
+    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled FROM users WHERE id = ?'
   )
     .bind(payload.sub)
     .first<AppUser>()
@@ -46,10 +46,37 @@ export async function requireAuth(
   await next()
 }
 
-function redirectOrUnauthorized(c: Context, message?: string) {
+/**
+ * 管理者サイト(/admin/tool)でスタイル機能をOFFにされたサロンを、
+ * スタイル関連の全ルート・APIから締め出すミドルウェア。requireAuthの後に使う。
+ */
+export async function requireStyleEnabled(
+  c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
+  next: Next
+) {
+  const user = c.get('user')
+  if (user.style_enabled === 0) {
+    return redirectOrUnauthorized(c, 'スタイル自動投稿機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
+  }
+  await next()
+}
+
+/** requireStyleEnabledのブログ版。 */
+export async function requireBlogEnabled(
+  c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
+  next: Next
+) {
+  const user = c.get('user')
+  if (user.blog_enabled === 0) {
+    return redirectOrUnauthorized(c, 'ブログ自動投稿機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
+  }
+  await next()
+}
+
+function redirectOrUnauthorized(c: Context, message?: string, redirectTo = '/login') {
   const isApi = c.req.path.startsWith('/api/')
   if (isApi) {
-    return c.json({ error: message || 'ログインが必要です' }, 401)
+    return c.json({ error: message || 'ログインが必要です' }, isApi && redirectTo !== '/login' ? 403 : 401)
   }
-  return c.redirect('/login' + (message ? '?error=' + encodeURIComponent(message) : ''))
+  return c.redirect(redirectTo + (message ? '?error=' + encodeURIComponent(message) : ''))
 }

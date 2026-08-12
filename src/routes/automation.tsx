@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import {
   runStyleAutomationForUser,
@@ -268,7 +268,13 @@ automation.get('/style/test-run', requireAuth, async (c) => {
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="実行履歴">
+    <PageLayout
+      active="style-test-run"
+      salonName={user.salon_name}
+      title="実行履歴"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {retryTargets && retryTargets.length > 0 && (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
@@ -340,7 +346,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
 // ---------- 手動実行API（ログイン中ユーザー本人のみ） ----------
 
-automation.post('/api/automation/test-run', requireAuth, async (c) => {
+automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, async (c) => {
   const user = c.get('user')
   try {
     const summary = await runStyleAutomationForUser(c.env, user.id, 'manual-test')
@@ -358,7 +364,7 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
 
 // ---------- 個別スタイルの再実行API(docs/phase3-mvp-design.md 5-6) ----------
 
-automation.post('/api/style/:id/retry', requireAuth, async (c) => {
+automation.post('/api/style/:id/retry', requireAuth, requireStyleEnabled, async (c) => {
   const user = c.get('user')
   const styleId = Number(c.req.param('id'))
   try {
@@ -665,11 +671,12 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   // 固定時刻での一括投稿から変更)。外部Cronは数分間隔でこのエンドポイントを
   // 叩く想定で、呼ばれるたびに各ユーザーごとに「今が投稿すべきタイミングか」
   // をrunNextStyleForUser()内で判定し、タイミングであれば1件だけ処理する。
-  // 管理者サイトで契約OFFにされたサロン(users.is_active=0)はcronの対象から除外する。
+  // 管理者サイトで契約OFF(is_active=0)またはスタイル機能OFF(style_enabled=0)に
+  // されたサロンはcronの対象から除外する。
   const { results: schedules } = await c.env.DB.prepare(
     `SELECT s.user_id FROM style_post_schedules s
      JOIN users u ON u.id = s.user_id
-     WHERE s.enabled = 1 AND u.is_active = 1`
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.style_enabled = 1`
   ).all<{ user_id: number }>()
 
   const targets = schedules || []

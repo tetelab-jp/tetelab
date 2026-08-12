@@ -31,7 +31,26 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' }
   { title: '設定・確認', key: 'settings' }
 ]
 
-export function Sidebar({ active, salonName }: { active: NavKey; salonName: string | null }) {
+// 管理者サイト(/admin/tool)でスタイル/ブログ機能をOFFにされたサロンでは、
+// 該当機能のナビ項目自体を非表示にする(リンク先はrequireStyleEnabled/
+// requireBlogEnabledでどのみちブロックされるが、押せるリンクを残さないため)。
+function isNavItemVisible(item: { group: string }, styleEnabled: boolean, blogEnabled: boolean) {
+  if (item.group === 'style') return styleEnabled
+  if (item.group === 'blog') return blogEnabled
+  return true
+}
+
+export function Sidebar({
+  active,
+  salonName,
+  styleEnabled = true,
+  blogEnabled = true
+}: {
+  active: NavKey
+  salonName: string | null
+  styleEnabled?: boolean
+  blogEnabled?: boolean
+}) {
   const groups = NAV_GROUPS
   return (
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
@@ -39,27 +58,33 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
         <img src="/static/logo-combined.png" alt="SalonMotion" class="inline-block h-9 w-auto" />
       </div>
 
-      {groups.map((group) => (
-        <div class="mb-4">
-          {group.title && (
-            <p class="text-[11px] font-semibold text-gray-400 px-3 mb-1 mt-4">{group.title}</p>
-          )}
-          <nav class="space-y-1">
-            {NAV_ITEMS.filter((item) => item.group === group.key).map((item) => (
-              <a
-                href={item.href}
-                class={
-                  'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ' +
-                  (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
-                }
-              >
-                <i class={`fas ${item.icon} w-4`}></i>
-                <span>{item.label}</span>
-              </a>
-            ))}
-          </nav>
-        </div>
-      ))}
+      {groups.map((group) => {
+        const items = NAV_ITEMS.filter(
+          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled)
+        )
+        if (items.length === 0) return null
+        return (
+          <div class="mb-4">
+            {group.title && (
+              <p class="text-[11px] font-semibold text-gray-400 px-3 mb-1 mt-4">{group.title}</p>
+            )}
+            <nav class="space-y-1">
+              {items.map((item) => (
+                <a
+                  href={item.href}
+                  class={
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition ' +
+                    (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
+                  }
+                >
+                  <i class={`fas ${item.icon} w-4`}></i>
+                  <span>{item.label}</span>
+                </a>
+              ))}
+            </nav>
+          </div>
+        )
+      })}
 
       <form method="post" action="/logout" class="mt-4 px-1">
         <button type="submit" class="text-sm text-gray-400 hover:text-gray-600 flex items-center gap-2">
@@ -70,46 +95,70 @@ export function Sidebar({ active, salonName }: { active: NavKey; salonName: stri
   )
 }
 
-function MobileNavPanel({ active }: { active: NavKey }) {
+function MobileNavPanel({
+  active,
+  styleEnabled,
+  blogEnabled
+}: {
+  active: NavKey
+  styleEnabled: boolean
+  blogEnabled: boolean
+}) {
   return (
     <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div class="space-y-4">
-        {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => (
-          <div>
-            <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
-            <nav class="space-y-1">
-              {NAV_ITEMS.filter((item) => item.group === group.key).map((item) => (
-                <a
-                  href={item.href}
-                  class={
-                    'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition ' +
-                    (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
-                  }
-                >
-                  <i class={`fas ${item.icon} w-4`}></i>
-                  <span>{item.label}</span>
-                </a>
-              ))}
-              {group.key === 'settings' && (
-                <form method="post" action="/logout">
-                  <button
-                    type="submit"
-                    class="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition text-gray-600 hover:bg-gray-50"
+        {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
+          const items = NAV_ITEMS.filter(
+            (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled)
+          )
+          if (items.length === 0 && group.key !== 'settings') return null
+          return (
+            <div>
+              <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
+              <nav class="space-y-1">
+                {items.map((item) => (
+                  <a
+                    href={item.href}
+                    class={
+                      'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition ' +
+                      (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
+                    }
                   >
-                    <i class="fas fa-arrow-right-from-bracket w-4"></i>
-                    <span>ログアウト</span>
-                  </button>
-                </form>
-              )}
-            </nav>
-          </div>
-        ))}
+                    <i class={`fas ${item.icon} w-4`}></i>
+                    <span>{item.label}</span>
+                  </a>
+                ))}
+                {group.key === 'settings' && (
+                  <form method="post" action="/logout">
+                    <button
+                      type="submit"
+                      class="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition text-gray-600 hover:bg-gray-50"
+                    >
+                      <i class="fas fa-arrow-right-from-bracket w-4"></i>
+                      <span>ログアウト</span>
+                    </button>
+                  </form>
+                )}
+              </nav>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
-export function TopBar({ title, active }: { title: string; active: NavKey }) {
+export function TopBar({
+  title,
+  active,
+  styleEnabled = true,
+  blogEnabled = true
+}: {
+  title: string
+  active: NavKey
+  styleEnabled?: boolean
+  blogEnabled?: boolean
+}) {
   return (
     <header class="sticky top-0 z-20 border-b border-gray-100 bg-white">
       <div class="md:hidden grid grid-cols-[1fr_auto_1fr] items-center px-4 py-3">
@@ -121,7 +170,7 @@ export function TopBar({ title, active }: { title: string; active: NavKey }) {
           <summary class="list-none cursor-pointer w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
             <i class="fas fa-bars text-xl"></i>
           </summary>
-          <MobileNavPanel active={active} />
+          <MobileNavPanel active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
         </details>
       </div>
       <div class="hidden md:flex items-center gap-3 px-6 py-4">
@@ -155,18 +204,22 @@ export function PageLayout({
   active,
   salonName,
   title,
+  styleEnabled = true,
+  blogEnabled = true,
   children
 }: {
   active: NavKey
   salonName: string | null
   title: string
+  styleEnabled?: boolean
+  blogEnabled?: boolean
   children: any
 }) {
   return (
     <div class="flex">
-      <Sidebar active={active} salonName={salonName} />
+      <Sidebar active={active} salonName={salonName} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
       <div class="flex-1 min-w-0">
-        <TopBar title={title} active={active} />
+        <TopBar title={title} active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} />
         <MobileGroupNav active={active} />
         <main class="p-6 space-y-6">{children}</main>
       </div>

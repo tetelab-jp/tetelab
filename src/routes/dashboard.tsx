@@ -15,6 +15,7 @@ dashboard.use('*', requireAuth)
 
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
+  const blockedError = c.req.query('error')
   const cred = await c.env.DB.prepare(
     'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, salonboard_login_id_enc, last_error FROM salon_credentials WHERE user_id = ?'
   )
@@ -66,7 +67,19 @@ dashboard.get('/dashboard', async (c) => {
     .first<{ cnt: number }>()
 
   return c.render(
-    <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
+    <PageLayout
+      active="dashboard"
+      salonName={user.salon_name}
+      title="ダッシュボード"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
+      {blockedError && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          {blockedError}
+        </div>
+      )}
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
           <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
@@ -290,7 +303,13 @@ dashboard.get('/settings/salonboard', async (c) => {
   }
 
   return c.render(
-    <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
+    <PageLayout
+      active="settings"
+      salonName={user.salon_name}
+      title="サロンボード連携設定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
