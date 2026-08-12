@@ -32,10 +32,16 @@ const EXECUTION_TYPE_LABEL: Record<string, string> = {
   request_reflection: '反映申請'
 }
 
-const LOG_STATUS_DOT: Record<string, string> = {
-  success: 'bg-green-500',
-  blocked: 'bg-amber-500',
-  failure: 'bg-red-500'
+const LOG_RESULT_LABEL: Record<string, string> = {
+  success: '成功',
+  blocked: 'ブロック',
+  failure: '失敗'
+}
+
+const LOG_RESULT_COLOR: Record<string, string> = {
+  success: 'bg-green-50 text-green-600',
+  blocked: 'bg-amber-50 text-amber-600',
+  failure: 'bg-red-50 text-red-600'
 }
 
 const RUN_STATUS_LABEL: Record<string, string> = {
@@ -212,36 +218,49 @@ automation.get('/style/test-run', requireAuth, async (c) => {
         {!logs || logs.length === 0 ? (
           <p class="text-sm text-gray-400">まだログがありません</p>
         ) : (
-          <ul class="text-sm space-y-2">
+          <ul class="text-sm divide-y divide-gray-50">
             {logs.map((l) => (
-              <li class="flex items-start gap-2">
-                <span class={'mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ' + (LOG_STATUS_DOT[l.status] || 'bg-gray-400')}></span>
-                <div class="min-w-0">
-                  <p class={'text-gray-700' + (l.message.length > 150 ? ' line-clamp-3' : '')}>
+              <li class="py-2.5">
+                <div class="flex items-center justify-between gap-2 flex-wrap">
+                  <div class="flex items-center gap-2 min-w-0">
                     {l.execution_type && (
-                      <span class="text-xs font-semibold text-gray-400 mr-1">
+                      <span class="text-xs font-semibold text-gray-400 flex-shrink-0">
                         [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
                       </span>
                     )}
                     {l.style_id ? (
-                      <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-                        {l.style_title || `スタイル${l.style_id}`}
+                      <a
+                        href={`/style/${l.style_id}/edit`}
+                        class="font-medium text-gray-700 hover:text-pink-600 hover:underline truncate"
+                      >
+                        No.{l.style_id} {l.style_title || '(無題)'}
                       </a>
-                    ) : null}
-                    {l.style_id ? ' — ' : ''}
-                    {l.message}
-                  </p>
-                  {l.message.length > 150 && (
-                    <button
-                      type="button"
-                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-3'); this.textContent = p.classList.contains('line-clamp-3') ? '続きを見る' : '閉じる'"
-                    >
-                      続きを見る
-                    </button>
-                  )}
-                  <p class="text-xs text-gray-400">{formatJstDateTime(l.created_at)}</p>
+                    ) : (
+                      <span class="text-gray-400">-</span>
+                    )}
+                  </div>
+                  <span
+                    class={
+                      'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' +
+                      (LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500')
+                    }
+                  >
+                    {LOG_RESULT_LABEL[l.status] || l.status}
+                  </span>
                 </div>
+                <p class={'text-xs text-gray-400 mt-1' + (l.message.length > 150 ? ' line-clamp-3' : '')}>
+                  {l.message}
+                </p>
+                {l.message.length > 150 && (
+                  <button
+                    type="button"
+                    class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                    onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-3'); this.textContent = p.classList.contains('line-clamp-3') ? '続きを見る' : '閉じる'"
+                  >
+                    続きを見る
+                  </button>
+                )}
+                <p class="text-xs text-gray-300 mt-0.5">{formatJstDateTime(l.created_at)}</p>
               </li>
             ))}
           </ul>
