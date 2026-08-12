@@ -85,7 +85,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // ハッシュタグ欄: カンマ(,)以外の記号が入力された場合はエラー表示する。
+  // ハッシュタグ欄: 半角カンマ(,)以外の記号が入力された場合はエラー表示する。
   // 文字・数字・カンマ・空白のみを許可し、それ以外の記号(#!?など)を弾く。
   const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
   const hashtagsError = form ? form.querySelector('.hashtags-error') : null
@@ -170,7 +170,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isHashtagsValid()) {
         e.preventDefault()
         updateHashtagsError()
-        alert('ハッシュタグにカンマ(,)以外の記号が含まれています。')
+        alert('ハッシュタグに半角カンマ(,)以外の記号が含まれています。')
         return
       }
       if (!isRequiredFieldsFilled()) {
