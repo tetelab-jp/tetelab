@@ -262,14 +262,20 @@ function StyleListSection({
   totalCount,
   selectedCount,
   showCreateLink = true,
-  heading = '登録済みスタイル'
+  heading = '登録済みスタイル',
+  checkboxMode = 'auto-post'
 }: {
   styles: StyleListRow[]
   totalCount: number
   selectedCount: number
   showCreateLink?: boolean
   heading?: string
+  // 'auto-post': 自動投稿対象(auto_post_enabled_flag、DBへ即時保存)の選択。
+  // 'template-target': テンプレート一括適用の対象選択のみの、ページ内限定の一時的な
+  // チェック(DBには保存しない、常に未選択から始まる、登録スタイル側の状態に影響しない)。
+  checkboxMode?: 'auto-post' | 'template-target'
 }) {
+  const isTemplateMode = checkboxMode === 'template-target'
   return (
     <>
       <div class="flex items-center justify-between flex-wrap gap-2">
@@ -278,21 +284,21 @@ function StyleListSection({
         </p>
         <div class="flex items-center gap-3">
           <span class="text-sm text-gray-600">
-            投稿対象:{' '}
-            <span id="selected-count" class="font-bold text-pink-600">
-              {selectedCount}
+            {isTemplateMode ? '選択中' : '投稿対象'}:{' '}
+            <span id={isTemplateMode ? 'template-target-selected-count' : 'selected-count'} class="font-bold text-pink-600">
+              {isTemplateMode ? 0 : selectedCount}
             </span>{' '}
             / {totalCount} 件
           </span>
           <button
-            id="select-all-btn"
+            id={isTemplateMode ? 'template-target-select-all-btn' : 'select-all-btn'}
             type="button"
             class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
           >
             全選択
           </button>
           <button
-            id="deselect-all-btn"
+            id={isTemplateMode ? 'template-target-deselect-all-btn' : 'deselect-all-btn'}
             type="button"
             class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
           >
@@ -335,8 +341,11 @@ function StyleListSection({
                 />
                 <input
                   type="checkbox"
-                  class="style-checkbox w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0"
-                  checked={s.auto_post_enabled_flag === 1}
+                  class={
+                    (isTemplateMode ? 'template-target-checkbox' : 'style-checkbox') +
+                    ' w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0'
+                  }
+                  checked={!isTemplateMode && s.auto_post_enabled_flag === 1}
                   data-image-id={s.id}
                 />
                 <a href={`/style/${s.id}/edit`} class="flex-shrink-0">
@@ -413,7 +422,7 @@ function TemplateBulkApplySection({
         <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
       <p class="text-xs text-gray-400">
-        下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
+        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
       </p>
     </div>
   )
@@ -1502,6 +1511,7 @@ style.get('/style/template', async (c) => {
         selectedCount={selectedCount}
         showCreateLink={false}
         heading="テンプレート反映スタイル"
+        checkboxMode="template-target"
       />
 
       <script src="/static/style-library.js"></script>

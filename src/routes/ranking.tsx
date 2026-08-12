@@ -4,20 +4,19 @@ import { PageLayout } from '../components/layout'
 import { formatJstDateTime } from '../lib/date-format'
 import { measureRank } from '../lib/ranking-scraper'
 import {
-  SERVICE_AREAS,
   serviceAreaName,
   getMiddleAreas,
   getSmallAreas,
-  getSalonOptions,
-  getAreaCounts,
-  crawlAllAreas,
+  getAllMiddleAreas,
+  getPrimarySalonName,
   type AreaOption
 } from '../lib/ranking-areas'
 import type { Bindings, AppUser } from '../types'
 
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-const KEYWORD_SLOTS = 10
+const KEYWORD_SLOTS_DEFAULT = 10
+const KEYWORD_SLOTS_MAX = 20
 const MEASURE_MAX_PAGES = 50
 
 // --------------------------------------------
@@ -136,14 +135,38 @@ function jstYmd(jst: Date): string {
 
 function parseKeywords(body: Record<string, unknown>): string[] {
   const out: string[] = []
-  for (let i = 0; i < KEYWORD_SLOTS; i++) {
+  for (let i = 0; i < KEYWORD_SLOTS_MAX; i++) {
     const v = body[`keyword_${i}`]
     if (typeof v === 'string' && v.trim()) out.push(v.trim())
   }
-  return out
+  return out.slice(0, KEYWORD_SLOTS_MAX)
 }
 
-// 対策キーワード入力フォームのエリア/キーワード部品(設定画面・編集画面で共用)
+// サロン名は選択式ではなく、サロンボード連携の同期情報から自動入力する。
+// フォームには送信用フィールドを持たせず、サーバー側でgetPrimarySalonName()により
+// 改めて算出した値を使う(詳細はPOSTハンドラ参照)。data-has-salonはクライアント側の
+// 送信前チェック(ranking.js)用のマーカー。
+function SalonNameAutoField({ salonName }: { salonName: string | null }) {
+  return (
+    <div id="salon-auto-field" data-has-salon={salonName ? '1' : '0'}>
+      <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
+      {salonName ? (
+        <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+          {salonName}
+        </p>
+      ) : (
+        <p class="text-xs text-amber-600">
+          サロン名が未取得です。「サロンボード連携設定」でサロンボードと同期すると自動反映されます。
+        </p>
+      )}
+    </div>
+  )
+}
+
+// 対策キーワード入力フォームのエリア/キーワード部品(設定画面・編集画面で共用)。
+// 大エリアの手動選択は廃止し、中エリア(全国分をまとめて1つの選択肢として提示)を
+// 選ぶと、その中エリアが属するservice_area_cdを隠しフィールドへ自動セットする
+// (public/static/ranking.js側でoptionのdata-service属性から設定)。
 function AreaAndKeywordFields({
   serviceAreaCd,
   middleOptions,
@@ -152,45 +175,32 @@ function AreaAndKeywordFields({
   smallAreaCd,
   keywords
 }: {
-  serviceAreaCd?: string
-  middleOptions?: AreaOption[]
+  serviceAreaCd?: string | null
+  middleOptions?: (AreaOption & { serviceAreaCd: string })[]
   middleAreaCd?: string | null
   smallOptions?: AreaOption[]
   smallAreaCd?: string | null
   keywords?: string[]
 }) {
   const kw = keywords || []
+  const initialVisible = Math.min(KEYWORD_SLOTS_MAX, Math.max(KEYWORD_SLOTS_DEFAULT, kw.length))
   return (
     <>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <input type="hidden" id="service-area" name="service_area_cd" value={serviceAreaCd || ''} />
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">
-            大エリア <span class="text-pink-500">*</span>
+            中エリア <span class="text-pink-500">*</span>
           </label>
           <select
-            id="service-area"
-            name="service_area_cd"
+            id="middle-area"
+            name="middle_area_cd"
             required
             class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
           >
             <option value="">選択してください</option>
-            {SERVICE_AREAS.map((a) => (
-              <option value={a.cd} selected={serviceAreaCd === a.cd}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
-          <select
-            id="middle-area"
-            name="middle_area_cd"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください</option>
             {(middleOptions || []).map((o) => (
-              <option value={o.code} selected={middleAreaCd === o.code}>
+              <option value={o.code} data-service={o.serviceAreaCd} selected={middleAreaCd === o.code}>
                 {o.name}
               </option>
             ))}
@@ -215,19 +225,34 @@ function AreaAndKeywordFields({
       <input type="hidden" id="area-label" name="area_label" value="" />
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-2">キーワード</label>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {Array.from({ length: KEYWORD_SLOTS }).map((_, i) => (
+        <label class="block text-sm font-medium text-gray-700 mb-2">
+          キーワード（最大{KEYWORD_SLOTS_MAX}個）
+        </label>
+        <div id="keyword-slots" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {Array.from({ length: KEYWORD_SLOTS_MAX }).map((_, i) => (
             <input
               type="text"
               name={`keyword_${i}`}
               id={`keyword_${i}`}
               value={kw[i] || ''}
               placeholder={`キーワード${i + 1}`}
-              class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
+              class={
+                'keyword-slot border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200' +
+                (i >= initialVisible ? ' hidden' : '')
+              }
             />
           ))}
         </div>
+        <button
+          type="button"
+          id="add-keyword-btn"
+          class={
+            'mt-2 text-xs font-semibold text-pink-600 hover:underline' +
+            (initialVisible >= KEYWORD_SLOTS_MAX ? ' hidden' : '')
+          }
+        >
+          <i class="fas fa-plus mr-1"></i>キーワードを追加
+        </button>
       </div>
     </>
   )
@@ -522,7 +547,8 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
 // ============================================
 ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
+  const salonName = await getPrimarySalonName(c.env, user.id, user.salon_name)
+  const middleOptions = await getAllMiddleAreas(c.env)
 
   const { results: queries } = await c.env.DB.prepare(
     `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
@@ -551,28 +577,9 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
         <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
 
         <form id="ranking-form" method="post" action="/seo/templates" class="space-y-5">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              サロン名 <span class="text-pink-500">*</span>
-            </label>
-            <select
-              name="salon"
-              required
-              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              <option value="">選択してください</option>
-              {salons.map((s) => (
-                <option value={s}>{s}</option>
-              ))}
-            </select>
-            {salons.length === 0 && (
-              <p class="text-xs text-amber-600 mt-1">
-                サロン名が未登録です。「サロンボード連携設定」でサロン名を登録すると選択できます。
-              </p>
-            )}
-          </div>
+          <SalonNameAutoField salonName={salonName} />
 
-          <AreaAndKeywordFields />
+          <AreaAndKeywordFields middleOptions={middleOptions} />
 
           <input type="hidden" id="template-name" name="name" value="" />
 
@@ -672,7 +679,9 @@ ranking.post('/seo/templates', requireAuth, requireSeoEnabled, async (c) => {
   const body = (await c.req.parseBody()) as Record<string, unknown>
 
   const name = String(body.name || '').trim()
-  const salon = String(body.salon || '').trim()
+  // サロン名は画面上で編集不可(自動入力)のため、送信値を信用せずサーバー側で
+  // 改めて算出する(getPrimarySalonNameはSalonNameAutoFieldの表示値と同じロジック)。
+  const salon = await getPrimarySalonName(c.env, user.id, user.salon_name)
   const serviceAreaCd = String(body.service_area_cd || '').trim()
   const middleAreaCd = String(body.middle_area_cd || '').trim() || null
   const smallAreaCd = String(body.small_area_cd || '').trim() || null
@@ -733,16 +742,17 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
     .all<{ keyword: string }>()
   const keywords = kwRows.map((r) => r.keyword)
 
-  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
-  if (!salons.includes(q.salon_name)) salons.unshift(q.salon_name)
+  const salonName = await getPrimarySalonName(c.env, user.id, user.salon_name)
 
   const labelParts = (q.area_label || '').split('>').map((s) => s.trim())
-  let middleOptions: AreaOption[] = []
+  let middleOptions: (AreaOption & { serviceAreaCd: string })[] = []
   let smallOptions: AreaOption[] = []
   try {
-    middleOptions = await getMiddleAreas(c.env, q.service_area_cd)
+    middleOptions = await getAllMiddleAreas(c.env)
   } catch {
-    if (q.middle_area_cd) middleOptions = [{ code: q.middle_area_cd, name: labelParts[1] || q.middle_area_cd }]
+    if (q.middle_area_cd) {
+      middleOptions = [{ code: q.middle_area_cd, name: labelParts[1] || q.middle_area_cd, serviceAreaCd: q.service_area_cd }]
+    }
   }
   try {
     if (q.middle_area_cd) smallOptions = await getSmallAreas(c.env, q.service_area_cd, q.middle_area_cd)
@@ -775,22 +785,7 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
             />
           </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              サロン名 <span class="text-pink-500">*</span>
-            </label>
-            <select
-              name="salon"
-              required
-              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              {salons.map((s) => (
-                <option value={s} selected={s === q.salon_name}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
+          <SalonNameAutoField salonName={salonName} />
 
           <AreaAndKeywordFields
             serviceAreaCd={q.service_area_cd}
@@ -834,12 +829,17 @@ ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => 
   if (!owned) return c.redirect('/seo/keywords')
 
   const name = String(body.name || '').trim()
-  const salon = String(body.salon || '').trim()
+  // 作成時と同様、サロン名は画面上で編集不可(自動入力)のため送信値を信用しない。
+  const salon = await getPrimarySalonName(c.env, user.id, user.salon_name)
   const serviceAreaCd = String(body.service_area_cd || '').trim()
   const middleAreaCd = String(body.middle_area_cd || '').trim() || null
   const smallAreaCd = String(body.small_area_cd || '').trim() || null
   const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
   const keywords = parseKeywords(body)
+
+  if (!salon || !serviceAreaCd || keywords.length === 0) {
+    return c.redirect(`/seo/templates/${id}/edit?error=1`)
+  }
 
   await c.env.DB.prepare(
     `UPDATE ranking_queries
@@ -887,10 +887,7 @@ ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
 
   const saved = c.req.query('saved') === '1'
   const enabled = sched?.enabled === 1
-  const frequency = sched?.frequency || 'daily'
-  const runTime = sched?.run_time || '09:00'
   const lastRunAt = sched?.last_run_at || null
-  const areaCounts = await getAreaCounts(c.env)
 
   return c.render(
     <PageLayout
@@ -909,84 +906,39 @@ ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-4">定期測定設定</p>
         <p class="text-sm text-gray-500 mb-2">
-          「対策キーワード設定」に登録した条件を、設定した頻度で自動計測します。
+          「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
         </p>
         <p class="text-xs text-gray-400 mb-5">
           前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
         </p>
-        <form method="post" action="/seo/schedule" class="space-y-5">
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="enabled" value="1" checked={enabled} class="w-4 h-4" />
-            定期測定を有効にする
+        <form method="post" action="/seo/schedule">
+          <label class="flex items-center gap-3 cursor-pointer w-fit">
+            <span class="relative inline-flex items-center flex-shrink-0">
+              <input
+                type="checkbox"
+                name="enabled"
+                value="1"
+                checked={enabled}
+                onchange="this.form.submit()"
+                class="sr-only peer"
+              />
+              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </span>
+            <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
           </label>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">頻度</label>
-            <select name="frequency" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white">
-              <option value="daily" selected={frequency === 'daily'}>
-                毎日
-              </option>
-              <option value="weekly" selected={frequency === 'weekly'}>
-                毎週
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">実行時刻(JST)</label>
-            <input
-              type="time"
-              name="run_time"
-              value={runTime}
-              class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm"
-            />
-          </div>
-          <div class="flex justify-end">
-            <button
-              type="submit"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm"
-            >
-              保存
-            </button>
-          </div>
         </form>
       </div>
-
-      {/* エリアマスター(全国エリアの一括取得) */}
-      <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
-        <p class="font-semibold mb-2">エリアマスター</p>
-        <p class="text-sm text-gray-500 mb-3">
-          「対策キーワード設定」のエリア選択肢に使う全国エリア（中/小）を一括取得します。
-          数分かかります。取得後にページを再読み込みすると件数が更新されます。
-        </p>
-        <p class="text-sm text-gray-700 mb-3">
-          現在：中エリア <b>{areaCounts.middle}</b> 件 ／ 小エリア <b>{areaCounts.small}</b> 件
-        </p>
-        <button
-          type="button"
-          id="area-refresh-btn"
-          class="border border-gray-300 hover:border-pink-400 text-gray-700 font-semibold px-5 py-2 rounded-lg text-sm disabled:opacity-50"
-        >
-          <i class="fas fa-cloud-arrow-down mr-1"></i>全国エリアを一括取得
-        </button>
-        <p id="area-refresh-status" class="text-sm text-gray-500 mt-3"></p>
-      </div>
-
-      <script src="/static/ranking.js"></script>
     </PageLayout>
   )
-})
-
-// 全国エリアの一括クロール(バックグラウンド起動)
-ranking.post('/seo/areas/refresh', requireAuth, requireSeoEnabled, async (c) => {
-  void crawlAllAreas(c.env, { force: true }).catch((e) => console.error('crawlAllAreas failed:', e))
-  return c.json({ success: true })
 })
 
 ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
   const enabled = body.enabled ? 1 : 0
-  const frequency = String(body.frequency || 'daily')
-  const runTime = String(body.run_time || '09:00')
+  const frequency = 'weekly'
+  const runTime = '20:00'
 
   const existing = await c.env.DB.prepare(`SELECT id FROM ranking_schedules WHERE user_id = ?`)
     .bind(user.id)
@@ -1023,6 +975,11 @@ ranking.post('/api/cron/run-ranking', async (c) => {
     jstNow.getUTCMinutes()
   ).padStart(2, '0')}`
   const jstToday = jstYmd(jstNow)
+
+  // 定期測定は毎週月曜日固定(getUTCDay: 0=日,1=月,...)。
+  if (jstNow.getUTCDay() !== 1) {
+    return c.json({ time: jstHHMM, date: jstToday, enabled: 0, triggered: [], skipped: 'not-monday' })
+  }
 
   // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(seo_enabled=0)にされた
   // サロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。

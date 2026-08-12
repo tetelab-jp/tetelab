@@ -428,7 +428,7 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
       .bind(j.id)
       .run()
     await env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'failed',
+      `UPDATE styles SET salonboard_register_status = 'failed', reflection_request_status = 'failed',
          last_error = 'Fargateジョブがタイムアウトしました(10分以内に応答がありませんでした)'
        WHERE id = ?`
     )

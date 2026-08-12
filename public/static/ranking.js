@@ -1,11 +1,12 @@
 // フリーワード対策「順位測定」「対策キーワード設定」画面のクライアント処理
-// - 大/中/小エリアのカスケード(選択に応じて次の階層をAJAXで取得)
+// - 中エリア選択に応じて小エリアをAJAXで取得し、選択中エリアが属するservice_area_cdを
+//   隠しフィールドへ自動セット(中エリアのoptionが持つdata-service属性から判定)
 // - 「登録」ボタン(登録名モーダル → フォーム送信) … 対策キーワード設定
 // - 「測定」ボタン(選択したキーワード設定をバックグラウンド測定) … 順位測定
-// - 「全国エリアを一括取得」ボタン … 定期測定設定
+// - 「+キーワードを追加」ボタン(最大20件まで入力枠を表示) … 対策キーワード設定
 
 ;(function () {
-  var serviceSel = document.getElementById('service-area')
+  var serviceHidden = document.getElementById('service-area')
   var middleSel = document.getElementById('middle-area')
   var smallSel = document.getElementById('small-area')
   var areaLabelInput = document.getElementById('area-label')
@@ -17,7 +18,7 @@
   }
 
   function updateAreaLabel() {
-    var parts = [selectedText(serviceSel), selectedText(middleSel), selectedText(smallSel)].filter(function (t) {
+    var parts = [selectedText(middleSel), selectedText(smallSel)].filter(function (t) {
       return t
     })
     if (areaLabelInput) areaLabelInput.value = parts.join(' > ')
@@ -46,33 +47,18 @@
     return data.options || []
   }
 
-  if (serviceSel) {
-    serviceSel.addEventListener('change', async function () {
-      fillSelect(middleSel, [], '選択してください')
-      fillSelect(smallSel, [], '選択してください（任意）')
-      updateAreaLabel()
-      if (!serviceSel.value) return
-      middleSel.disabled = true
-      try {
-        var options = await loadAreas('middle', serviceSel.value, '')
-        fillSelect(middleSel, options, '選択してください')
-      } catch (e) {
-        fillSelect(middleSel, [], '取得に失敗しました')
-      } finally {
-        middleSel.disabled = false
-        updateAreaLabel()
-      }
-    })
-  }
-
   if (middleSel) {
     middleSel.addEventListener('change', async function () {
+      var selectedOpt = middleSel.options[middleSel.selectedIndex]
+      var service = (selectedOpt && selectedOpt.getAttribute('data-service')) || ''
+      if (serviceHidden) serviceHidden.value = service
+
       fillSelect(smallSel, [], '選択してください（任意）')
       updateAreaLabel()
-      if (!serviceSel.value || !middleSel.value) return
+      if (!service || !middleSel.value) return
       smallSel.disabled = true
       try {
-        var options = await loadAreas('small', serviceSel.value, middleSel.value)
+        var options = await loadAreas('small', service, middleSel.value)
         fillSelect(smallSel, options, options.length ? '選択してください（任意）' : '小エリアなし（任意）')
       } catch (e) {
         fillSelect(smallSel, [], '選択してください（任意）')
@@ -90,16 +76,21 @@
   // 現在の選択(編集画面の初期値など)からエリアラベルを初期化
   updateAreaLabel()
 
-  // 入力チェック(サロン・大エリア・キーワード1つ以上)
+  // 入力チェック(サロン名・中エリア・キーワード1つ以上)
   function collectAndValidate(statusEl) {
-    var salon = (document.querySelector('[name="salon"]') || {}).value || ''
-    var service = serviceSel ? serviceSel.value : ''
-    if (!salon || !service) {
-      if (statusEl) statusEl.textContent = 'サロン名と大エリアを選択してください'
+    var salonField = document.getElementById('salon-auto-field')
+    var hasSalon = !salonField || salonField.getAttribute('data-has-salon') === '1'
+    if (!hasSalon) {
+      if (statusEl) statusEl.textContent = 'サロン名が未取得です。サロンボードと同期してください'
+      return null
+    }
+    var middle = middleSel ? middleSel.value : ''
+    if (!middle) {
+      if (statusEl) statusEl.textContent = '中エリアを選択してください'
       return null
     }
     var keywords = []
-    for (var i = 0; i < 10; i++) {
+    for (var i = 0; i < 20; i++) {
       var el = document.getElementById('keyword_' + i)
       if (el && el.value.trim()) keywords.push(el.value.trim())
     }
@@ -108,7 +99,7 @@
       return null
     }
     updateAreaLabel()
-    return { salon: salon, service: service, keywords: keywords }
+    return { middle: middle, keywords: keywords }
   }
 
   var status = document.getElementById('measure-status')
@@ -197,25 +188,14 @@
     })
   }
 
-  // 「全国エリアを一括取得」ボタン(定期測定設定ページ)
-  var areaRefreshBtn = document.getElementById('area-refresh-btn')
-  var areaRefreshStatus = document.getElementById('area-refresh-status')
-  if (areaRefreshBtn) {
-    areaRefreshBtn.addEventListener('click', async function () {
-      areaRefreshBtn.disabled = true
-      areaRefreshStatus.textContent =
-        '取得を開始しました。数分かかります。完了後にこのページを再読み込みすると件数が更新されます...'
-      try {
-        var res = await fetch('/seo/areas/refresh', { method: 'POST' })
-        var data = await res.json()
-        if (!data.success) {
-          areaRefreshStatus.textContent = 'エラー: ' + (data.error || '失敗')
-          areaRefreshBtn.disabled = false
-        }
-      } catch (e) {
-        areaRefreshStatus.textContent = '通信エラーが発生しました'
-        areaRefreshBtn.disabled = false
-      }
+  // 「+キーワードを追加」ボタン(隠れているキーワード入力枠を表示、最大20個)
+  var addKeywordBtn = document.getElementById('add-keyword-btn')
+  if (addKeywordBtn) {
+    addKeywordBtn.addEventListener('click', function () {
+      document.querySelectorAll('.keyword-slot.hidden').forEach(function (el) {
+        el.classList.remove('hidden')
+      })
+      addKeywordBtn.classList.add('hidden')
     })
   }
 })()

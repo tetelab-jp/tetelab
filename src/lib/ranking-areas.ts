@@ -103,65 +103,38 @@ export async function getSalonOptions(env: Bindings, userId: number, fallbackNam
   return names
 }
 
+/**
+ * 対策キーワード設定画面のサロン名は選択式ではなく自動入力にするため、
+ * サロンボード同期の情報(直近1件)を優先し、無ければusers.salon_nameを使う。
+ */
+export async function getPrimarySalonName(
+  env: Bindings,
+  userId: number,
+  fallbackName: string | null
+): Promise<string | null> {
+  const options = await getSalonOptions(env, userId, fallbackName)
+  return options[0] || null
+}
+
 /** 表示用エリアラベル「関東 > 赤羽・板橋」 を組み立てる */
 export function buildAreaLabel(serviceAreaName: string, middleName?: string | null, smallName?: string | null): string {
   return [serviceAreaName, middleName || undefined, smallName || undefined].filter(Boolean).join(' > ')
 }
 
-// --------------------------------------------
-// 全国エリアの一括クロール(網羅)。
-// getMiddleAreas / getSmallAreas は「未取得なら取得して保存」するので、
-// 全大エリア→全中エリア→各中エリアの小エリア、と一巡すれば全国が揃う。
-// 実行は本番(HPBに到達できる環境)で。数分かかる。
-// --------------------------------------------
-
-let crawlingAll = false
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-/** ranking_areas の中/小エリア件数 */
-export async function getAreaCounts(env: Bindings): Promise<{ middle: number; small: number }> {
-  const m = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ranking_areas WHERE level = 2`).first<{ n: number }>()
-  const s = await env.DB.prepare(`SELECT COUNT(*) AS n FROM ranking_areas WHERE level = 3`).first<{ n: number }>()
-  return { middle: m?.n || 0, small: s?.n || 0 }
-}
-
-/** 一括クロールが実行中か */
-export function isCrawlingAll(): boolean {
-  return crawlingAll
-}
-
 /**
- * 全国の大/中/小エリアをまとめて取得・保存する。
- * force=true のときは既存の ranking_areas を消してから取り直す。
- * 二重起動は無視する(実行中は即return)。
+ * 対策キーワード設定画面では大エリアの手動選択を廃止したため、全国9地域分の中エリアを
+ * まとめて取得し、地域を跨いだ1つのフラットな選択肢として返す(各中エリアがどの
+ * serviceAreaCdに属するかは戻り値のserviceAreaCdで保持し、小エリアのカスケード取得や
+ * 登録時のservice_area_cd自動判定に使う)。未取得の地域はgetMiddleAreas側で都度
+ * クロールされる(この画面を最初に開いた誰かの操作で1度だけ収集される)。
  */
-export async function crawlAllAreas(
-  env: Bindings,
-  opts: { force?: boolean } = {}
-): Promise<{ middle: number; small: number }> {
-  if (crawlingAll) return getAreaCounts(env)
-  crawlingAll = true
-  try {
-    if (opts.force) {
-      await env.DB.prepare(`DELETE FROM ranking_areas`).run()
+export async function getAllMiddleAreas(env: Bindings): Promise<(AreaOption & { serviceAreaCd: string })[]> {
+  const all: (AreaOption & { serviceAreaCd: string })[] = []
+  for (const region of SERVICE_AREAS) {
+    const middles = await getMiddleAreas(env, region.cd)
+    for (const m of middles) {
+      all.push({ ...m, serviceAreaCd: region.cd })
     }
-    for (const region of SERVICE_AREAS) {
-      const middles = await getMiddleAreas(env, region.cd) // 未取得なら取得して保存
-      for (const m of middles) {
-        try {
-          await getSmallAreas(env, region.cd, m.code)
-        } catch (e) {
-          console.error(`crawlAllAreas small failed ${region.cd}/${m.code}:`, e)
-        }
-        await sleep(800) // サイトに優しい間隔
-      }
-      await sleep(800)
-    }
-    return getAreaCounts(env)
-  } finally {
-    crawlingAll = false
   }
+  return all
 }

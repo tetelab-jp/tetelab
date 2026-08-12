@@ -72,7 +72,9 @@ export function Sidebar({
   return (
     <aside class="w-64 bg-white border-r border-gray-100 min-h-screen p-5 hidden md:block">
       <div class="mb-8 text-center">
-        <img src="/static/logo-combined.png" alt="SalonMotion" class="inline-block h-9 w-auto" />
+        <a href="/dashboard">
+          <img src="/static/logo-combined.png" alt="SalonMotion" class="inline-block h-9 w-auto" />
+        </a>
       </div>
 
       {groups.map((group) => {

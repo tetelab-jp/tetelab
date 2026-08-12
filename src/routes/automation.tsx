@@ -285,10 +285,16 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
 
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
+  // No.は登録スタイル一覧(StyleListSection)と同じ並び順(sort_order)での通し番号。
+  // 対象を絞り込む前の全件に対して番号を振ってから絞り込む必要があるためサブクエリにしている。
   const { results: retryTargets } = await c.env.DB.prepare(
-    `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
-     FROM styles
-     WHERE user_id = ? AND (salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked'))
+    `SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, style_no
+     FROM (
+       SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, updated_at,
+         ROW_NUMBER() OVER (ORDER BY sort_order ASC, id DESC) AS style_no
+       FROM styles WHERE user_id = ?
+     ) ranked
+     WHERE salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked')
      ORDER BY updated_at DESC LIMIT 20`
   )
     .bind(user.id)
@@ -297,7 +303,8 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       title: string | null
       salonboard_register_status: string
       reflection_request_status: string
-      last_error: string | null
+      last_executed_at: string | null
+      style_no: number
     }>()
 
   return c.render(
@@ -321,13 +328,13 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                 <li class="flex items-center justify-between gap-3 py-2">
                   <div class="min-w-0">
                     <a href={`/style/${t.id}/edit`} class="font-medium text-gray-700 hover:text-pink-600 truncate block">
-                      {t.title || `スタイル${t.id}`}
+                      No.{t.style_no} {t.title || `スタイル${t.id}`}
                     </a>
                     <p class="text-xs text-gray-400 truncate">
                       <span class={'px-1.5 py-0.5 rounded font-semibold mr-1 ' + (isBlocked ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600')}>
                         {isBlocked ? 'ブロック' : '失敗'}
                       </span>
-                      {t.last_error || ''}
+                      {formatJstDate(t.last_executed_at)}
                     </p>
                   </div>
                   <button
@@ -627,9 +634,12 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     jobStatus = reflectStatus
   } else {
-    // login/navigate/draft_register/image_upload段階での失敗 = 登録自体が失敗
+    // login/navigate/draft_register/image_upload段階での失敗 = 登録自体が失敗。
+    // reflection_request_statusも合わせて'failed'にしないと、前回の反映成功時の
+    // 'success'が残ったままになり、登録スタイル一覧の表示が「公開」のままに
+    // なってしまう(実機で確認済みの不具合)。
     await c.env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+      `UPDATE styles SET salonboard_register_status = 'failed', reflection_request_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
       .bind(messageWithDiagnostics, styleId)
       .run()
