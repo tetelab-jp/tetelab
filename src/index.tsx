@@ -6,8 +6,10 @@ import dashboard from './routes/dashboard'
 import style from './routes/style'
 import blog from './routes/blog'
 import automation from './routes/automation'
+import admin from './routes/admin'
 import { SESSION_COOKIE_NAME } from './lib/auth-middleware'
 import { verifyJwt } from './lib/jwt'
+import { hashPassword } from './lib/crypto'
 import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
 import type { Bindings } from './types'
@@ -41,7 +43,9 @@ const bindings: Bindings = {
   ECS_TASK_DEFINITION: process.env.ECS_TASK_DEFINITION,
   ECS_CONTAINER_NAME: process.env.ECS_CONTAINER_NAME,
   ECS_SUBNET_IDS: process.env.ECS_SUBNET_IDS,
-  ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS
+  ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS,
+  ADMIN_JWT_SECRET: process.env.ADMIN_JWT_SECRET,
+  ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD
 }
 
 // 2026-08-11追記: マイグレーション専用のランナーが無いため、追加列のような
@@ -103,6 +107,65 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(templates.stylist_id)に失敗しました:', err)
   }
+  try {
+    // 管理者サイト(/admin)用: サロン側のusers/認証とは完全に分離した
+    // 管理者アカウントテーブル、および操作ログテーブル(詳細はmigrations-pg/0008_*.sql参照)。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS admin_users (
+         id SERIAL PRIMARY KEY,
+         email TEXT UNIQUE NOT NULL,
+         password_hash TEXT NOT NULL,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS admin_audit_logs (
+         id SERIAL PRIMARY KEY,
+         admin_id INTEGER NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
+         action TEXT NOT NULL,
+         target_type TEXT,
+         target_id INTEGER,
+         detail TEXT,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(admin_users/admin_audit_logs)に失敗しました:', err)
+  }
+  try {
+    // 管理者サイトの契約状況・機能オンオフ制御用の列(詳細はmigrations-pg/0008_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1`).run()
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS style_enabled INTEGER NOT NULL DEFAULT 1`).run()
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS blog_enabled INTEGER NOT NULL DEFAULT 1`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS consecutive_failure_count INTEGER NOT NULL DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
+  }
+  try {
+    // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
+    // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
+    // コード内に平文パスワードをハードコードしないための仕組み。
+    const existingAdminCount = await bindings.DB.prepare('SELECT COUNT(*) as cnt FROM admin_users').first<{
+      cnt: number
+    }>()
+    if ((existingAdminCount?.cnt ?? 0) === 0) {
+      if (!bindings.ADMIN_INITIAL_PASSWORD) {
+        console.error(
+          '初期管理者アカウントを作成できません: ADMIN_INITIAL_PASSWORDが未設定です。設定後に再起動してください。'
+        )
+      } else {
+        const passwordHash = await hashPassword(bindings.ADMIN_INITIAL_PASSWORD)
+        await bindings.DB.prepare('INSERT INTO admin_users (email, password_hash) VALUES (?, ?)')
+          .bind('inc.tete@gmail.com', passwordHash)
+          .run()
+      }
+    }
+  } catch (err) {
+    console.error('起動時シード(初期管理者アカウント)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {
@@ -137,5 +200,8 @@ app.route('/', automation)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
+// adminはサロン側('*')ミドルウェアを持つdashboard/style/blogとパスが
+// 重ならない(/admin配下のみ)ため、マウント順は問題にならない。
+app.route('/', admin)
 
 export default app

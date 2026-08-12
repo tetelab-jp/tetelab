@@ -89,6 +89,29 @@ jobs:
           ' task-definition.json > task-definition.fixed.json
           mv task-definition.fixed.json task-definition.json
 
+      # infra/ecs-app.tfのlifecycle.ignore_changesにより、Terraform側で
+      # secrets配列にADMIN_JWT_SECRET/ADMIN_INITIAL_PASSWORDを追加しても
+      # 既存タスク定義には反映されない(APP_BASE_URLと同じ問題)。
+      # 未登録の場合のみ追加する(既に存在する場合は上書きしない)。
+      - name: Add admin secrets if missing
+        run: |
+          ADMIN_JWT_SECRET_ARN=$(aws secretsmanager describe-secret --secret-id "salonboard-worker/admin-jwt-secret" --query ARN --output text)
+          ADMIN_INITIAL_PASSWORD_ARN=$(aws secretsmanager describe-secret --secret-id "salonboard-worker/admin-initial-password" --query ARN --output text)
+          jq --arg name "$ECS_CONTAINER_NAME" --arg jwtArn "$ADMIN_JWT_SECRET_ARN" --arg pwArn "$ADMIN_INITIAL_PASSWORD_ARN" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .secrets = (
+                  (.secrets // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  $existing
+                  + (if ($names | index("ADMIN_JWT_SECRET")) then [] else [{name: "ADMIN_JWT_SECRET", valueFrom: $jwtArn}] end)
+                  + (if ($names | index("ADMIN_INITIAL_PASSWORD")) then [] else [{name: "ADMIN_INITIAL_PASSWORD", valueFrom: $pwArn}] end)
+                )
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
       - name: Render new task definition with the built image
         id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
