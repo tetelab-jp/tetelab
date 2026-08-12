@@ -149,7 +149,6 @@ export async function runStyleAutomationForUser(
   const { results } = await env.DB.prepare(
     `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT ${DAILY_POST_LIMIT}`
   )
@@ -220,7 +219,6 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
     `SELECT COUNT(*) as cnt FROM (
        SELECT s.id FROM styles s
        WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-         AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
        ORDER BY s.sort_order ASC, s.id ASC
        LIMIT ${DAILY_POST_LIMIT}
      )`
@@ -273,7 +271,6 @@ export async function runNextStyleForUser(
   const row = await env.DB.prepare(
     `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND s.reflection_request_status IN ('not_started', 'failed', 'blocked')
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT 1`
   )
