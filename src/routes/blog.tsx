@@ -6,8 +6,16 @@ import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-blog.use('*', requireAuth)
-blog.use('*', requireBlogEnabled)
+// 2026-08-12追記(重大バグ修正): '*'で登録すると、index.tsxで全サブアプリが
+// 同じベースパス('/')にapp.route()マウントされている都合上、このサブアプリに
+// 存在しないパス(例: /admin/*)に対してもこのミドルウェアが先に反応し、
+// 未ログイン/機能OFF等の理由でリダイレクトを返してしまい、後続でマウントされる
+// 他のサブアプリ(admin等)へのリクエストを乗っ取ってしまう(実機で確認済みの
+// 不具合)。自分が実際に持つルートのパスパターンだけを明示することで防ぐ。
+blog.use('/blog/*', requireAuth)
+blog.use('/api/blog/*', requireAuth)
+blog.use('/blog/*', requireBlogEnabled)
+blog.use('/api/blog/*', requireBlogEnabled)
 
 type MasterRow = { id: number; name: string; is_active: number }
 

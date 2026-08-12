@@ -10,8 +10,16 @@ type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
 
 const style = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-style.use('*', requireAuth)
-style.use('*', requireStyleEnabled)
+// 2026-08-12追記(重大バグ修正): '*'で登録すると、index.tsxで全サブアプリが
+// 同じベースパス('/')にapp.route()マウントされている都合上、このサブアプリに
+// 存在しないパス(例: /admin/*)に対してもこのミドルウェアが先に反応し、
+// 未ログイン/機能OFF等の理由でリダイレクトを返してしまい、後続でマウントされる
+// 他のサブアプリ(blog、admin等)へのリクエストを乗っ取ってしまう(実機で確認
+// 済みの不具合)。自分が実際に持つルートのパスパターンだけを明示することで防ぐ。
+style.use('/style/*', requireAuth)
+style.use('/api/style/*', requireAuth)
+style.use('/style/*', requireStyleEnabled)
+style.use('/api/style/*', requireStyleEnabled)
 
 // ---------- 共通ヘルパー ----------
 
