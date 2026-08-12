@@ -186,23 +186,30 @@ app.get('/', async (c) => {
   return c.redirect('/login')
 })
 
-// automationはdashboard/style/blogより先にマウントする。
-// dashboard/style/blogは各々 .use('*', requireAuth) でその配下の全パスを
-// セッション認証必須にしているが、Honoは app.route('/', subApp) をこの順で
-// 試した際、subApp内で該当パスにルートが無くても '*' ミドルウェアが先に
-// 401/redirectを返してしまい、後続のsubAppへフォールスルーしない。
-// automation.tsxの /api/cron/run-style-posts は外部Cronサービスから
-// CRON_SECRET(Bearerトークン)のみで呼ばれる想定のため、セッションCookieが
-// 無くても到達できる必要がある。dashboard/style/blogより先にマウントすることで、
-// automation自身が明示的にrequireAuthを付けているルート(/style/test-run等)は
-// 従来通り認証必須のまま、cron用ルートだけは認証不要で到達できるようにする。
+// 2026-08-12追記(重大バグ修正の経緯): 全サブアプリが同じベースパス('/')に
+// app.route()マウントされているため、あるサブアプリがミドルウェアを'*'で
+// 登録すると、そのサブアプリに存在しないパスに対してもミドルウェアが先に
+// 反応し、後続にマウントされる別のサブアプリへのリクエストを乗っ取って
+// しまう(subApp内で該当パスにルートが無くても'*'ミドルウェアが先に
+// 401/redirectを返してしまい、後続のsubAppへフォールスルーしない)。
+// 実機で「/admin配下が、無関係なはずのdashboard/style/blog側の認証/機能
+// チェックに巻き込まれて意図せずリダイレクトされる」不具合として発現した。
+// 対策は二重にしている:
+//   (1) dashboard/style/blog側のミドルウェアを'*'ではなく自分の実際のパス
+//       パターン(/style/*, /blog/*, /settings/*等)だけに限定した(各routes
+//       ファイル側で対応済み、根本的な対策)。
+//   (2) 念のための保険として、adminをdashboard/style/blogより先にマウントする。
+//       admin配下(/admin/*)へのリクエストは、dashboard/style/blogの
+//       ミドルウェアが評価される前にadmin自身のルーターで先に処理される
+//       ため、(1)の対応に将来漏れがあっても admin 側が巻き込まれない。
+// automationも同じ理由でdashboard/style/blogより先にマウントする
+// (/api/cron/run-style-posts は外部Cronから CRON_SECRET のみで呼ばれる
+// ため、セッションCookie無しでも到達できる必要がある)。
 app.route('/', auth)
+app.route('/', admin)
 app.route('/', automation)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
-// adminはサロン側('*')ミドルウェアを持つdashboard/style/blogとパスが
-// 重ならない(/admin配下のみ)ため、マウント順は問題にならない。
-app.route('/', admin)
 
 export default app
