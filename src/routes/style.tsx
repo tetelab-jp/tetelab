@@ -243,44 +243,35 @@ type StyleListRow = {
   front_style_image_id: number | null
 }
 
-style.get('/style/library', async (c) => {
-  const user = c.get('user')
+async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<StyleListRow[]> {
+  const { results } = await c.env.DB.prepare(
+    `SELECT
+       s.id, s.title, s.category_value, s.length_value, s.auto_post_enabled_flag,
+       s.internal_save_status, s.salonboard_register_status, s.reflection_request_status,
+       st.name AS stylist_name,
+       si.id AS front_style_image_id
+     FROM styles s
+     LEFT JOIN stylists st ON st.id = s.stylist_id
+     LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
+     WHERE s.user_id = ?
+     ORDER BY s.sort_order ASC, s.id DESC`
+  )
+    .bind(user.id)
+    .all<StyleListRow>()
+  return results || []
+}
 
-  const [{ results }, templates] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT
-         s.id, s.title, s.category_value, s.length_value, s.auto_post_enabled_flag,
-         s.internal_save_status, s.salonboard_register_status, s.reflection_request_status,
-         st.name AS stylist_name,
-         si.id AS front_style_image_id
-       FROM styles s
-       LEFT JOIN stylists st ON st.id = s.stylist_id
-       LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
-       WHERE s.user_id = ?
-       ORDER BY s.sort_order ASC, s.id DESC`
-    )
-      .bind(user.id)
-      .all<StyleListRow>(),
-    loadActiveTemplates(c, user)
-  ])
-
-  const styles = results || []
-  const totalCount = styles.length
-  const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
-
-  return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル一覧">
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-2">
-          <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
-        </p>
-        <p class="text-sm text-gray-600 leading-relaxed">
-          店舗全体のスタイルをここで一元管理します。新規作成したスタイルに「自動投稿対象」のチェックを入れると、
-          自動投稿・手動投稿（<a href="/style/schedule" class="text-pink-600 hover:underline">設定はこちら</a>）で
-          設定した時刻に、サロンボードへの登録＋反映申請まで自動で実行されます。
-        </p>
-      </div>
-
+function StyleListSection({
+  styles,
+  totalCount,
+  selectedCount
+}: {
+  styles: StyleListRow[]
+  totalCount: number
+  selectedCount: number
+}) {
+  return (
+    <>
       <div class="flex items-center justify-between flex-wrap gap-2">
         <p class="font-semibold">
           <i class="fas fa-portrait mr-2 text-pink-500"></i>登録済みスタイル（{totalCount}件）
@@ -315,30 +306,6 @@ style.get('/style/library', async (c) => {
           </a>
         </div>
       </div>
-
-      {templates.length > 0 && styles.length > 0 && (
-        <div class="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
-          <span class="text-sm font-semibold text-gray-600 flex-shrink-0">
-            <i class="fas fa-sliders mr-1 text-pink-500"></i>テンプレート一括適用
-          </span>
-          <select id="bulk-apply-template-select" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm flex-1 min-w-[10rem]">
-            <option value="">テンプレートを選択</option>
-            {templates.map((t) => (
-              <option value={t.id}>{t.template_name}</option>
-            ))}
-          </select>
-          <button
-            id="bulk-apply-btn"
-            type="button"
-            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
-          >
-            チェック中のスタイルに適用
-          </button>
-          <p class="text-xs text-gray-400 w-full">
-            下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名・担当スタイリストを除く）を一括で反映します。
-          </p>
-        </div>
-      )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         {styles.length === 0 ? (
@@ -411,6 +378,61 @@ style.get('/style/library', async (c) => {
           </>
         )}
       </div>
+    </>
+  )
+}
+
+function TemplateBulkApplySection({
+  templates,
+  hasStyles
+}: {
+  templates: { id: number; template_name: string }[]
+  hasStyles: boolean
+}) {
+  if (templates.length === 0 || !hasStyles) return null
+  return (
+    <div class="bg-white rounded-xl border border-gray-100 p-4 flex items-center gap-3 flex-wrap">
+      <select id="bulk-apply-template-select" class="rounded-lg border border-gray-300 px-3 py-1.5 text-sm flex-1 min-w-[10rem]">
+        <option value="">テンプレートを選択</option>
+        {templates.map((t) => (
+          <option value={t.id}>{t.template_name}</option>
+        ))}
+      </select>
+      <button
+        id="bulk-apply-btn"
+        type="button"
+        class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+      >
+        チェック中のスタイルに適用
+      </button>
+      <p class="text-xs text-gray-400 w-full">
+        下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名・担当スタイリストを除く）を一括で反映します。
+      </p>
+    </div>
+  )
+}
+
+style.get('/style/library', async (c) => {
+  const user = c.get('user')
+
+  const styles = await loadStyleListForUser(c, user)
+  const totalCount = styles.length
+  const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
+
+  return c.render(
+    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル一覧">
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <p class="font-semibold mb-2">
+          <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
+        </p>
+        <p class="text-sm text-gray-600 leading-relaxed">
+          店舗全体のスタイルをここで一元管理します。新規作成したスタイルに「自動投稿対象」のチェックを入れると、
+          自動投稿・手動投稿（<a href="/style/schedule" class="text-pink-600 hover:underline">設定はこちら</a>）で
+          設定した時刻に、サロンボードへの登録＋反映申請まで自動で実行されます。
+        </p>
+      </div>
+
+      <StyleListSection styles={styles} totalCount={totalCount} selectedCount={selectedCount} />
 
       <script src="/static/style-library.js"></script>
     </PageLayout>,
@@ -463,7 +485,7 @@ style.get('/style/import', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
         <button
           id="fetch-list-btn"
           disabled={!cred}
@@ -471,12 +493,14 @@ style.get('/style/import', async (c) => {
         >
           <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードから一覧取得
         </button>
-        <p class="text-sm text-gray-500 leading-relaxed">
-          サロンボードに既に登録されているスタイルを一覧取得し、選択したものをSalonMotion側の
-          スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
-          自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
-        </p>
-        <p id="import-status" class="text-sm text-gray-500"></p>
+        <p id="import-status" class="text-sm text-gray-500 mt-3"></p>
+      </div>
+
+      <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
+        <i class="fas fa-circle-info mr-2"></i>
+        サロンボードに既に登録されているスタイルを一覧取得し、選択したものをSalonMotion側の
+        スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
+        自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
       </div>
 
       <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
@@ -1210,6 +1234,10 @@ style.get('/style/schedule', async (c) => {
         </div>
       )}
 
+      <p class="font-semibold text-gray-800">
+        <i class="fas fa-clock mr-2 text-pink-500"></i>自動投稿
+      </p>
+
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
         自動投稿を有効にすると、<b>{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}</b>の間に、自動投稿対象（入力完了済み）の
@@ -1232,12 +1260,9 @@ style.get('/style/schedule', async (c) => {
         </button>
       </form>
 
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-        <i class="fas fa-triangle-exclamation mr-2"></i>
-        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
-        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
-        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
-      </div>
+      <p class="font-semibold text-gray-800 pt-2">
+        <i class="fas fa-flask mr-2 text-pink-500"></i>手動投稿
+      </p>
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <button
@@ -1247,6 +1272,13 @@ style.get('/style/schedule', async (c) => {
           <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+      </div>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+        <i class="fas fa-triangle-exclamation mr-2"></i>
+        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
+        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
       </div>
 
       <script src="/static/test-run.js"></script>
@@ -1287,8 +1319,7 @@ style.post('/style/schedule', async (c) => {
 type TemplateListRow = {
   id: number
   template_name: string
-  category_value: string | null
-  length_value: string | null
+  title_template: string | null
   active_flag: number
 }
 
@@ -1296,16 +1327,21 @@ style.get('/style/template', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
 
-  const { results } = await c.env.DB.prepare(
-    'SELECT id, template_name, category_value, length_value, active_flag FROM templates WHERE user_id = ? ORDER BY id DESC'
-  )
-    .bind(user.id)
-    .all<TemplateListRow>()
+  const [{ results }, styles] = await Promise.all([
+    c.env.DB.prepare(
+      'SELECT id, template_name, title_template, active_flag FROM templates WHERE user_id = ? ORDER BY id DESC'
+    )
+      .bind(user.id)
+      .all<TemplateListRow>(),
+    loadStyleListForUser(c, user)
+  ])
 
   const templates = results || []
+  const totalCount = styles.length
+  const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="投稿テンプレート作成">
+    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート作成・適用">
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1313,48 +1349,63 @@ style.get('/style/template', async (c) => {
       )}
 
       <div class="flex items-center justify-between">
-        <p class="font-semibold">
-          <i class="fas fa-sliders mr-2 text-pink-500"></i>テンプレート一覧（{templates.length}件）
+        <p class="font-semibold text-gray-800">
+          <i class="fas fa-sliders mr-2 text-pink-500"></i>テンプレート作成（{templates.length}件）
         </p>
         <a href="/style/template/new" class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">
           <i class="fas fa-plus mr-1"></i>新規作成
         </a>
       </div>
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        {templates.length === 0 ? (
+      {templates.length === 0 ? (
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="text-sm text-gray-400 text-center py-6">まだテンプレートが登録されていません。</p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">テンプレート名</th>
-                <th class="py-2">カテゴリ</th>
-                <th class="py-2">長さ</th>
-                <th class="py-2">状態</th>
-                <th class="py-2"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {templates.map((t) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">
-                    <a href={`/style/template/${t.id}/edit`} class="text-pink-600 hover:underline">{t.template_name}</a>
-                  </td>
-                  <td class="py-2">{t.category_value === 'SG02' ? 'メンズ' : 'レディース'}</td>
-                  <td class="py-2">{t.length_value || '-'}</td>
-                  <td class="py-2">{t.active_flag === 1 ? '有効' : '停止中'}</td>
-                  <td class="py-2 text-right">
-                    <a href={`/style/template/${t.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">編集</a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {templates.map((t) => (
+            <div class="bg-white rounded-xl border border-gray-100 p-4 flex items-center justify-between gap-3">
+              <div class="min-w-0">
+                <a
+                  href={`/style/template/${t.id}/edit`}
+                  class="font-medium text-gray-700 hover:text-pink-600 truncate block"
+                >
+                  {t.template_name}
+                </a>
+                <p class="text-xs text-gray-400 truncate mt-0.5">
+                  スタイル名: {t.title_template || '未設定'}
+                </p>
+                <span
+                  class={
+                    'inline-block mt-1 text-xs px-2 py-0.5 rounded font-semibold ' +
+                    (t.active_flag === 1 ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400')
+                  }
+                >
+                  {t.active_flag === 1 ? '有効' : '停止中'}
+                </span>
+              </div>
+              <a
+                href={`/style/template/${t.id}/edit`}
+                class="flex-shrink-0 text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
+              >
+                編集
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p class="font-semibold text-gray-800 pt-2">
+        <i class="fas fa-wand-magic-sparkles mr-2 text-pink-500"></i>テンプレート一括適用
+      </p>
+
+      <TemplateBulkApplySection templates={templates} hasStyles={styles.length > 0} />
+
+      <StyleListSection styles={styles} totalCount={totalCount} selectedCount={selectedCount} />
+
+      <script src="/static/style-library.js"></script>
     </PageLayout>,
-    { title: '投稿テンプレート作成' }
+    { title: 'テンプレート作成・適用' }
   )
 })
 

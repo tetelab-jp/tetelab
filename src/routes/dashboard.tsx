@@ -16,7 +16,7 @@ dashboard.use('*', requireAuth)
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
   const cred = await c.env.DB.prepare(
-    'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at FROM salon_credentials WHERE user_id = ?'
+    'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, salonboard_login_id_enc, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
     .first<{
@@ -26,8 +26,23 @@ dashboard.get('/dashboard', async (c) => {
       connection_status: string
       last_stylist_synced_at: string | null
       last_coupon_synced_at: string | null
+      salonboard_login_id_enc: string
+      last_error: string | null
     }>()
   const isConnected = cred?.connection_status === 'success'
+
+  let maskedLoginId = ''
+  if (cred) {
+    const encKey = c.env.ENCRYPTION_KEY
+    if (encKey) {
+      try {
+        const loginId = await decryptSecret(cred.salonboard_login_id_enc, encKey)
+        maskedLoginId = maskLoginId(loginId)
+      } catch {
+        maskedLoginId = '(復号エラー: ENCRYPTION_KEYが変更された可能性があります)'
+      }
+    }
+  }
 
   const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
     .bind(user.id)
@@ -72,12 +87,18 @@ dashboard.get('/dashboard', async (c) => {
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">スタイリスト</p>
               <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
-              <p class="text-xs text-gray-400 mt-1 whitespace-nowrap">最終同期: {cred.last_stylist_synced_at ? formatJstDate(cred.last_stylist_synced_at) : '未実施'}</p>
+              <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
+                <span>最終同期:</span>
+                <span class="whitespace-nowrap">{cred.last_stylist_synced_at ? formatJstDate(cred.last_stylist_synced_at) : '未実施'}</span>
+              </p>
             </div>
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">クーポン</p>
               <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
-              <p class="text-xs text-gray-400 mt-1 whitespace-nowrap">最終同期: {cred.last_coupon_synced_at ? formatJstDate(cred.last_coupon_synced_at) : '未実施'}</p>
+              <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
+                <span>最終同期:</span>
+                <span class="whitespace-nowrap">{cred.last_coupon_synced_at ? formatJstDate(cred.last_coupon_synced_at) : '未実施'}</span>
+              </p>
             </div>
           </div>
           <p id="sync-stylists-coupons-status" class="text-sm"></p>
@@ -154,6 +175,77 @@ dashboard.get('/dashboard', async (c) => {
           <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
           <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
         </div>
+      </div>
+
+      <div class="max-w-2xl space-y-6">
+        <p class="font-semibold">
+          <i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定
+        </p>
+
+        {cred && (
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
+            <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
+            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
+            <div class="mt-3 pt-3 border-t border-gray-100">
+              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
+              {cred.connection_status === 'success' ? (
+                <p class="text-sm font-semibold text-green-600">
+                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
+                </p>
+              ) : cred.connection_status === 'failed' ? (
+                <div>
+                  <p class="text-sm font-semibold text-red-600">
+                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+                  </p>
+                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
+                </div>
+              ) : (
+                <p class="text-sm font-semibold text-gray-500">
+                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                </p>
+              )}
+              <p class="text-xs text-gray-400 mt-1">
+                上の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
+              </p>
+            </div>
+          </div>
+        )}
+
+        <form method="post" action="/settings/salonboard" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
+            <input
+              required
+              type="text"
+              name="salonboard_login_id"
+              placeholder="サロンボードのログインIDを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
+            <input
+              required
+              type="password"
+              name="salonboard_password"
+              placeholder="サロンボードのパスワードを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <label class="flex items-start gap-2 text-sm text-gray-600">
+            <input required type="checkbox" name="consent" class="mt-1" />
+            <span>
+              本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
+            </span>
+          </label>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            {cred ? '更新する' : '登録する'}
+          </button>
+        </form>
       </div>
 
       {cred && <script src="/static/salonboard-sync.js"></script>}
