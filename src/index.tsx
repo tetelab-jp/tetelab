@@ -75,6 +75,16 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(execution_logs.style_no)に失敗しました:', err)
   }
+  try {
+    // 同一プロキシセッションでのネットワーク障害の連続回数を記録し、
+    // 1回の障害では切り替えず2回連続で初めて切り替える判定に使う
+    // (詳細はmigrations-pg/0005_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS proxy_session_fail_count INTEGER DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_credentials.proxy_session_fail_count)に失敗しました:', err)
+  }
 })()
 
 app.use('*', async (c, next) => {
