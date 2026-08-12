@@ -13,6 +13,7 @@
     "@aws-sdk/client-sns": "^3.1108.0",
     "@aws-sdk/credential-provider-http": "^3.972.69",
     "@hono/node-server": "^1.13.7",
+    "cheerio": "^1.2.0",
     "hono": "^4.12.33",
     "pg": "^8.23.0",
     "puppeteer": "^25.5.0",

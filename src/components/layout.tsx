@@ -11,9 +11,17 @@ export type NavKey =
   | 'style-test-run'
   | 'blog-master'
   | 'blog-posts'
-  | 'seo-top'
+  | 'ranking-measure'
+  | 'ranking-keywords'
+  | 'ranking-schedule'
 
-const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group: 'main' | 'style' | 'blog' | 'seo' | 'settings' }[] = [
+const NAV_ITEMS: {
+  key: NavKey
+  href: string
+  icon: string
+  label: string
+  group: 'main' | 'style' | 'blog' | 'settings' | 'ranking'
+}[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
@@ -21,16 +29,18 @@ const NAV_ITEMS: { key: NavKey; href: string; icon: string; label: string; group
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-master', href: '/blog/master', icon: 'fa-sliders', label: 'ブログ基本設定', group: 'blog' },
   { key: 'blog-posts', href: '/blog/posts', icon: 'fa-pen-to-square', label: 'ブログ投稿作成', group: 'blog' },
-  { key: 'seo-top', href: '/seo', icon: 'fa-magnifying-glass-chart', label: 'SEO', group: 'seo' },
+  { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
+  { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
+  { key: 'ranking-schedule', href: '/seo/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
 ]
 
-const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'seo' | 'settings' }[] = [
+const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' | 'ranking' }[] = [
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
-  { title: 'SEO', key: 'seo' },
+  { title: 'フリーワード対策', key: 'ranking' },
   { title: '設定・確認', key: 'settings' }
 ]
 
@@ -41,7 +51,7 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'seo' | 'set
 function isNavItemVisible(item: { group: string }, styleEnabled: boolean, blogEnabled: boolean, seoEnabled: boolean) {
   if (item.group === 'style') return styleEnabled
   if (item.group === 'blog') return blogEnabled
-  if (item.group === 'seo') return seoEnabled
+  if (item.group === 'ranking') return seoEnabled
   return true
 }
 

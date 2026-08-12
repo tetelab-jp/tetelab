@@ -3,7 +3,7 @@ import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
-import { syncStylists, syncCoupons } from '../lib/salonboard-sync'
+import { syncStylists, syncCoupons, syncSalonInfo } from '../lib/salonboard-sync'
 import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
@@ -494,11 +494,15 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     await loginToSalonBoard(page, loginId, password, collectLog, c.env, user.id)
     console.log(`[sync-stylists-coupons] user=${user.id} ログイン成功、同期開始`)
 
+    // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
+    const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
     const couponCount = await syncCoupons(page, c.env, user.id, () => {})
-    console.log(`[sync-stylists-coupons] user=${user.id} 完了 stylists=${stylistCount} coupons=${couponCount}`)
+    console.log(
+      `[sync-stylists-coupons] user=${user.id} 完了 salon=${salonInfo?.storeId || '-'} stylists=${stylistCount} coupons=${couponCount}`
+    )
 
-    return c.json({ success: true, stylistCount, couponCount })
+    return c.json({ success: true, stylistCount, couponCount, salonName: salonInfo?.salonName || null })
   } catch (err: any) {
     console.error(`[sync-stylists-coupons] user=${user.id} エラー:`, err?.stack || err)
     const diagnostics = logLines.length > 0 ? ` / 診断ログ: ${logLines.join(' | ')}` : ''
