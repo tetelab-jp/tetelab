@@ -147,6 +147,11 @@ document.addEventListener('DOMContentLoaded', () => {
         checks.push(!!form.querySelector('.category-radio:checked'))
       }
 
+      if (lengthSelects.length > 0) {
+        const visibleLengthSelect = Array.from(lengthSelects).find((select) => !select.classList.contains('hidden'))
+        checks.push(!!visibleLengthSelect && visibleLengthSelect.value !== '')
+      }
+
       const menuDetailField = form.querySelector('textarea[name="menu_detail_text"]')
       if (menuDetailField) {
         checks.push(menuDetailField.value.trim() !== '')
