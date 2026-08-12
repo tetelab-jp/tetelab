@@ -802,7 +802,7 @@ function StyleForm({
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          カンマ(,)以外の記号は使用できません。
+          半角カンマ(,)以外の記号は使用できません。
         </p>
       </div>
 
@@ -1578,7 +1578,7 @@ function TemplateForm({
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          カンマ(,)以外の記号は使用できません。
+          半角カンマ(,)以外の記号は使用できません。
         </p>
       </div>
 
