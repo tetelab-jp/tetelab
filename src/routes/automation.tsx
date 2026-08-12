@@ -425,12 +425,29 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   // IDを記録し、次回以降のジョブで優先的に使い回す(出口IPを固定する)ために
   // 使う。ワーカー側はログイン成功時のみこの値を返す(salonboard-automation.ts
   // のnewAutomationPage/index.tsのrunJob参照)。
-  if (body.proxySessionId) {
+  //
+  // 2026-08-12追記(重大バグ修正): 従来はログイン成功のみを条件に保存していたが、
+  // ログインは通っても画像アップロード等の後続工程がプロキシ側の障害
+  // (net::ERR_EMPTY_RESPONSE等)で失敗するセッションが存在し、そのIDが
+  // 「実績あり」として記録され続けると、以降のジョブが毎回同じ壊れた
+  // セッション(出口IP)を使い回して同じ失敗を繰り返す状態になっていた。
+  // そのため保存はジョブ全体が成功した場合のみに限定し、後続工程が
+  // ネットワークレベルの障害(net::ERR_*)で失敗した場合は記録済みの
+  // セッションIDをクリアして、次回は新しい出口IPを発行させる。
+  const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
+  if (body.success && body.proxySessionId) {
     await c.env.DB.prepare(
       `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP
        WHERE user_id = ?`
     )
       .bind(body.proxySessionId, userId)
+      .run()
+      .catch(() => {})
+  } else if (networkErrorSignal) {
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`
+    )
+      .bind(userId)
       .run()
       .catch(() => {})
   }
