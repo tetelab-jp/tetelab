@@ -351,7 +351,8 @@ automation.get('/api/automation/jobs/:id', async (c) => {
       hairLengthValue: row.length_value || '',
       menuContentsCdList: JSON.parse(row.menu_values_json || '[]'),
       menuDetailText: row.menu_detail_text || '',
-      couponSelectValue: row.coupon_select_value || undefined
+      couponSelectValue: row.coupon_select_value || undefined,
+      hashtags: JSON.parse(row.hashtags_json || '[]')
     }
   })
 })
