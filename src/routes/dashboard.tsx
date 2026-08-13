@@ -53,9 +53,11 @@ dashboard.get('/dashboard', async (c) => {
     }
   }
 
-  const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
+  const blogArticlesRow = await c.env.DB.prepare(
+    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ?"
+  )
     .bind(user.id)
-    .first<{ cnt: number }>()
+    .first<{ total: number; approved: number }>()
 
   const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ?')
     .bind(user.id)
@@ -167,10 +169,10 @@ dashboard.get('/dashboard', async (c) => {
             <i class="fas fa-pen-to-square mr-2 text-pink-500"></i>ブログ投稿
           </p>
           <p class="text-sm text-gray-600 mb-3">
-            投稿者・カテゴリ・クーポンを事前登録し、AIで本文を生成して投稿予約できます。
+            カテゴリ別テンプレートで画像から記事をAI生成し、承認した記事を投稿できます。
           </p>
-          <a href="/blog/posts" class="text-sm font-semibold text-pink-600 hover:underline">
-            ブログ投稿を作成する <i class="fas fa-arrow-right ml-1"></i>
+          <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
+            投稿記事一覧を開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
       </div>
@@ -195,8 +197,10 @@ dashboard.get('/dashboard', async (c) => {
           </p>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
-          <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
+          <p class="text-xs text-gray-400 mb-1">ブログ記事（承認済み/総数）</p>
+          <p class="text-lg font-bold text-gray-800">
+            {blogArticlesRow?.approved ?? 0} / {blogArticlesRow?.total ?? 0} 件
+          </p>
         </div>
       </div>
 

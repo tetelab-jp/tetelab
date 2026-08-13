@@ -112,3 +112,34 @@ export async function processStyleImage(input: Buffer | Uint8Array | ArrayBuffer
 
   return { buffer, contentType: 'image/jpeg' }
 }
+
+// 2026-08-14追記(ブログ自動投稿機能): ブログ記事用画像は、スタイル写真と違い
+// SALON BOARDの縦4:3枠に収める必要が無いため、レターボックス処理は行わず、
+// 元のアスペクト比のまま最大サイズ以内に縮小するだけのシンプルな処理にする。
+// 圧縮(JPEG/300KB以下、品質を段階的に下げる)ロジックはprocessStyleImageと共通。
+const BLOG_MAX_DIMENSION = 1000
+
+/**
+ * ブログ記事画像を正規化する。
+ * - 最大1000px(縦横どちらか長い方)、拡大なし、トリミング・レターボックスなし
+ * - RGBのJPEGとして、300KB以下(圧縮時は250KB未満まで下げない)になるまで
+ *   品質を段階的に下げて書き出す(processStyleImageと同じルール)
+ */
+export async function processBlogArticleImage(input: Buffer | Uint8Array | ArrayBuffer): Promise<ProcessedImage> {
+  const inputBuffer = toBuffer(input)
+
+  const composed = sharp(inputBuffer, { failOn: 'none' })
+    .rotate()
+    .resize(BLOG_MAX_DIMENSION, BLOG_MAX_DIMENSION, { fit: 'inside', withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .toColorspace('srgb')
+
+  let quality = QUALITY_START
+  let buffer = await composed.clone().jpeg({ quality, mozjpeg: false, progressive: false }).toBuffer()
+  while (buffer.length > MAX_BYTES && quality > QUALITY_FLOOR) {
+    quality -= QUALITY_STEP
+    buffer = await composed.clone().jpeg({ quality, mozjpeg: false, progressive: false }).toBuffer()
+  }
+
+  return { buffer, contentType: 'image/jpeg' }
+}
