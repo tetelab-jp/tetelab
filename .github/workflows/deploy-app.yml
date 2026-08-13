@@ -89,6 +89,23 @@ jobs:
             --query taskDefinition \
             > task-definition.json
 
+      # infra/ecs-app.tfのlifecycle.ignore_changes=[container_definitions]により、
+      # Terraform側でsecrets配列からAWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEYを
+      # 削除しても既存タスク定義には反映されない(このワークフローが実質的な
+      # 管理者のため)。発行元のSecrets Managerシークレット自体は既に削除済みで、
+      # 参照が残ったままだと新しいタスクの起動時にResourceNotFoundExceptionで
+      # 失敗し続ける(実機で確認済みの不具合)。取り除いておく。
+      - name: Remove obsolete AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY secrets
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .secrets = ((.secrets // []) | map(select(.name != "AWS_ACCESS_KEY_ID" and .name != "AWS_SECRET_ACCESS_KEY")))
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
       - name: Fix APP_BASE_URL environment variable
         run: |
           jq --arg name "$ECS_CONTAINER_NAME" --arg url "$APP_BASE_URL" '
