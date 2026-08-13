@@ -643,8 +643,23 @@ async function uploadFrontImage(
       resolveDoUploadFailure = resolve
     })
 
+    // 2026-08-13追記4(診断強化): doUpload関連のイベントだけでなく、待機中に
+    // 他の通信(広告/分析ビーコン等)が普通に流れているかも記録する。これにより
+    // 「プロキシ経路全体が詰まっているのか」「doUploadだけが狙い撃ちで
+    // 止められているのか」を次回の障害発生時に切り分けられるようにする。
+    // 件数が多くなりがちなので、詳細は先頭数件のサンプルのみ保持する。
+    let otherRequestCount = 0
+    let otherResponseCount = 0
+    let otherFailureCount = 0
+    const otherResponseSamples: string[] = []
+    const otherFailureSamples: string[] = []
+
     const onRequestFinished = (req: any) => {
-      if (/doUpload/i.test(req.url())) pushEvent(`request送信: ${req.method()} ${req.url()}`)
+      if (/doUpload/i.test(req.url())) {
+        pushEvent(`request送信: ${req.method()} ${req.url()}`)
+      } else {
+        otherRequestCount++
+      }
     }
     const onResponse = async (res: any) => {
       if (/doUpload/i.test(res.url())) {
@@ -653,6 +668,9 @@ async function uploadFrontImage(
           bodySnippet = (await res.text()).slice(0, 300)
         } catch {}
         pushEvent(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
+      } else {
+        otherResponseCount++
+        if (otherResponseSamples.length < 3) otherResponseSamples.push(`status=${res.status()} ${res.url()}`)
       }
     }
     const onRequestFailed = (req: any) => {
@@ -660,6 +678,10 @@ async function uploadFrontImage(
         const reason = req.failure?.()?.errorText ?? '不明'
         pushEvent(`request失敗: ${req.url()} -> ${reason}`)
         resolveDoUploadFailure?.(reason)
+      } else {
+        otherFailureCount++
+        const reason = req.failure?.()?.errorText ?? '不明'
+        if (otherFailureSamples.length < 3) otherFailureSamples.push(`${req.url()} -> ${reason}`)
       }
     }
     page.on('request', onRequestFinished)
@@ -828,9 +850,13 @@ async function uploadFrontImage(
           ? uploadEvents.join(' / ')
           : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
       const navFlag = navigationDuringUpload ? '[診断]アップロード中にページ遷移を検知=あり ' : '[診断]アップロード中にページ遷移を検知=なし '
+      const otherTrafficFlag =
+        `[診断:他の通信] 送信=${otherRequestCount} 応答=${otherResponseCount} 失敗=${otherFailureCount}` +
+        (otherResponseSamples.length > 0 ? ` 応答例=[${otherResponseSamples.join(', ')}]` : '') +
+        (otherFailureSamples.length > 0 ? ` 失敗例=[${otherFailureSamples.join(', ')}]` : '')
       throw new Error(
         '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-          `45秒待っても検知できませんでした ${navFlag}[診断] ${diag}`
+          `45秒待っても検知できませんでした ${navFlag}${otherTrafficFlag} [診断] ${diag}`
       )
     } finally {
       page.off('request', onRequestFinished)

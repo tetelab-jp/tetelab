@@ -224,8 +224,11 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
     await closeAttempt(attempt)
     // 短時間に複数の別IPから同じアカウントへ連続ログインすること自体が
     // SALON BOARD/Akamai側に不審な挙動として警戒される可能性を考慮し、
-    // 切り替え前に少し間隔を空ける。
-    await sleep(4000)
+    // 切り替え前に間隔を空ける。2026-08-13追記: 4秒では短すぎ、
+    // 「数十秒おきに別IPから連続ログイン」という機械的なパターンに
+    // 見えてしまう懸念があるため20秒に延長した(5回試行してもECSタスクの
+    // 10分タイムアウトには十分収まる)。
+    await sleep(20000)
     attempt = await attemptLogin(payload, log, candidates[i])
     if (candidates[i]) loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
 
