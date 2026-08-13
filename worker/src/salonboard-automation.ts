@@ -237,6 +237,23 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
 }
 
 /**
+ * 2026-08-13追記(診断用): 「セッションIDを変えても実際の出口IPは変わって
+ * いないのでは」という疑問に答えるため、サロンボードへアクセスする前に
+ * 外部の「自分のIPを調べる」サービス(ipify.org、軽量・数十バイト)へ一度
+ * アクセスし、実際に観測された出口IPをログに残す。診断専用で、失敗しても
+ * 本処理には影響させない。
+ */
+export async function checkExitIp(page: Page, log: AutomationLogger): Promise<void> {
+  try {
+    await page.goto('https://api.ipify.org/?format=json', { waitUntil: 'domcontentloaded', timeout: 15000 })
+    const text = await page.evaluate(() => document.body.innerText)
+    log(`[診断:出口IP] ${text.trim()}`)
+  } catch (err: any) {
+    log(`[診断:出口IP] 取得失敗(診断機能のみに影響): ${String(err?.message || err)}`)
+  }
+}
+
+/**
  * サロンボードにログインする。
  * フォームの見た目のactionはおとりで、実際は以下の<a>タグのonclickに紐づく
  * JS関数 dologin(event) 経由で /CNC/login/doLogin/ にPOSTされる:

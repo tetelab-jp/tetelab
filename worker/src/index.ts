@@ -18,6 +18,7 @@ import {
   submitReflectApplication,
   launchBrowser,
   closeAnonymizedProxy,
+  checkExitIp,
   ReflectionBlockedError,
   type StylePostInput,
   type LaunchedBrowser
@@ -140,6 +141,7 @@ async function attemptLogin(
   try {
     const page = await newAutomationPage(launched.browser, log)
     try {
+      await checkExitIp(page, log)
       await loginToSalonBoard(page, payload.loginId, payload.password, log)
       // 2026-08-13追記: ログイン直後のURL(トップページ)を控えておく。
       // 画像アップロード失敗時、再ログインではなくこのURLへ戻って同じ
