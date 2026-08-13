@@ -91,7 +91,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm(styleIds.length + '件のスタイルを取り込みます。よろしいですか？')) return
 
       executeBtn.disabled = true
-      statusEl.textContent = '取り込み中...（数十秒〜数分かかる場合があります）'
+      statusEl.textContent = '取り込み中です。このままお待ちください\n（数十秒〜数分かかる場合があります）'
       try {
         const res = await fetch('/api/style/import/execute', {
           method: 'POST',

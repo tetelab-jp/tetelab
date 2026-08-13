@@ -291,10 +291,13 @@ type CellSize = 'sm' | 'lg'
 function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Cell; size?: CellSize }) {
   const baseTextCls = size === 'lg' ? 'text-sm' : 'text-xs'
   const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  // 2026-08-13変更: 背景付きバッジ(ピンクグラデーション+白文字)は数字が
+  // 見づらいという指摘があったため、背景無し・ピンク文字のみのシンプルな
+  // 表示に変更した。
   const badgeCls =
     size === 'lg'
-      ? 'inline-flex items-center justify-center min-w-[2.75rem] px-3 py-1.5 rounded-lg bg-gradient-to-b from-pink-500 to-pink-600 text-white font-bold text-base shadow-sm'
-      : 'inline-flex items-center justify-center min-w-[2.25rem] px-2 py-1 rounded-lg bg-gradient-to-b from-pink-500 to-pink-600 text-white font-bold text-sm shadow-sm'
+      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-base'
+      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-sm'
 
   if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
   if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
