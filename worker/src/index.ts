@@ -119,7 +119,7 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
 }
 
-type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any }
+type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any; topPageUrl: string | null }
 
 /**
  * 2026-08-13追記: proxy-chain方式では、セッションID(出口IP)ごとに専用の
@@ -137,13 +137,16 @@ async function attemptLogin(
     const page = await newAutomationPage(launched.browser, log)
     try {
       await loginToSalonBoard(page, payload.loginId, payload.password, log)
-      return { ...launched, page, error: null }
+      // 2026-08-13追記: ログイン直後のURL(トップページ)を控えておく。
+      // 画像アップロード失敗時、再ログインではなくこのURLへ戻って同じ
+      // セッションのままやり直すために使う(runJob参照)。
+      return { ...launched, page, error: null, topPageUrl: page.url() }
     } catch (err: any) {
-      return { ...launched, page, error: err }
+      return { ...launched, page, error: err, topPageUrl: null }
     }
   } catch (err: any) {
     // newAutomationPage自体が失敗した場合(まれ)
-    return { ...launched, page: null, error: err }
+    return { ...launched, page: null, error: err, topPageUrl: null }
   }
 }
 
@@ -159,14 +162,14 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
   // 順に試す。候補が無い場合(例: 同時実行回避時)は従来通りpreferredなしで
   // attemptLoginに任せる。
   //
-  // 2026-08-13追記: 画像アップロードの失敗(net::ERR_ABORTED)は特定の候補
-  // だけの問題ではなく、その時々でどの候補も一定確率で約35秒ハングした後に
-  // 失敗する、確率的な事象であることが実機ログ(発生時刻の記録)で判明した。
-  // 従来は最大2件までしか候補を試していなかったが、失敗1回あたりのコストが
-  // (無限にハングするのではなく)約35〜45秒で頭打ちになると分かった以上、
-  // ジョブ全体のタイムアウト予算(10分、style-post-runner.ts参照)に対して
-  // 十分な余裕があるため、アプリ側が用意した候補(最大5件、プール全件)を
-  // 全て試すようにし、成功率を上げる。
+  // 2026-08-13追記(方針転換): 画像アップロードの失敗(net::ERR_ABORTED)は
+  // 別のプロキシセッション(出口IP)に切り替えても同じ症状で再発することが
+  // 実機ログで確認され、特定の候補固有の問題ではないと分かった。にも
+  // 関わらず失敗のたびに別セッションで再ログインする挙動は、ログインを
+  // 不必要に繰り返すだけで(体感的にも望ましくなく)効果が薄いと判断し、
+  // 廃止する。以降、候補セッションの切り替えは「ログイン自体が失敗した
+  // 場合」(ID/パスワード相性・CAPTCHA等、セッションを変える意味がある
+  // ケース)のみに限定する。
   const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
   const loginAttempts: LoginAttempt[] = []
 
@@ -176,46 +179,21 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
     imageBuffer: base64ToArrayBuffer(imageBase64)
   }
 
-  // 2026-08-13追記: 画像アップロード(net::ERR_ABORTED等)が特定のプロキシ
-  // セッション(出口IP)に固有の一時的な問題で失敗するケースが実機で確認された
-  // (同条件のはずの直後のジョブが失敗する/成功するがランダムに入れ替わる)。
-  // draftRegisterStyle()はdoRegisterクリックまでSALON BOARD側に何も保存
-  // しない(新規スタイル作成フォームを開くだけの純粋なクライアント側操作)ため、
-  // ここまでの失敗であれば別セッションで最初からやり直しても二重登録の
-  // リスクが無い。そのため、ログイン失敗だけでなく下書き登録(画像アップロード
-  // 含む)の失敗も、候補セッションが残っていれば同じ予算(最大2件)の中で
-  // 別セッションに切り替えて再試行する。doRegister成功後(=実際に保存された
-  // 後)はセッション切り替えでの再試行は行わない(二重登録を避けるため)。
   let attempt = await attemptLogin(payload, log, candidates[0])
   if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
 
-  let draftError: any = attempt.error ? null : new Error('未試行')
-  const tryDraft = async (): Promise<void> => {
-    if (attempt.error) return
-    try {
-      await draftRegisterStyle(attempt.page!, styleInput, log)
-      draftError = null
-    } catch (err: any) {
-      draftError = err
-    }
-  }
-  if (!attempt.error) await tryDraft()
-
-  for (let i = 1; i < candidates.length && (attempt.error || draftError); i++) {
+  for (let i = 1; i < candidates.length && attempt.error; i++) {
     log(
-      `[プロキシ] セッションID(${candidates[i - 1]})での` +
-        `${attempt.error ? 'ログイン' : 'スタイル下書き登録(画像アップロード含む)'}に失敗したため、` +
-        `次の候補セッションID(${candidates[i]})で最初からやり直します...`
+      `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
+        `次の候補セッションID(${candidates[i]})で再試行します...`
     )
     await closeAttempt(attempt)
     attempt = await attemptLogin(payload, log, candidates[i])
     loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
-    draftError = attempt.error ? null : new Error('未試行')
-    if (!attempt.error) await tryDraft()
   }
 
   try {
-    const { page, proxySessionId, error: loginError } = attempt
+    const { page, proxySessionId, error: loginError, topPageUrl } = attempt
 
     if (loginError) {
       return {
@@ -225,6 +203,36 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
         blocked: false,
         proxySessionId: null,
         loginAttempts
+      }
+    }
+
+    // 2026-08-13追記: ログイン成功後は同じブラウザ・同じセッションのまま
+    // 完結させる。下書き登録(画像アップロード含む)が失敗しても、再ログイン
+    // やセッション切り替えは行わず、ログイン後のトップページへ戻って
+    // 同じセッションのまま最初からやり直す。draftRegisterStyle()は
+    // doRegisterクリックまでSALON BOARD側に何も保存しない(新規スタイル
+    // 作成フォームを開くだけのクライアント側操作)ため、この範囲での
+    // やり直しに二重登録のリスクは無い。
+    const MAX_DRAFT_ATTEMPTS = 3
+    let draftError: any = null
+    for (let draftAttempt = 1; draftAttempt <= MAX_DRAFT_ATTEMPTS; draftAttempt++) {
+      try {
+        await draftRegisterStyle(page!, styleInput, log)
+        draftError = null
+        break
+      } catch (err: any) {
+        draftError = err
+        if (draftAttempt < MAX_DRAFT_ATTEMPTS) {
+          log(
+            `スタイル下書き登録(画像アップロード含む)に失敗したため(試行${draftAttempt}/${MAX_DRAFT_ATTEMPTS})、` +
+              `ログインのやり直しはせず、ログイン後のトップページに戻って再試行します...`
+          )
+          if (topPageUrl) {
+            await page!.goto(topPageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((e) => {
+              log(`トップページへの遷移に失敗しました(そのまま再試行します): ${String(e?.message || e)}`)
+            })
+          }
+        }
       }
     }
 
