@@ -807,6 +807,56 @@ async function uploadFrontImage(
       uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
     }
 
+    // 2026-08-14追記(診断強化): これまでの診断はすべてPuppeteer/CDPの
+    // Network domain経由(page.on('request')等・CDP Network.loadingFailed)
+    // だった。実機ログで「(doUploadへのリクエストが観測されませんでした)」
+    // (どのイベントも一切発火しない)ケースが多数を占めることが分かり、これは
+    // 「ネットワーク層で何かが起きた」のではなく「ボタンのクリックハンドラが
+    // そもそもdoUploadへの送信を試みていない」可能性を強く示唆する。
+    // Network domain(ブラウザ側の下層)ではなく、ページ自身のJS実行コンテキスト
+    // (window.fetch/XMLHttpRequest)を直接フックすることで、Service Worker
+    // 経由や特殊な送信経路であっても、SALON BOARD側のJSが実際にdoUpload
+    // 送信を試みたかどうかをより確実に検知できるようにする。あわせて、
+    // 送信ボタンへの実クリックがそのボタン自身のイベントハンドラまで
+    // 届いているか(信頼済みイベントとして受信されているか)も記録する。
+    try {
+      await page.evaluate(() => {
+        const w = window as any
+        w.__doUploadDebug = { fetchCalls: [], xhrCalls: [], buttonClickSeen: null }
+        const origFetch = w.fetch?.bind(w)
+        if (origFetch) {
+          w.fetch = (...args: any[]) => {
+            const input = args[0]
+            const url = typeof input === 'string' ? input : input?.url
+            if (url && /doUpload/i.test(url)) {
+              w.__doUploadDebug.fetchCalls.push({ url, at: Date.now() })
+            }
+            return origFetch(...args)
+          }
+        }
+        const OrigXHR = w.XMLHttpRequest
+        if (OrigXHR) {
+          const origOpen = OrigXHR.prototype.open
+          OrigXHR.prototype.open = function (method: string, url: string, ...rest: any[]) {
+            if (url && /doUpload/i.test(String(url))) {
+              w.__doUploadDebug.xhrCalls.push({ method, url: String(url), at: Date.now() })
+            }
+            return origOpen.call(this, method, url, ...rest)
+          }
+        }
+        const btn = document.querySelector('input.jscImageUploaderModalSubmitButton')
+        btn?.addEventListener(
+          'click',
+          (e: Event) => {
+            w.__doUploadDebug.buttonClickSeen = { isTrusted: (e as MouseEvent).isTrusted, at: Date.now() }
+          },
+          { capture: true }
+        )
+      })
+    } catch (e: any) {
+      uploadEvents.push(`page内フック設置失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+    }
+
     try {
       // 2026-08-11修正(重大バグ): isActive検知直後はモーダル内のDOM遷移が
       // まだ収まっていない可能性があるため、少し待ってからクリックし、
@@ -905,9 +955,22 @@ async function uploadFrontImage(
         `[診断:他の通信] 送信=${otherRequestCount} 応答=${otherResponseCount} 失敗=${otherFailureCount}` +
         (otherResponseSamples.length > 0 ? ` 応答例=[${otherResponseSamples.join(', ')}]` : '') +
         (otherFailureSamples.length > 0 ? ` 失敗例=[${otherFailureSamples.join(', ')}]` : '')
+      // 2026-08-14追記(診断強化): window.fetch/XMLHttpRequestフックとボタンの
+      // 実クリック受信状況を読み出す。ここで「送信を試みた形跡が全く無い」
+      // (fetchCalls/xhrCallsが空かつbuttonClickSeenも無い)場合、doUpload失敗は
+      // ネットワーク層ではなくSALON BOARD側JSのクリックハンドラそのものが
+      // 発火していない(=Puppeteerのクリックが意図した要素に届いていない、
+      // または届いても内部処理が始まっていない)ことを強く示す証拠になる。
+      let pageHookFlag = '[診断:page内フック] 取得失敗'
+      try {
+        const hookState = await page.evaluate(() => (window as any).__doUploadDebug ?? null)
+        pageHookFlag = `[診断:page内フック] ${JSON.stringify(hookState)}`
+      } catch (hookErr: any) {
+        pageHookFlag = `[診断:page内フック] 取得失敗: ${String(hookErr?.message || hookErr)}`
+      }
       throw new Error(
         '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-          `45秒待っても検知できませんでした ${navFlag}${otherTrafficFlag} [診断] ${diag}`
+          `45秒待っても検知できませんでした ${navFlag}${otherTrafficFlag} ${pageHookFlag} [診断] ${diag}`
       )
     } finally {
       page.off('request', onRequestFinished)
