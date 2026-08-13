@@ -80,6 +80,16 @@ data "aws_iam_policy_document" "app_task" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn]
   }
+  # 2026-08-13追記(監査指摘の是正に伴う追加): 管理者サイト(/admin/status)の
+  # 連続失敗検知アラート送信(src/lib/sns-alert.ts)が、廃止したcloudflare_caller
+  # ユーザーの静的キーではなくこのタスクロールのアンビエント認証情報を使う
+  # よう切り替わったため、同ロールにsns:Publish権限を追加する(これが無いと
+  # アラート送信がAccessDeniedで静かに失敗し続ける)。
+  statement {
+    sid       = "PublishAlerts"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "app_task" {
@@ -120,8 +130,6 @@ resource "aws_ecs_task_definition" "app" {
         { name = "JWT_SECRET", valueFrom = aws_secretsmanager_secret.jwt_secret.arn },
         { name = "ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
         { name = "CRON_SECRET", valueFrom = aws_secretsmanager_secret.cron_secret.arn },
-        { name = "AWS_ACCESS_KEY_ID", valueFrom = aws_secretsmanager_secret.aws_access_key_id.arn },
-        { name = "AWS_SECRET_ACCESS_KEY", valueFrom = aws_secretsmanager_secret.aws_secret_access_key.arn },
         { name = "ADMIN_JWT_SECRET", valueFrom = aws_secretsmanager_secret.admin_jwt_secret.arn },
         { name = "ADMIN_INITIAL_PASSWORD", valueFrom = aws_secretsmanager_secret.admin_initial_password.arn }
       ]

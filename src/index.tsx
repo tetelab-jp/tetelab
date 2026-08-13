@@ -39,8 +39,6 @@ const bindings: Bindings = {
   CRON_SECRET: process.env.CRON_SECRET,
   RANKING_PROXY_URL: process.env.RANKING_PROXY_URL,
   APP_BASE_URL: process.env.APP_BASE_URL,
-  AWS_ACCESS_KEY_ID: process.env.AWS_ACCESS_KEY_ID,
-  AWS_SECRET_ACCESS_KEY: process.env.AWS_SECRET_ACCESS_KEY,
   AWS_REGION: process.env.AWS_REGION,
   ECS_CLUSTER: process.env.ECS_CLUSTER,
   ECS_TASK_DEFINITION: process.env.ECS_TASK_DEFINITION,

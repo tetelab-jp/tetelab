@@ -37,12 +37,6 @@ variable "github_repository" {
   default     = "tetelab-jp/tetelab"
 }
 
-variable "cloudflare_iam_user_name" {
-  description = "アプリ本体からECS RunTaskを呼ぶためのIAMユーザー名(旧: Cloudflare Workersから呼んでいた頃の名残。今はアプリ自身がAWS上で動くためこのユーザーの意味合いは変わったが、aws-ecs.tsの実装(静的アクセスキーでSigV4署名)を変えずに済むようそのまま流用している)"
-  type        = string
-  default     = "salonboard-worker-app-caller"
-}
-
 # ---- アプリ本体(常時稼働サービス)関連 ----
 
 variable "domain_name" {

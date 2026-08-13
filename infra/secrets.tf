@@ -74,23 +74,10 @@ resource "aws_secretsmanager_secret_version" "admin_initial_password" {
   secret_string = var.admin_initial_password
 }
 
-# aws-ecs.ts(アプリ本体)がECS RunTaskをSigV4署名で呼ぶための静的アクセスキー。
-# 発行元のIAMユーザーは iam.tf の aws_iam_user.cloudflare_caller。
-resource "aws_secretsmanager_secret" "aws_access_key_id" {
-  name = "${var.project_name}/aws-access-key-id"
-}
-resource "aws_secretsmanager_secret_version" "aws_access_key_id" {
-  secret_id     = aws_secretsmanager_secret.aws_access_key_id.id
-  secret_string = aws_iam_access_key.cloudflare_caller.id
-}
-
-resource "aws_secretsmanager_secret" "aws_secret_access_key" {
-  name = "${var.project_name}/aws-secret-access-key"
-}
-resource "aws_secretsmanager_secret_version" "aws_secret_access_key" {
-  secret_id     = aws_secretsmanager_secret.aws_secret_access_key.id
-  secret_string = aws_iam_access_key.cloudflare_caller.secret
-}
+# 2026-08-13追記(監査指摘の是正): aws-ecs.ts/sns-alert.tsがECS RunTask/SNS
+# Publishを呼ぶための長期静的アクセスキー(aws_access_key_id/aws_secret_access_key)
+# は、アプリ自身のECSタスクロール(app_task)のアンビエント認証情報に置き換え
+# 済みのため撤去した(発行元だったiam.tfのaws_iam_user.cloudflare_callerも撤去済み)。
 
 # ECSタスク実行ロール(task_execution)は、コンテナ起動時にこれらのSecretsを
 # 読み取ってenvironmentへ注入する必要があるため、AmazonECSTaskExecutionRolePolicy
