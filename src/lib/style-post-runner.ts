@@ -260,11 +260,16 @@ export async function runStyleAutomationForUser(
   // ALBのアイドルタイムアウト(60秒)内にHTTPレスポンスを返す必要があるため、
   // 2件目以降の投入はawaitせずバックグラウンドで進める。
   let firstDispatchFailed = false
+  let firstDispatchErrorMessage: string | undefined
   let firstJobId: number | null = null
   try {
     firstJobId = await dispatchStylePostJob(env, userId, targets[0].id, runId)
-  } catch {
+  } catch (err: any) {
     firstDispatchFailed = true
+    // 2026-08-14追記(重大バグ修正): ここでエラーを握りつぶしていたため、
+    // 手動投稿(テスト実行)が失敗した際、画面には常に「不明なエラー」としか
+    // 表示されず、ECS RunTask失敗等の実際の原因が分からなかった。
+    firstDispatchErrorMessage = String(err?.message || err).slice(0, 500)
   }
 
   if (targets.length > 1) {
@@ -275,8 +280,8 @@ export async function runStyleAutomationForUser(
   // コールバックで反映されるため、ここでは 'processing' のまま残す
   // (集計の確定は行わない)。
   const runStatus = firstDispatchFailed && targets.length === 1 ? 'failed' : 'processing'
-  await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-    .bind(runStatus, runId)
+  await env.DB.prepare(`UPDATE style_post_runs SET status = ?, error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(runStatus, firstDispatchFailed ? firstDispatchErrorMessage : null, runId)
     .run()
 
   return {
@@ -284,7 +289,8 @@ export async function runStyleAutomationForUser(
     totalImages: targets.length,
     dispatchedCount: firstDispatchFailed ? 0 : 1,
     failedToDispatchCount: firstDispatchFailed ? 1 : 0,
-    status: firstDispatchFailed && targets.length === 1 ? 'failed' : 'dispatched'
+    status: firstDispatchFailed && targets.length === 1 ? 'failed' : 'dispatched',
+    errorMessage: firstDispatchFailed ? firstDispatchErrorMessage : undefined
   }
 }
 

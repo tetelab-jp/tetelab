@@ -422,7 +422,8 @@ automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, as
       dispatchedCount: summary.dispatchedCount,
       failedToDispatchCount: summary.failedToDispatchCount,
       totalImages: summary.totalImages,
-      status: summary.status
+      status: summary.status,
+      error: summary.errorMessage
     })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
