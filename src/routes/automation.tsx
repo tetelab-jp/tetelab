@@ -156,10 +156,10 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
         <table class="w-full text-sm table-fixed">
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
-              <th class="py-2 pl-3 w-[15%]">実行日時</th>
-              <th class="py-2 w-[10%]">カテゴリ</th>
-              <th class="py-2 w-[17%]">内容</th>
-              <th class="py-2 w-[8%]">ステータス</th>
+              <th class="py-2 pl-3 w-[9%]">実行日時</th>
+              <th class="py-2 w-[6%] text-center">カテゴリ</th>
+              <th class="py-2 w-[25%]">内容</th>
+              <th class="py-2 w-[8%] text-center">ステータス</th>
               <th class="py-2 w-1/2">投稿ログ</th>
             </tr>
           </thead>
@@ -169,11 +169,11 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
                 <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
                   {r.dateLabel}
                 </td>
-                <td class="py-2">
+                <td class="py-2 text-center">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
                 </td>
                 <td class="py-2 text-xs text-gray-700 truncate">{r.content}</td>
-                <td class="py-2">
+                <td class="py-2 text-center">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
                 </td>
                 <td class="py-2 text-xs text-gray-400">
