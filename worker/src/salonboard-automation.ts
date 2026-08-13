@@ -328,200 +328,213 @@ export async function draftRegisterStyle(
   log('写真をアップロード中...')
   await uploadFrontImage(page, input.imageBuffer, input.imageFileName, log)
 
-  // ---- スタイリスト選択 ----
-  await page.select('#stylistCheckCd', input.stylistSelectValue)
+  // 2026-08-13追記(ユーザー指定ルール): 画像アップロード成功後に
+  // 後続工程(フォーム入力・登録確認等)で失敗した場合、IPを切り替えて
+  // 最初からやり直すと同じ画像を何度も送り直すことになり通信量を浪費する
+  // ため、このエラーには afterUploadSuccess フラグを付けて呼び出し元
+  // (index.ts)へ伝え、以降のリトライを行わずこのスタイルの投稿を
+  // 打ち切れるようにする。
+  try {
 
-  // ---- スタイリストコメント(最大120文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
-    if (el) el.value = text
-  }, input.stylistComment.slice(0, 120))
+    // ---- スタイリスト選択 ----
+    await page.select('#stylistCheckCd', input.stylistSelectValue)
 
-  // ---- スタイル名(最大30文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
-    if (el) el.value = text
-  }, input.styleName.slice(0, 30))
+    // ---- スタイリストコメント(最大120文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
+      if (el) el.value = text
+    }, input.stylistComment.slice(0, 120))
 
-  // ---- カテゴリ(レディース/メンズ) ----
-  const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
-  await page.click(categoryRadioId)
-  await sleep(300)
+    // ---- スタイル名(最大30文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
+      if (el) el.value = text
+    }, input.styleName.slice(0, 30))
 
-  // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
-  const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
-  const lengthHandle = await page.$(lengthSelectId)
-  if (lengthHandle) {
-    await page.select(lengthSelectId, input.hairLengthValue)
-  } else {
-    log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
-  }
+    // ---- カテゴリ(レディース/メンズ) ----
+    const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
+    await page.click(categoryRadioId)
+    await sleep(300)
 
-  // ---- メニュー内容チェックボックス(任意) ----
-  if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
-    for (const mc of input.menuContentsCdList) {
-      const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
-      if (cb) await cb.click()
+    // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
+    const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
+    const lengthHandle = await page.$(lengthSelectId)
+    if (lengthHandle) {
+      await page.select(lengthSelectId, input.hairLengthValue)
+    } else {
+      log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
     }
-  }
 
-  // ---- メニュー詳細(必須、最大50文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
-    if (el) el.value = text
-  }, input.menuDetailText.slice(0, 50))
-
-  // ---- クーポン(任意) ----
-  // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
-  // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
-  // モーダルUIを操作せず直接値をセットする。
-  if (input.couponSelectValue) {
-    await page.evaluate((couponId: string) => {
-      const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
-      if (el) el.value = couponId
-    }, input.couponSelectValue)
-  }
-
-  // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
-  // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
-  // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
-  // イベントを発生させる必要がある。
-  if (input.hashtags && input.hashtags.length > 0) {
-    for (const rawTag of input.hashtags.slice(0, 20)) {
-      const tag = rawTag.trim().slice(0, 40)
-      if (!tag) continue
-
-      const hashTagInput = await page.$('#hashTagTxt')
-      if (!hashTagInput) {
-        log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
-        break
+    // ---- メニュー内容チェックボックス(任意) ----
+    if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
+      for (const mc of input.menuContentsCdList) {
+        const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
+        if (cb) await cb.click()
       }
-      await hashTagInput.click({ count: 3 })
-      await page.keyboard.press('Backspace').catch(() => {})
-      await hashTagInput.type(tag, { delay: 20 })
-      await sleep(200)
+    }
 
-      const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
-      if (!addBtn) {
-        log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
-        break
+    // ---- メニュー詳細(必須、最大50文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
+      if (el) el.value = text
+    }, input.menuDetailText.slice(0, 50))
+
+    // ---- クーポン(任意) ----
+    // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
+    // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
+    // モーダルUIを操作せず直接値をセットする。
+    if (input.couponSelectValue) {
+      await page.evaluate((couponId: string) => {
+        const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
+        if (el) el.value = couponId
+      }, input.couponSelectValue)
+    }
+
+    // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
+    // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
+    // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
+    // イベントを発生させる必要がある。
+    if (input.hashtags && input.hashtags.length > 0) {
+      for (const rawTag of input.hashtags.slice(0, 20)) {
+        const tag = rawTag.trim().slice(0, 40)
+        if (!tag) continue
+
+        const hashTagInput = await page.$('#hashTagTxt')
+        if (!hashTagInput) {
+          log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
+          break
+        }
+        await hashTagInput.click({ count: 3 })
+        await page.keyboard.press('Backspace').catch(() => {})
+        await hashTagInput.type(tag, { delay: 20 })
+        await sleep(200)
+
+        const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
+        if (!addBtn) {
+          log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
+          break
+        }
+        await addBtn.click()
+        await sleep(200)
       }
-      await addBtn.click()
-      await sleep(200)
     }
-  }
 
-  // ---- 送信前セルフチェック ----
-  const preflight = await page.evaluate(() => {
-    const val = (id: string) =>
-      (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
-      '(要素なし)'
-    const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
-    return {
-      styleRegistFormat:
-        (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
-          ?.value ?? '(未選択)',
-      frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
-      stylistCheckCd: val('stylistCheckCd'),
-      stylistCommentTxt: val('stylistCommentTxt'),
-      styleNameTxt: val('styleNameTxt'),
-      styleCategoryCd01: checked('styleCategoryCd01'),
-      styleCategoryCd02: checked('styleCategoryCd02'),
-      ladiesHairLengthCd: val('ladiesHairLengthCd'),
-      menuDetailTxt: val('menuDetailTxt')
+    // ---- 送信前セルフチェック ----
+    const preflight = await page.evaluate(() => {
+      const val = (id: string) =>
+        (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
+        '(要素なし)'
+      const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
+      return {
+        styleRegistFormat:
+          (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
+            ?.value ?? '(未選択)',
+        frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
+        stylistCheckCd: val('stylistCheckCd'),
+        stylistCommentTxt: val('stylistCommentTxt'),
+        styleNameTxt: val('styleNameTxt'),
+        styleCategoryCd01: checked('styleCategoryCd01'),
+        styleCategoryCd02: checked('styleCategoryCd02'),
+        ladiesHairLengthCd: val('ladiesHairLengthCd'),
+        menuDetailTxt: val('menuDetailTxt')
+      }
+    })
+    log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
+
+    // ---- 保存(doRegister) ----
+    log('スタイルを登録中...')
+    const doRegisterHandle = await page.$('[onclick*="doRegister("]')
+    if (!doRegisterHandle) {
+      throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
     }
-  })
-  log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+      doRegisterHandle.click()
+    ])
 
-  // ---- 保存(doRegister) ----
-  log('スタイルを登録中...')
-  const doRegisterHandle = await page.$('[onclick*="doRegister("]')
-  if (!doRegisterHandle) {
-    throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
-  }
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    doRegisterHandle.click()
-  ])
-
-  // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
-  // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
-  //
-  // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
-  // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
-  // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
-  // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
-  // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
-  // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
-  // である「登録が完了しました。」の文言も検知対象に加える。
-  const registeredStyleId = await page
-    .waitForFunction(
-      () => {
-        const el = document.getElementById('styleId') as HTMLInputElement | null
-        if (el && /^L\d{9}$/.test(el.value)) return el.value
-        const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
-        if (urlMatch) return urlMatch[1]
-        if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
-        return false
-      },
-      { timeout: 20000 }
-    )
-    .then((handle) => handle.jsonValue() as Promise<string | false>)
-    .catch(() => false)
-
-  if (!registeredStyleId) {
-    const currentUrl = page.url()
-    // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
-    // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
-    // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
-    // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
-    // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
-    // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
-    // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
-    // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
-    // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
-    // 可能性の傍証)を診断ログに残すのみとする。
-    const isStyleListPage = /styleList/i.test(currentUrl)
-    const diag = await page
-      .evaluate(
-        (styleName: string, isListPage: boolean) => {
-          const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
-          const errorEls = isListPage
-            ? []
-            : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
-                .map((el) => el.textContent?.trim())
-                .filter((t) => t)
-                .slice(0, 3)
-          const nameMatchCount =
-            isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
-          return {
-            styleIdElExists: !!styleIdEl,
-            styleIdElValue: styleIdEl?.value ?? null,
-            errorTexts: errorEls,
-            isStyleListPage: isListPage,
-            nameMatchCount
-          }
+    // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
+    // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
+    //
+    // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
+    // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
+    // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
+    // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
+    // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
+    // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
+    // である「登録が完了しました。」の文言も検知対象に加える。
+    const registeredStyleId = await page
+      .waitForFunction(
+        () => {
+          const el = document.getElementById('styleId') as HTMLInputElement | null
+          if (el && /^L\d{9}$/.test(el.value)) return el.value
+          const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
+          if (urlMatch) return urlMatch[1]
+          if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
+          return false
         },
-        input.styleName.slice(0, 30),
-        isStyleListPage
+        { timeout: 20000 }
       )
-      .catch(() => null)
-    const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
-    log(
-      `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
-        `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
-        `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
-    )
-    throw new Error(
-      'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
-        'サーバー側で実際に登録されていない可能性があります。'
-    )
-  }
+      .then((handle) => handle.jsonValue() as Promise<string | false>)
+      .catch(() => false)
 
-  if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
-    log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
-  } else {
-    log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+    if (!registeredStyleId) {
+      const currentUrl = page.url()
+      // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
+      // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
+      // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
+      // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
+      // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
+      // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
+      // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
+      // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
+      // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
+      // 可能性の傍証)を診断ログに残すのみとする。
+      const isStyleListPage = /styleList/i.test(currentUrl)
+      const diag = await page
+        .evaluate(
+          (styleName: string, isListPage: boolean) => {
+            const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+            const errorEls = isListPage
+              ? []
+              : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+                  .map((el) => el.textContent?.trim())
+                  .filter((t) => t)
+                  .slice(0, 3)
+            const nameMatchCount =
+              isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
+            return {
+              styleIdElExists: !!styleIdEl,
+              styleIdElValue: styleIdEl?.value ?? null,
+              errorTexts: errorEls,
+              isStyleListPage: isListPage,
+              nameMatchCount
+            }
+          },
+          input.styleName.slice(0, 30),
+          isStyleListPage
+        )
+        .catch(() => null)
+      const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
+      log(
+        `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
+          `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
+          `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
+      )
+      throw new Error(
+        'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
+          'サーバー側で実際に登録されていない可能性があります。'
+      )
+    }
+
+    if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
+      log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
+    } else {
+      log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+    }
+  } catch (err: any) {
+    const wrapped = new Error(String(err?.message || err))
+    ;(wrapped as any).afterUploadSuccess = true
+    throw wrapped
   }
 }
 

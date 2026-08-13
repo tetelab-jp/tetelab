@@ -88,10 +88,12 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // IPを使い回す利点がそもそも無いため、実績追跡(proxy_session_pool_stats)は
 // 廃止し、ジョブ(投稿1回)ごとに毎回ランダムな新しいセッションIDを
 // 生成するだけのシンプルな方式に変更する。
-// 2026-08-13追記(方針転換3): ワーカー側を「1スタイルにつき最大3回まで、
-// ログイン・投稿どちらの失敗でも即座に次のIPへ切り替える」方式に統一した
-// (worker/src/index.ts参照)。3回分あれば十分なので候補生成数も合わせる。
-const PROXY_CANDIDATE_COUNT = 3
+// 2026-08-13追記(方針転換4): ワーカー側の試行上限を3→5に引き上げた
+// (worker/src/index.ts の MAX_ATTEMPTS_PER_STYLE 参照)。ただし画像
+// アップロード成功後に後続工程で失敗した場合はIP切り替えを行わず
+// 即座に打ち切るため、実際に5回すべて使い切るのはログイン失敗が
+// 連続するケースなど一部に限られる。候補生成数も合わせて5にする。
+const PROXY_CANDIDATE_COUNT = 5
 
 function randomSessionId(): string {
   return Math.random().toString(36).slice(2, 10)

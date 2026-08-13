@@ -170,7 +170,17 @@ async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
 // 1スタイルあたりの試行回数は最大MAX_ATTEMPTS_PER_STYLE回(=最大で
 // この数のIPを試す)。投稿(下書き登録)が成功した場合は、そのIP/セッションの
 // ままリトライループを抜け、反映申請まで継続する(切り替えない)。
-const MAX_ATTEMPTS_PER_STYLE = 3
+//
+// 2026-08-13追記(方針転換4・ユーザー指定ルール): 試行回数の上限を3→5に
+// 引き上げる一方、「画像アップロード自体は成功したが、後続工程(フォーム
+// 入力・登録確認等)で失敗した」場合に限り、IPを切り替えて最初からやり直す
+// (=同じ画像をもう一度アップロードし直す)ことをせず、その時点でこの
+// スタイルの投稿を打ち切る。理由: リトライのたびに画像(最大300KB)を
+// 送り直すことになり、プロキシの通信量を無駄に消費するため
+// (draftRegisterStyleがdraftError.afterUploadSuccess=trueを付けて
+// この状態を通知する)。打ち切られたスタイルは翌日以降の定期実行・
+// 手動実行で改めて対象になる。
+const MAX_ATTEMPTS_PER_STYLE = 5
 
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
   const candidates = (payload.proxySessionCandidates || []).slice(0, MAX_ATTEMPTS_PER_STYLE)
@@ -192,10 +202,16 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
       await draftRegisterStyle(attempt.page!, styleInput, log)
     } catch (err: any) {
       draftError = err
+      if (err?.afterUploadSuccess) {
+        log(
+          '画像アップロードは成功しましたが、後続工程で失敗しました。' +
+            '通信量の浪費を避けるためIP切り替えは行わず、このスタイルの投稿を打ち切ります。'
+        )
+      }
     }
   }
 
-  for (let i = 1; i < attemptCount && (attempt.error || draftError); i++) {
+  for (let i = 1; i < attemptCount && (attempt.error || draftError) && !draftError?.afterUploadSuccess; i++) {
     // 2026-08-13追記(診断強化): 実際のエラーメッセージ(診断情報込み)を
     // ログに含め、CAPTCHAだったのか通信エラーだったのか後から判別できるようにする。
     const reason = attempt.error
@@ -219,6 +235,12 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
         await draftRegisterStyle(attempt.page!, styleInput, log)
       } catch (err: any) {
         draftError = err
+        if (err?.afterUploadSuccess) {
+          log(
+            '画像アップロードは成功しましたが、後続工程で失敗しました。' +
+              '通信量の浪費を避けるためIP切り替えは行わず、このスタイルの投稿を打ち切ります。'
+          )
+        }
       }
     }
   }
