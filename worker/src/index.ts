@@ -156,9 +156,18 @@ async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
 
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
   // 2026-08-12追記: アプリ側が実績順に並べた候補セッションIDを先頭から
-  // 順に試す(最大2件まで)。候補が無い場合(例: 同時実行回避時)は
-  // 従来通りpreferredなしでattemptLoginに任せる。
-  const candidates = (payload.proxySessionCandidates || []).slice(0, 2)
+  // 順に試す。候補が無い場合(例: 同時実行回避時)は従来通りpreferredなしで
+  // attemptLoginに任せる。
+  //
+  // 2026-08-13追記: 画像アップロードの失敗(net::ERR_ABORTED)は特定の候補
+  // だけの問題ではなく、その時々でどの候補も一定確率で約35秒ハングした後に
+  // 失敗する、確率的な事象であることが実機ログ(発生時刻の記録)で判明した。
+  // 従来は最大2件までしか候補を試していなかったが、失敗1回あたりのコストが
+  // (無限にハングするのではなく)約35〜45秒で頭打ちになると分かった以上、
+  // ジョブ全体のタイムアウト予算(10分、style-post-runner.ts参照)に対して
+  // 十分な余裕があるため、アプリ側が用意した候補(最大5件、プール全件)を
+  // 全て試すようにし、成功率を上げる。
+  const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
   const loginAttempts: LoginAttempt[] = []
 
   const { imageBase64, ...styleRest } = payload.style
