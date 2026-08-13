@@ -9,7 +9,11 @@ import type { Bindings, AppUser } from '../types'
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
 const KEYWORD_SLOTS_MAX = 20
-const MEASURE_MAX_PAGES = 50
+// 2026-08-13変更: 圏外(見つからない)キーワードは以前50ページ(1000位相当)まで
+// 全部読みに行っていたが、プロキシが従量課金(月内GB上限あり)のDataImpulseに
+// なったため通信量を抑える必要が生じた。100位(5ページ、1ページ20件)より下は
+// 実運用上ほぼ意味が無い順位のため、走査を5ページ=100位までに打ち切る。
+const MEASURE_MAX_PAGES = 5
 
 // --------------------------------------------
 // 指定テンプレート(未指定なら有効な全テンプレート)を1つのrunでまとめて計測する。
@@ -298,7 +302,7 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
   if (current.rank == null) {
     return (
       <span class="inline-flex flex-col items-center">
-        <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>圏外</span>
+        <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>100位圏外</span>
         {prev && prev.rank != null && (
           <span class={`block ${deltaCls} leading-tight text-red-500 mt-0.5 whitespace-nowrap`}>▼前回{prev.rank}位</span>
         )}
@@ -311,7 +315,7 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
     if (prev.rank == null) {
       badge = (
         <span class={`block ${deltaCls} leading-tight font-semibold text-green-600 mt-0.5 whitespace-nowrap`}>
-          ▲前回圏外
+          ▲前回100位圏外
         </span>
       )
     } else {

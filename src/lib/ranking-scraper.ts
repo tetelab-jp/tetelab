@@ -20,7 +20,7 @@ import {
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 const PER_PAGE = 20
-const DEFAULT_MAX_PAGES = 50 // Python版と同じ上限
+const DEFAULT_MAX_PAGES = 5 // 100位(1ページ20件×5)より下は打ち切り。呼び出し側(ranking.tsx)は明示的にmaxPagesを渡す
 const DEFAULT_DELAY_MS = 1500 // ページ送りの間隔(サイトに優しく・弾かれ軽減)
 const FETCH_RETRY = 3
 
