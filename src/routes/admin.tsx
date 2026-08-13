@@ -1011,4 +1011,124 @@ admin.get('/admin/status/style-image-check', requireAdminAuth, async (c) => {
   )
 })
 
+// 2026-08-13追記(調査用): 「自動投稿ON・公開済みのはずのスタイルが
+// 手動投稿/自動投稿の対象に選ばれない」という報告の切り分け用。
+// runStyleAutomationForUser/runNextStyleForUserの対象条件
+// (auto_post_enabled_flag=1 AND internal_save_status='ready' AND
+// 進行中ジョブなし)をそのままなぞって、各スタイルがどの条件で
+// 弾かれているか一覧表示する。
+admin.get('/admin/status/style-schedule-check', requireAdminAuth, async (c) => {
+  const adminUser = c.get('admin')
+  const email = (c.req.query('email') || '').trim()
+
+  let rows: {
+    style_no: number
+    id: number
+    title: string | null
+    auto_post_enabled_flag: number
+    internal_save_status: string
+    in_flight_job_status: string | null
+    in_flight_job_created_at: string | null
+  }[] = []
+  let salonName: string | null = null
+  let errorMessage: string | null = null
+
+  if (email) {
+    const user = await c.env.DB.prepare('SELECT id, salon_name FROM users WHERE email = ?')
+      .bind(email)
+      .first<{ id: number; salon_name: string | null }>()
+
+    if (!user) {
+      errorMessage = `メールアドレス「${email}」のサロンが見つかりませんでした`
+    } else {
+      salonName = user.salon_name
+      const { results } = await c.env.DB.prepare(
+        `SELECT
+           ROW_NUMBER() OVER (ORDER BY s.sort_order ASC, s.id DESC) AS style_no,
+           s.id, s.title, s.auto_post_enabled_flag, s.internal_save_status,
+           j.status AS in_flight_job_status, j.created_at AS in_flight_job_created_at
+         FROM styles s
+         LEFT JOIN LATERAL (
+           SELECT status, created_at FROM style_post_jobs
+           WHERE style_id = s.id AND status IN ('pending', 'running')
+           ORDER BY created_at DESC LIMIT 1
+         ) j ON true
+         WHERE s.user_id = ?
+         ORDER BY s.sort_order ASC, s.id DESC`
+      )
+        .bind(user.id)
+        .all<{
+          style_no: number
+          id: number
+          title: string | null
+          auto_post_enabled_flag: number
+          internal_save_status: string
+          in_flight_job_status: string | null
+          in_flight_job_created_at: string | null
+        }>()
+      rows = results || []
+    }
+  }
+
+  return c.render(
+    <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="自動投稿対象の絞り込み確認(一時調査用)">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4 max-w-3xl">
+        <form method="get" action="/admin/status/style-schedule-check" class="flex gap-2">
+          <input
+            type="email"
+            name="email"
+            value={email}
+            placeholder="サロンのログインメールアドレス"
+            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+          <button type="submit" class="px-4 py-2 rounded-lg bg-pink-500 hover:bg-pink-600 text-white text-sm font-medium">
+            確認
+          </button>
+        </form>
+        {errorMessage && <p class="text-sm text-red-600">{errorMessage}</p>}
+        {salonName !== null && <p class="text-sm text-gray-500">サロン: {salonName || '(未設定)'}</p>}
+        {rows.length > 0 && (
+          <table class="w-full text-sm">
+            <thead>
+              <tr class="text-left text-gray-400 border-b border-gray-100">
+                <th class="py-2">No.</th>
+                <th class="py-2">タイトル</th>
+                <th class="py-2">自動投稿ON</th>
+                <th class="py-2">入力完了(ready)</th>
+                <th class="py-2">進行中ジョブ</th>
+                <th class="py-2">投稿対象?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const isReady = r.internal_save_status === 'ready'
+                const isEnabled = r.auto_post_enabled_flag === 1
+                const hasInFlight = !!r.in_flight_job_status
+                const isEligible = isEnabled && isReady && !hasInFlight
+                return (
+                  <tr class="border-b border-gray-50">
+                    <td class="py-2">{r.style_no}</td>
+                    <td class="py-2">{r.title || '(無題)'}</td>
+                    <td class={'py-2 ' + (isEnabled ? 'text-green-600' : 'text-red-500')}>{isEnabled ? 'ON' : 'OFF'}</td>
+                    <td class={'py-2 ' + (isReady ? 'text-green-600' : 'text-red-500')}>
+                      {r.internal_save_status}
+                    </td>
+                    <td class={'py-2 ' + (hasInFlight ? 'text-amber-600' : 'text-gray-400')}>
+                      {hasInFlight ? `${r.in_flight_job_status}(${r.in_flight_job_created_at})` : 'なし'}
+                    </td>
+                    <td class={'py-2 font-semibold ' + (isEligible ? 'text-green-600' : 'text-red-500')}>
+                      {isEligible ? '対象' : '対象外'}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </AdminPageLayout>,
+    { title: '自動投稿対象の絞り込み確認' }
+  )
+})
+
 export default admin

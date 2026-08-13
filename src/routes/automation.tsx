@@ -464,10 +464,15 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?`
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
+     FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+    }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -490,11 +495,14 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .run()
 
-  // ジョブ(投稿1回)ごとに毎回ランダムな新しいセッションIDを生成する。
-  // 固定プール運用時代と違い実績追跡は行わない(理由は上のコメント参照)。
-  // 複数ジョブが同時実行されても、それぞれ別のランダムIDになるため
-  // セッションの取り合いは起きない。
-  const proxySessionCandidates = Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
+  // 2026-08-13追記3(ユーザー指定ルール): 投稿が成功したセッション(IP)は
+  // 「次のスタイル投稿で失敗するまで」使い続ける。前回成功したセッションID
+  // (salon_credentials.last_successful_proxy_session_id、結果コールバック側で
+  // 更新・失敗時にクリアする)があれば候補の先頭に置き、それが失敗した場合の
+  // 保険として残りは従来通りランダムな新しいセッションで埋める。
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
 
   return c.json({
     loginId,
@@ -631,6 +639,28 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(userId, styleId, styleNo, `スタイル登録失敗: ${messageWithDiagnostics}`)
       .run()
     jobStatus = 'failed'
+  }
+
+  // 2026-08-13追記3(ユーザー指定ルール): 投稿成功セッションを「次のスタイル
+  // 投稿で失敗するまで」使い続けるための記録更新。成功時は実際に使われた
+  // セッションID(body.proxySessionId、複数候補を試した場合は最終的に成功した
+  // もの)を保存し、次のジョブの候補選定(GET /api/automation/jobs/:id)で
+  // 先頭に使う。失敗時はクリアし、次のジョブが同じ失敗済みIPを引き継がない
+  // ようにする。
+  if (jobStatus === 'success' && body.proxySessionId) {
+    await c.env.DB
+      .prepare(
+        `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+      .bind(body.proxySessionId, userId)
+      .run()
+      .catch(() => {})
+  } else if (jobStatus !== 'success') {
+    await c.env.DB
+      .prepare(`UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
   }
 
   await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
