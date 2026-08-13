@@ -826,4 +826,64 @@ admin.get('/admin/status', async (c) => {
   )
 })
 
+// 2026-08-13追記(一時的な調査用): 「画像アップロード自体の失敗」と
+// 「アップロードは成功したが後続工程(登録確認・反映申請等)で失敗」の
+// 比率を確認するための簡易診断ページ。worker/src/salonboard-automation.tsの
+// uploadFrontImage()は失敗時に必ず「画像アップロードに失敗しました」または
+// 「doUploadリクエストが失敗しました」という固定文言で例外を投げるため、
+// execution_logs.messageにこの文言が含まれるかどうかで判定できる
+// (進捗ログの「写真をアップロード中...」とは文言が異なるため誤判定しない)。
+admin.get('/admin/status/upload-failure-ratio', requireAdminAuth, async (c) => {
+  const adminUser = c.get('admin')
+
+  const row = await c.env.DB.prepare(
+    `SELECT
+       COUNT(*) FILTER (
+         WHERE message LIKE '%画像アップロードに失敗しました%' OR message LIKE '%doUploadリクエストが失敗しました%'
+       ) AS upload_stage_failures,
+       COUNT(*) FILTER (
+         WHERE message NOT LIKE '%画像アップロードに失敗しました%' AND message NOT LIKE '%doUploadリクエストが失敗しました%'
+       ) AS post_upload_failures,
+       COUNT(*) AS total_failures
+     FROM execution_logs
+     WHERE execution_type = 'register_style' AND status = 'failure'
+       AND created_at > now() - interval '30 days'`
+  ).first<{ upload_stage_failures: number; post_upload_failures: number; total_failures: number }>()
+
+  const total = row?.total_failures ?? 0
+  const uploadStage = row?.upload_stage_failures ?? 0
+  const postUpload = row?.post_upload_failures ?? 0
+  const postUploadRatio = total > 0 ? ((postUpload / total) * 100).toFixed(1) : '0.0'
+  const uploadStageRatio = total > 0 ? ((uploadStage / total) * 100).toFixed(1) : '0.0'
+
+  return c.render(
+    <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="アップロード失敗段階の内訳(直近30日・一時調査用)">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4 max-w-xl">
+        <p class="text-sm text-gray-500">
+          直近30日間の「スタイル登録失敗(register_style)」ログを、失敗した段階で2つに分類しています。
+        </p>
+        <div class="grid grid-cols-1 gap-3">
+          <div class="rounded-lg border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">失敗の合計件数</p>
+            <p class="text-2xl font-bold text-gray-800">{total}件</p>
+          </div>
+          <div class="rounded-lg border border-gray-100 p-4">
+            <p class="text-xs text-gray-400 mb-1">画像アップロード自体の失敗(35.5秒ハング等)</p>
+            <p class="text-2xl font-bold text-gray-800">
+              {uploadStage}件 <span class="text-base font-normal text-gray-400">({uploadStageRatio}%)</span>
+            </p>
+          </div>
+          <div class="rounded-lg border border-pink-100 bg-pink-50 p-4">
+            <p class="text-xs text-pink-500 mb-1">アップロード成功後・後続工程での失敗(画像の再送信が発生)</p>
+            <p class="text-2xl font-bold text-pink-600">
+              {postUpload}件 <span class="text-base font-normal text-pink-400">({postUploadRatio}%)</span>
+            </p>
+          </div>
+        </div>
+      </div>
+    </AdminPageLayout>,
+    { title: 'アップロード失敗段階の内訳' }
+  )
+})
+
 export default admin
