@@ -71,10 +71,18 @@ export function parseSearchResultPage(html: string): ParsedSearchPage {
     const href = $a.attr('href') || ''
     const slnMatch = href.match(/slnH\d+/)
     const csttMatch = href.match(/cstt=(\d+)/)
-    // 店名: 検索語ハイライト(span.highlightFw)を除いた本体テキスト
-    const $clone = $a.clone()
-    $clone.find('span.highlightFw').remove()
-    const name = ($clone.text() || $a.text()).replace(/\s+/g, ' ').trim()
+    // 店名: リンクのテキストをそのまま使う。
+    // 2026-08-13修正(重大バグ): 以前はHPBの検索語ハイライト(span.highlightFw)
+    // を丸ごとDOMから除去してからテキストを取っていたが、これは表示上の
+    // 強調用spanで囲っているだけであり、除去するとその部分の文字列自体が
+    // 消えてしまう。対策サロン名(salon_name)に検索キーワードそのものが
+    // 含まれるケース(例: 店名に「ブリーチ」を含むサロンで「ブリーチ」を
+    // 検索)では、HPB側がその一致箇所をhighlightFwで囲むため、除去すると
+    // 店名からその単語が欠落し、部分一致判定が常に失敗して圏外誤判定になる
+    // (実際は該当サロンが上位に掲載されていても圏外と表示される)重大な
+    // バグがあった。spanで囲われていても.text()は中のテキストを問題なく
+    // 拾うため、除去処理自体が不要かつ有害だった。
+    const name = $a.text().replace(/\s+/g, ' ').trim()
     cassettes.push({
       cstt: csttMatch ? parseInt(csttMatch[1], 10) : null,
       slnId: slnMatch ? slnMatch[0] : null,
