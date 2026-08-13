@@ -241,6 +241,18 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       .filter(Boolean)
 
     const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
+    // 2026-08-13追記(重大バグ修正): #FRONT_IMG_ID_IMGのsrcは
+    // "...B250195412.jpg?impolicy=SB_policy_default&w=180&h=240" のように
+    // 編集画面プレビュー用の縮小クエリパラメータ付きURLになっている。
+    // これをそのまま取り込み元として使うと、processStyleImage()の
+    // 「元画像より拡大しない」ルールにより180×240のまま保存され続けてしまう
+    // (ユーザー提供の実HTML調査で判明)。拡大表示用の#closeImgが同じ画像を
+    // クエリパラメータ無しのURLで参照しているため、それを優先的に使い、
+    // 無ければ#FRONT_IMG_ID_IMGのクエリパラメータを除去したベースURL
+    // (=フルサイズの元画像)にフォールバックする。
+    const closeImg = document.getElementById('closeImg') as HTMLImageElement | null
+    const hasPhoto = !!img && !img.className.includes('img_new_no_photo')
+    const imageUrl = hasPhoto ? closeImg?.src || img!.src.split('?')[0] : null
 
     return {
       title: val('#styleNameTxt'),
@@ -259,7 +271,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       // クーポンIDをそのまま取り込むと、以後の反映申請が「要確認」でブロックされ
       // 続ける原因になるため、取り込み時点で検出できるようにする。
       couponNoPresentDeleteFlg: val('input[name="frmStyleEditStyleDto.noPresentDeleteFlg"]'),
-      imageUrl: img && !img.className.includes('img_new_no_photo') ? img.src : null
+      imageUrl
     }
   })
 
