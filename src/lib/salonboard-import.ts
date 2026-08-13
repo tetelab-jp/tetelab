@@ -32,6 +32,7 @@
 
 import type { Bindings } from '../types'
 import { SALONBOARD_BASE_URL, type AutomationLogger, type Page } from './salonboard-automation'
+import { processStyleImage } from './image-process'
 
 export type ExistingStyleSummary = {
   styleId: string // L+9桁形式
@@ -240,6 +241,18 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       .filter(Boolean)
 
     const img = document.getElementById('FRONT_IMG_ID_IMG') as HTMLImageElement | null
+    // 2026-08-13追記(重大バグ修正): #FRONT_IMG_ID_IMGのsrcは
+    // "...B250195412.jpg?impolicy=SB_policy_default&w=180&h=240" のように
+    // 編集画面プレビュー用の縮小クエリパラメータ付きURLになっている。
+    // これをそのまま取り込み元として使うと、processStyleImage()の
+    // 「元画像より拡大しない」ルールにより180×240のまま保存され続けてしまう
+    // (ユーザー提供の実HTML調査で判明)。拡大表示用の#closeImgが同じ画像を
+    // クエリパラメータ無しのURLで参照しているため、それを優先的に使い、
+    // 無ければ#FRONT_IMG_ID_IMGのクエリパラメータを除去したベースURL
+    // (=フルサイズの元画像)にフォールバックする。
+    const closeImg = document.getElementById('closeImg') as HTMLImageElement | null
+    const hasPhoto = !!img && !img.className.includes('img_new_no_photo')
+    const imageUrl = hasPhoto ? closeImg?.src || img!.src.split('?')[0] : null
 
     return {
       title: val('#styleNameTxt'),
@@ -258,7 +271,7 @@ export async function fetchStyleDetail(page: Page, styleId: string, log: Automat
       // クーポンIDをそのまま取り込むと、以後の反映申請が「要確認」でブロックされ
       // 続ける原因になるため、取り込み時点で検出できるようにする。
       couponNoPresentDeleteFlg: val('input[name="frmStyleEditStyleDto.noPresentDeleteFlg"]'),
-      imageUrl: img && !img.className.includes('img_new_no_photo') ? img.src : null
+      imageUrl
     }
   })
 
@@ -387,12 +400,15 @@ export async function importSelectedStyles(
           const res = await fetch(detail.imageUrl)
           if (!res.ok) throw new Error(`画像の取得に失敗しました(status=${res.status})`)
           const bytes = new Uint8Array(await res.arrayBuffer())
+          // 手動アップロードと同様、保存前に規定サイズ・容量へ正規化する(image-process.ts参照)。
+          const { buffer, contentType } = await processStyleImage(bytes)
 
           const key = `style/${userId}/imported-${styleId}-${Date.now()}.jpg`
-          await env.STYLE_IMAGES.put(key, bytes, { httpMetadata: { contentType: 'image/jpeg' } })
+          await env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
 
           await env.DB.prepare(
-            `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order) VALUES (?, 'FRONT', ?, ?, 0)`
+            `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order, compressed_at)
+             VALUES (?, 'FRONT', ?, ?, 0, CURRENT_TIMESTAMP)`
           )
             .bind(newStyleId, key, `${styleId}.jpg`)
             .run()

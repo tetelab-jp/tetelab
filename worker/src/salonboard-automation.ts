@@ -16,10 +16,9 @@
 import type { Browser, ElementHandle, Page } from 'puppeteer'
 import puppeteerExtra from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import { writeFile, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain'
 export type { Browser, Page }
+export { closeAnonymizedProxy }
 
 // 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
 // Akamai系ボット対策を回避できないことが実機検証(プロキシでIPを変えても
@@ -53,38 +52,150 @@ export type StylePostResult = {
 }
 
 /**
+ * SALONBOARD_PROXY_SERVER(例: "http://host:port"、スキーム省略も可)に
+ * ユーザー名/パスワードを埋め込んだ完全なURLを組み立てる。
+ */
+function buildAuthenticatedProxyUrl(serverValue: string, username: string, password: string): string {
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(serverValue) ? serverValue : `http://${serverValue}`
+  const url = new URL(withScheme)
+  url.username = encodeURIComponent(username)
+  url.password = encodeURIComponent(password)
+  return url.toString()
+}
+
+export type LaunchedBrowser = {
+  browser: Browser
+  // ログイン成功実績の記録に使う、実際に使ったプロキシセッションID
+  proxySessionId: string | null
+  // finally節でcloseAnonymizedProxy()に渡し、後片付けするために保持する
+  anonymizedProxyUrl: string | null
+}
+
+/**
  * Fargateタスク内でPuppeteerブラウザを起動する。
  * ジョブ1件につきタスク1つを使い捨てる運用のため、同時起動数の
  * リトライ制御(Cloudflare Browser Rendering版にあった429対応)は不要。
+ *
+ * 2026-08-13追記(page.authenticate方式からproxy-chain方式へ全面変更):
+ * 従来はブラウザに直接プロキシの認証情報を渡す page.authenticate() を
+ * 使っていたが、これは内部でCDPのFetch domain傍受を強制的に有効化する。
+ * 傍受モードは大きめのPOSTボディ(doUploadの画像アップロード等)を継続
+ * (continue)する際に本文を取りこぼし、接続がリセットされる
+ * (net::ERR_EMPTY_RESPONSE / net::ERR_ABORTED)ことが実機で繰り返し
+ * 確認された。画像圧縮(300KB以下への正規化)後もこの症状が再発したため、
+ * 圧縮は対症療法に過ぎず、傍受モード自体を発生させない方式に変更する。
+ *
+ * proxy-chain(npm)のanonymizeProxy()は、認証情報込みの上流プロキシURLを
+ * 渡すと、同じコンテナ内に認証不要のローカル取次サーバー(127.0.0.1:port)を
+ * 立ち上げて返す。ブラウザにはこのローカルアドレスだけを渡すため、
+ * page.authenticate()を呼ぶ必要が無くなり(=Fetch domain傍受も発生しない)、
+ * 大きなPOSTボディも素直に流れることを期待する。
+ *
+ * セッションID(出口IP固定用)は、以前はブラウザ起動後にnewAutomationPage()
+ * 側で決めていたが、proxy-chain方式ではローカル取次サーバーのアドレスが
+ * ブラウザ起動時の--proxy-serverに必要なため、この関数の引数として先に
+ * 受け取る必要がある(呼び出し側=index.tsのrunJob()で候補セッションIDを
+ * 決めてから渡す)。
  */
-export async function launchBrowser(): Promise<Browser> {
+export async function launchBrowser(sessionId?: string | null): Promise<LaunchedBrowser> {
   // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
   // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
-  const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  //
+  // 2026-08-13追記(重大な手がかり): proxy-chain導入後もnet::ERR_ABORTED
+  // (canceled=true)による画像アップロード失敗が再発し、しかも候補セッションID
+  // (=出口IP)を切り替えても両方とも同じ症状で失敗することを実機ログで確認した。
+  // 特定のIPだけの一時的な問題ではなく、経路(トンネル)自体に起因する可能性が
+  // 高いと判断した。調査の結果、Chromeが salonboard.com とHTTP/2で通信しようと
+  // した際、proxy-chainのローカル取次サーバー(Node製・単純なTCPトンネル)が
+  // HTTP/2のストリーム多重化を正しく素通しできず、特に大きめのPOST(画像の
+  // multipartアップロード)のストリームだけが途中で終端される、という既知の
+  // 障害パターン(HTTPプロキシ経由でのHTTP/2アップロード断)に一致することが
+  // わかった。単純なGET(ログイン画面表示等)は問題にならず、doUploadのような
+  // POSTだけが失敗する非対称な症状とも整合する。HTTP/2を無効化しHTTP/1.1に
+  // 固定することで、プロキシトンネル越しの通信をより単純・安定にする。
+  // 2026-08-13追記(通信量削減): DataImpulseの利用状況(実データ)を分析した
+  // ところ、1日の総通信量(約1.2GB)のうち約3割(約340MB)が、サロンボード本体
+  // (salonboard.com/imgbp.salonboard.com)とは無関係な広告・分析タグや
+  // Chrome自体のバックグラウンド通信(コンポーネント更新・パスワード漏洩
+  // チェック・オートフィル同期等)であることが判明した。これらはスタイル
+  // 投稿という目的には一切不要なため、DNS解決自体を失敗させてブロックする。
+  // Puppeteerのリクエスト傍受(setRequestInterception)は使わない
+  // (Fetch domain傍受が有効になり、画像アップロードの大きいPOSTボディが
+  // 壊れる既知の不具合の再発リスクがあるため)。--host-resolver-rulesは
+  // DNS解決の段階でブロックするだけなので、doUpload等の実際の通信経路には
+  // 影響しない。判断に迷うドメイン(google.com/google.co.jp/accounts.google.com
+  // 等、万一ログイン関連の確認画面等で使われる可能性を否定できないもの)は
+  // 安全側に倒し、あえてブロック対象から外している。
+  const BLOCKED_HOSTS = [
+    'edgedl.me.gvt1.com', // Chrome本体・コンポーネントの自動更新
+    'update.googleapis.com',
+    'www.googletagmanager.com',
+    '*.karte.io', // サロンボードに埋め込まれたマーケティング分析ツール
+    'www.google-analytics.com',
+    'analytics.google.com',
+    'www.googleadservices.com',
+    'android.clients.google.com',
+    'passwordsleakcheck-pa.googleapis.com', // Chromeのパスワード漏洩チェック機能
+    'content-autofill.googleapis.com',
+    'mtalk.google.com',
+    '*.doubleclick.net',
+    '*.fout.jp',
+    '*.openx.net',
+    '*.pubmatic.com',
+    '*.rubiconproject.com',
+    'js.sentry-cdn.com'
+  ]
 
-  // SALON BOARD側のボット対策の検証用の一時的な迂回策。SALONBOARD_PROXY_SERVER
-  // (例: http://host:port)が設定されている場合のみプロキシ経由でアクセスする。
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-http2',
+    '--disable-quic',
+    `--host-resolver-rules=${BLOCKED_HOSTS.map((h) => `MAP ${h} 0.0.0.0`).join(',')}`
+  ]
+
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
-  if (proxyServer) {
-    args.push(`--proxy-server=${proxyServer}`)
+  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
+  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
 
-    // 2026-08-11追記: 画像アップロード(doUpload、大きめのPOST)がプロキシ経由で
-    // net::ERR_EMPTY_RESPONSEで100%失敗する一方、同じプロキシでの軽いGET
-    // (ログイン・画面遷移)は安定して成功していた。ログイン等でも失敗しないなら
-    // salonboard.com側が一律不安定とは考えにくく、プロキシのCONNECTトンネル越しの
-    // HTTP/2で大きめのPOSTを送った場合に相性問題が起きている可能性を疑い、
-    // HTTP/2を無効化してHTTP/1.1を強制する(プロキシ経由通信でよくある既知の
-    // 回避策)。プロキシ未設定時(直接アクセス)には影響しない。
-    args.push('--disable-http2')
+  let proxySessionId: string | null = null
+  let anonymizedProxyUrl: string | null = null
+
+  if (proxyServer && proxyUsername && proxyPassword) {
+    proxySessionId = sessionId || Math.random().toString(36).slice(2, 10)
+    // 2026-08-13追記(Bright Data→DataImpulseへ契約変更): セッションID
+    // (同一出口IPを維持する単位)の指定方法がプロバイダごとに異なる。
+    // Bright Dataは`-session-<ID>`というユーザー名サフィックスだったが、
+    // DataImpulseは`__cr.<国>;sessid.<ID>`という書式(二重アンダースコアで
+    // パラメータ開始、`;`区切りで複数指定)。`cr.jp`で日本国内IPを明示し、
+    // `sessttl.30`でセッション維持時間を明示指定する(ダッシュボード側の
+    // ローテーション間隔設定に頼ると、設定切替時にリセットされる事例が
+    // 実際にあったため、コード側でも保険として明示しておく)。
+    // 参考: https://docs.dataimpulse.com/proxies/parameters/session-id
+    const sessionUsername = `${proxyUsername}__cr.jp;sessid.${proxySessionId};sessttl.30`
+    const upstreamUrl = buildAuthenticatedProxyUrl(proxyServer, sessionUsername, proxyPassword)
+    anonymizedProxyUrl = await anonymizeProxy(upstreamUrl)
+    args.push(`--proxy-server=${anonymizedProxyUrl}`)
+    console.log(
+      `[launchBrowser] プロキシ経由で起動(proxy-chain中継): セッションID=${proxySessionId}` +
+        `${sessionId ? '(固定・前回成功実績あり)' : '(新規発行)'}`
+    )
+  } else if (proxyServer) {
+    console.log('[launchBrowser] SALONBOARD_PROXY_USERNAME/PASSWORDが未設定のため直接アクセスで起動')
+  } else {
+    console.log('[launchBrowser] プロキシ未設定、直接アクセスで起動')
   }
 
   // 2026-08-10追記: headlessモードは一貫してSALON BOARD側のボット対策に
   // 弾かれることを確認したため、非headless(画面ありモード)で起動する。
   // コンテナ側(Dockerfile)でXvfb経由(`xvfb-run`)での起動が前提。
-  return puppeteerExtra.launch({
+  const browser = await puppeteerExtra.launch({
     headless: false,
     args
   })
+
+  return { browser, proxySessionId, anonymizedProxyUrl }
 }
 
 /**
@@ -95,39 +206,12 @@ export async function launchBrowser(): Promise<Browser> {
  * 非headless(実ブラウザウィンドウ)では正常に動作したことが確認されている。
  * headlessで動かす都合上、典型的なheadless検知ポイント(navigator.webdriver・
  * User-Agent・viewport等)を可能な範囲でごまかす。
+ *
+ * プロキシ認証(proxy-chainのローカル取次サーバーへの接続)は認証不要のため、
+ * ここではpage.authenticate()を呼ばない(launchBrowser()参照)。
  */
-export type NewAutomationPageResult = {
-  page: Page
-  proxySessionId: string | null
-}
-
-export async function newAutomationPage(
-  browser: Browser,
-  log?: AutomationLogger,
-  preferredProxySessionId?: string | null
-): Promise<NewAutomationPageResult> {
+export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
   const page = await browser.newPage()
-
-  // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)のユーザー名に
-  // `-session-<任意の文字列>`を付与すると、session値ごとにプール内の別IPが
-  // 割り当てられる。当初はブラウザ起動のたびにランダムなsession値を付与して
-  // いたが、同一サロンアカウントへのログイン元IPが毎回変わることが、逆に
-  // ボット対策側から見て不自然(短時間のIP変動)に映っている可能性がある。
-  // 直近ログイン成功実績のあるセッションID(preferredProxySessionId)が
-  // あればそれを優先的に使い回し(=出口IPを固定)、指定が無い場合のみ
-  // 新規にランダムなセッションIDを発行する。
-  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
-  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
-  let proxySessionId: string | null = null
-  if (proxyUsername && proxyPassword) {
-    proxySessionId = preferredProxySessionId || Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
-    await page.authenticate({ username: sessionUsername, password: proxyPassword })
-    log?.(
-      `[プロキシ] セッションID=${proxySessionId} で出口IPを` +
-        `${preferredProxySessionId ? '固定(前回成功実績あり)' : '新規発行'}`
-    )
-  }
 
   // ブラウザネイティブの確認ダイアログ(window.confirm/alert等)への
   // ハンドラが無いと、Puppeteerはダイアログに応答できず固まり、
@@ -149,7 +233,24 @@ export async function newAutomationPage(
   // User-Agentも上書きせず本物の値をそのまま使う。
   await page.setViewport({ width: 1920, height: 1080 })
 
-  return { page, proxySessionId }
+  return page
+}
+
+/**
+ * 2026-08-13追記(診断用): 「セッションIDを変えても実際の出口IPは変わって
+ * いないのでは」という疑問に答えるため、サロンボードへアクセスする前に
+ * 外部の「自分のIPを調べる」サービス(ipify.org、軽量・数十バイト)へ一度
+ * アクセスし、実際に観測された出口IPをログに残す。診断専用で、失敗しても
+ * 本処理には影響させない。
+ */
+export async function checkExitIp(page: Page, log: AutomationLogger): Promise<void> {
+  try {
+    await page.goto('https://api.ipify.org/?format=json', { waitUntil: 'domcontentloaded', timeout: 15000 })
+    const text = await page.evaluate(() => document.body.innerText)
+    log(`[診断:出口IP] ${text.trim()}`)
+  } catch (err: any) {
+    log(`[診断:出口IP] 取得失敗(診断機能のみに影響): ${String(err?.message || err)}`)
+  }
 }
 
 /**
@@ -238,7 +339,11 @@ export async function loginToSalonBoard(
  * 1件のスタイル画像を「登録(下書き保存)」する。
  * 反映申請は含まない(別途 submitReflectApplication を呼ぶ必要がある)。
  */
-export async function draftRegisterStyle(page: Page, input: StylePostInput, log: AutomationLogger): Promise<void> {
+export async function draftRegisterStyle(
+  page: Page,
+  input: StylePostInput,
+  log: AutomationLogger
+): Promise<void> {
   log('スタイル一覧ページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
@@ -274,200 +379,213 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
   log('写真をアップロード中...')
   await uploadFrontImage(page, input.imageBuffer, input.imageFileName, log)
 
-  // ---- スタイリスト選択 ----
-  await page.select('#stylistCheckCd', input.stylistSelectValue)
+  // 2026-08-13追記(ユーザー指定ルール): 画像アップロード成功後に
+  // 後続工程(フォーム入力・登録確認等)で失敗した場合、IPを切り替えて
+  // 最初からやり直すと同じ画像を何度も送り直すことになり通信量を浪費する
+  // ため、このエラーには afterUploadSuccess フラグを付けて呼び出し元
+  // (index.ts)へ伝え、以降のリトライを行わずこのスタイルの投稿を
+  // 打ち切れるようにする。
+  try {
 
-  // ---- スタイリストコメント(最大120文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
-    if (el) el.value = text
-  }, input.stylistComment.slice(0, 120))
+    // ---- スタイリスト選択 ----
+    await page.select('#stylistCheckCd', input.stylistSelectValue)
 
-  // ---- スタイル名(最大30文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
-    if (el) el.value = text
-  }, input.styleName.slice(0, 30))
+    // ---- スタイリストコメント(最大120文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
+      if (el) el.value = text
+    }, input.stylistComment.slice(0, 120))
 
-  // ---- カテゴリ(レディース/メンズ) ----
-  const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
-  await page.click(categoryRadioId)
-  await sleep(300)
+    // ---- スタイル名(最大30文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
+      if (el) el.value = text
+    }, input.styleName.slice(0, 30))
 
-  // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
-  const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
-  const lengthHandle = await page.$(lengthSelectId)
-  if (lengthHandle) {
-    await page.select(lengthSelectId, input.hairLengthValue)
-  } else {
-    log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
-  }
+    // ---- カテゴリ(レディース/メンズ) ----
+    const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
+    await page.click(categoryRadioId)
+    await sleep(300)
 
-  // ---- メニュー内容チェックボックス(任意) ----
-  if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
-    for (const mc of input.menuContentsCdList) {
-      const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
-      if (cb) await cb.click()
+    // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
+    const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
+    const lengthHandle = await page.$(lengthSelectId)
+    if (lengthHandle) {
+      await page.select(lengthSelectId, input.hairLengthValue)
+    } else {
+      log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
     }
-  }
 
-  // ---- メニュー詳細(必須、最大50文字) ----
-  await page.evaluate((text: string) => {
-    const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
-    if (el) el.value = text
-  }, input.menuDetailText.slice(0, 50))
-
-  // ---- クーポン(任意) ----
-  // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
-  // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
-  // モーダルUIを操作せず直接値をセットする。
-  if (input.couponSelectValue) {
-    await page.evaluate((couponId: string) => {
-      const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
-      if (el) el.value = couponId
-    }, input.couponSelectValue)
-  }
-
-  // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
-  // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
-  // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
-  // イベントを発生させる必要がある。
-  if (input.hashtags && input.hashtags.length > 0) {
-    for (const rawTag of input.hashtags.slice(0, 20)) {
-      const tag = rawTag.trim().slice(0, 40)
-      if (!tag) continue
-
-      const hashTagInput = await page.$('#hashTagTxt')
-      if (!hashTagInput) {
-        log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
-        break
+    // ---- メニュー内容チェックボックス(任意) ----
+    if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
+      for (const mc of input.menuContentsCdList) {
+        const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
+        if (cb) await cb.click()
       }
-      await hashTagInput.click({ count: 3 })
-      await page.keyboard.press('Backspace').catch(() => {})
-      await hashTagInput.type(tag, { delay: 20 })
-      await sleep(200)
+    }
 
-      const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
-      if (!addBtn) {
-        log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
-        break
+    // ---- メニュー詳細(必須、最大50文字) ----
+    await page.evaluate((text: string) => {
+      const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
+      if (el) el.value = text
+    }, input.menuDetailText.slice(0, 50))
+
+    // ---- クーポン(任意) ----
+    // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
+    // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
+    // モーダルUIを操作せず直接値をセットする。
+    if (input.couponSelectValue) {
+      await page.evaluate((couponId: string) => {
+        const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
+        if (el) el.value = couponId
+      }, input.couponSelectValue)
+    }
+
+    // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
+    // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
+    // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
+    // イベントを発生させる必要がある。
+    if (input.hashtags && input.hashtags.length > 0) {
+      for (const rawTag of input.hashtags.slice(0, 20)) {
+        const tag = rawTag.trim().slice(0, 40)
+        if (!tag) continue
+
+        const hashTagInput = await page.$('#hashTagTxt')
+        if (!hashTagInput) {
+          log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
+          break
+        }
+        await hashTagInput.click({ count: 3 })
+        await page.keyboard.press('Backspace').catch(() => {})
+        await hashTagInput.type(tag, { delay: 20 })
+        await sleep(200)
+
+        const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
+        if (!addBtn) {
+          log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
+          break
+        }
+        await addBtn.click()
+        await sleep(200)
       }
-      await addBtn.click()
-      await sleep(200)
     }
-  }
 
-  // ---- 送信前セルフチェック ----
-  const preflight = await page.evaluate(() => {
-    const val = (id: string) =>
-      (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
-      '(要素なし)'
-    const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
-    return {
-      styleRegistFormat:
-        (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
-          ?.value ?? '(未選択)',
-      frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
-      stylistCheckCd: val('stylistCheckCd'),
-      stylistCommentTxt: val('stylistCommentTxt'),
-      styleNameTxt: val('styleNameTxt'),
-      styleCategoryCd01: checked('styleCategoryCd01'),
-      styleCategoryCd02: checked('styleCategoryCd02'),
-      ladiesHairLengthCd: val('ladiesHairLengthCd'),
-      menuDetailTxt: val('menuDetailTxt')
+    // ---- 送信前セルフチェック ----
+    const preflight = await page.evaluate(() => {
+      const val = (id: string) =>
+        (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
+        '(要素なし)'
+      const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
+      return {
+        styleRegistFormat:
+          (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
+            ?.value ?? '(未選択)',
+        frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
+        stylistCheckCd: val('stylistCheckCd'),
+        stylistCommentTxt: val('stylistCommentTxt'),
+        styleNameTxt: val('styleNameTxt'),
+        styleCategoryCd01: checked('styleCategoryCd01'),
+        styleCategoryCd02: checked('styleCategoryCd02'),
+        ladiesHairLengthCd: val('ladiesHairLengthCd'),
+        menuDetailTxt: val('menuDetailTxt')
+      }
+    })
+    log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
+
+    // ---- 保存(doRegister) ----
+    log('スタイルを登録中...')
+    const doRegisterHandle = await page.$('[onclick*="doRegister("]')
+    if (!doRegisterHandle) {
+      throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
     }
-  })
-  log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+      doRegisterHandle.click()
+    ])
 
-  // ---- 保存(doRegister) ----
-  log('スタイルを登録中...')
-  const doRegisterHandle = await page.$('[onclick*="doRegister("]')
-  if (!doRegisterHandle) {
-    throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
-  }
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    doRegisterHandle.click()
-  ])
-
-  // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
-  // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
-  //
-  // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
-  // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
-  // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
-  // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
-  // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
-  // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
-  // である「登録が完了しました。」の文言も検知対象に加える。
-  const registeredStyleId = await page
-    .waitForFunction(
-      () => {
-        const el = document.getElementById('styleId') as HTMLInputElement | null
-        if (el && /^L\d{9}$/.test(el.value)) return el.value
-        const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
-        if (urlMatch) return urlMatch[1]
-        if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
-        return false
-      },
-      { timeout: 20000 }
-    )
-    .then((handle) => handle.jsonValue() as Promise<string | false>)
-    .catch(() => false)
-
-  if (!registeredStyleId) {
-    const currentUrl = page.url()
-    // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
-    // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
-    // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
-    // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
-    // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
-    // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
-    // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
-    // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
-    // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
-    // 可能性の傍証)を診断ログに残すのみとする。
-    const isStyleListPage = /styleList/i.test(currentUrl)
-    const diag = await page
-      .evaluate(
-        (styleName: string, isListPage: boolean) => {
-          const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
-          const errorEls = isListPage
-            ? []
-            : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
-                .map((el) => el.textContent?.trim())
-                .filter((t) => t)
-                .slice(0, 3)
-          const nameMatchCount =
-            isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
-          return {
-            styleIdElExists: !!styleIdEl,
-            styleIdElValue: styleIdEl?.value ?? null,
-            errorTexts: errorEls,
-            isStyleListPage: isListPage,
-            nameMatchCount
-          }
+    // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
+    // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
+    //
+    // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
+    // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
+    // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
+    // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
+    // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
+    // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
+    // である「登録が完了しました。」の文言も検知対象に加える。
+    const registeredStyleId = await page
+      .waitForFunction(
+        () => {
+          const el = document.getElementById('styleId') as HTMLInputElement | null
+          if (el && /^L\d{9}$/.test(el.value)) return el.value
+          const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
+          if (urlMatch) return urlMatch[1]
+          if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
+          return false
         },
-        input.styleName.slice(0, 30),
-        isStyleListPage
+        { timeout: 20000 }
       )
-      .catch(() => null)
-    const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
-    log(
-      `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
-        `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
-        `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
-    )
-    throw new Error(
-      'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
-        'サーバー側で実際に登録されていない可能性があります。'
-    )
-  }
+      .then((handle) => handle.jsonValue() as Promise<string | false>)
+      .catch(() => false)
 
-  if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
-    log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
-  } else {
-    log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+    if (!registeredStyleId) {
+      const currentUrl = page.url()
+      // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
+      // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
+      // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
+      // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
+      // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
+      // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
+      // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
+      // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
+      // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
+      // 可能性の傍証)を診断ログに残すのみとする。
+      const isStyleListPage = /styleList/i.test(currentUrl)
+      const diag = await page
+        .evaluate(
+          (styleName: string, isListPage: boolean) => {
+            const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+            const errorEls = isListPage
+              ? []
+              : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+                  .map((el) => el.textContent?.trim())
+                  .filter((t) => t)
+                  .slice(0, 3)
+            const nameMatchCount =
+              isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
+            return {
+              styleIdElExists: !!styleIdEl,
+              styleIdElValue: styleIdEl?.value ?? null,
+              errorTexts: errorEls,
+              isStyleListPage: isListPage,
+              nameMatchCount
+            }
+          },
+          input.styleName.slice(0, 30),
+          isStyleListPage
+        )
+        .catch(() => null)
+      const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
+      log(
+        `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
+          `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
+          `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
+      )
+      throw new Error(
+        'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
+          'サーバー側で実際に登録されていない可能性があります。'
+      )
+    }
+
+    if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
+      log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
+    } else {
+      log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
+    }
+  } catch (err: any) {
+    const wrapped = new Error(String(err?.message || err))
+    ;(wrapped as any).afterUploadSuccess = true
+    throw wrapped
   }
 }
 
@@ -501,62 +619,6 @@ export async function draftRegisterStyle(page: Page, input: StylePostInput, log:
  *     なくspanタグ、IDも FRONT_IMG_ID ではなく FRONT_IMG_ID_ID)
  */
 
-/**
- * 2026-08-11追記(診断用): 画像アップロードがプロキシ経由(net::ERR_EMPTY_RESPONSE)で
- * 失敗した際、「同じCookie・同じfile input方式・プロキシなし」で同じアップロードを
- * 試すとどうなるかを自動で比較する。プロキシありのブラウザで取得済みのCookieを
- * プロキシなしの別ブラウザに引き継ぐことで、再ログインなしに同一セッションのまま
- * 経路だけを変えた比較ができる。結果はジョブの成否には影響させず、診断ログにのみ残す。
- */
-async function diagnoseUploadWithoutProxy(
-  proxiedPage: Page,
-  imageBuffer: ArrayBuffer,
-  fileName: string
-): Promise<string> {
-  const cookies = await proxiedPage.cookies().catch(() => [])
-  const currentUrl = proxiedPage.url()
-  let diagBrowser: Browser | null = null
-  try {
-    diagBrowser = await puppeteerExtra.launch({
-      headless: false,
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-    })
-    const diagPage = await diagBrowser.newPage()
-    await diagPage.setViewport({ width: 1920, height: 1080 })
-    if (cookies.length > 0) await diagPage.setCookie(...(cookies as any))
-    await diagPage.goto(currentUrl, { waitUntil: 'domcontentloaded', timeout: 20000 })
-
-    await diagPage.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 10000 })
-    await diagPage.click('#FRONT_IMG_ID_IMG')
-    const fileInput = (await diagPage.waitForSelector('#formFile', { timeout: 10000 })) as ElementHandle<HTMLInputElement> | null
-    if (!fileInput) {
-      return '[診断:プロキシなし比較] 失敗: #formFileが見つかりませんでした(Cookie流用でのログイン状態再現に失敗した可能性)'
-    }
-
-    const tmpPath = join(tmpdir(), `salonboard-diag-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
-    await writeFile(tmpPath, Buffer.from(imageBuffer))
-    try {
-      await fileInput.uploadFile(tmpPath)
-      await diagPage.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 10000 })
-      await diagPage.click('input.jscImageUploaderModalSubmitButton')
-      await diagPage.waitForFunction(
-        () => {
-          const el = document.getElementById('FRONT_IMG_ID_ID')
-          return !!el && !!el.textContent && el.textContent.trim().length > 0
-        },
-        { timeout: 20000 }
-      )
-      return '[診断:プロキシなし比較] 成功(同じCookie・同じ手順でプロキシを外したら通った → プロキシ経由アップロードが原因の濃厚な証拠)'
-    } finally {
-      await unlink(tmpPath).catch(() => {})
-    }
-  } catch (err: any) {
-    return `[診断:プロキシなし比較] 失敗: ${String(err?.message || err)} (プロキシ以外の要因の可能性、または比較テスト自体の不備)`
-  } finally {
-    await diagBrowser?.close().catch(() => {})
-  }
-}
-
 async function uploadFrontImage(
   page: Page,
   imageBuffer: ArrayBuffer,
@@ -572,242 +634,293 @@ async function uploadFrontImage(
     throw new Error('画像アップロードに失敗しました(ファイル選択方式): #formFile が見つかりませんでした')
   }
 
-  // 画像を一時ファイルに書き出し、実ファイルとしてuploadFile()に渡す
-  // (CDPのDOM.setFileInputFilesは実ファイルパスが必須のため)。
-  //
-  // 2026-08-11修正(重大バグ): 従来はuploadFile()呼び出し直後のfinallyで
-  // 一時ファイルを削除していたが、実際のdoUpload通信は後続の「登録する」
-  // ボタンをクリックした時点で発生する。そのため通信が走る時点では参照先の
-  // 一時ファイルが既に削除済みになっており、毎回net::ERR_FILE_NOT_FOUNDで
-  // 失敗していた(実機ログで確認)。削除はアップロード完了検知まで含めた
-  // 一連の処理全体が終わった後に行うよう修正する。
-  const tmpPath = join(tmpdir(), `salonboard-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
-  await writeFile(tmpPath, Buffer.from(imageBuffer))
   log(`アップロード画像サイズ: ${(imageBuffer.byteLength / 1024).toFixed(1)}KB`)
-  try {
-    // 2026-08-11修正(重大バグ): net::ERR_EMPTY_RESPONSE失敗時、モーダルの
-    // 実際の表示内容を確認したところ、失敗後はモーダルがファイル未選択の
-    // 初期状態(「ここにファイルをドラッグ&ドロップ...」)にリセットされて
-    // いることが判明した。従来は「登録する」ボタンを再クリックするだけの
-    // リトライだったため、ファイルが選択されていない状態でクリックしても
-    // 何も起きず(ボタンは非活性のまま)、即座にリトライ不可と判定していた。
-    // ファイル選択(uploadFile)からやり直す必要があるため、選択〜送信〜
-    // 完了検知までの一連の流れ全体を最大3回リトライするよう修正する。
-    const maxAttempts = 3
-    let lastError: Error | null = null
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      // 2026-08-11修正(重大バグ): 失敗後のクリックが"Node is either not
-      // clickable or not an Element"で失敗する原因を実機のDOM状態(要素の
-      // offsetParentがnull、座標が全て0)で特定した。モーダルは「ファイル
-      // 未選択状態にリセット」されるのではなく、実際には非表示(モーダルごと
-      // 閉じた状態)になっていた。#formFileの要素自体はDOMに残るためセレクタ
-      // には一致するが、非表示のモーダル内にあるためクリック不可能だった。
-      // プレースホルダー(#FRONT_IMG_ID_IMG)を再クリックしてモーダルを
-      // 明示的に開き直してから、ファイル選択をやり直す。
-      if (attempt > 1) {
-        await page.waitForSelector('#FRONT_IMG_ID_IMG', { timeout: 15000 })
-        await page.click('#FRONT_IMG_ID_IMG')
-      }
-      const currentFileInput =
-        attempt === 1
-          ? fileInput
-          : ((await page.waitForSelector('#formFile', { timeout: 15000 })) as ElementHandle<HTMLInputElement> | null)
-      if (!currentFileInput) {
-        lastError = new Error(`画像アップロードのリトライ不可: #formFile が再取得できませんでした(試行${attempt}回目)`)
-        break
-      }
-      await currentFileInput.uploadFile(tmpPath)
+  {
+    // 2026-08-13追記(方針転換①): 従来はuploadFile()(内部的にCDPの
+    // DOM.setFileInputFilesを使用)で実ファイルパスを渡していたが、これは
+    // Chromiumの内部実装上、実ファイルからのストリーム読み込みという
+    // uploadFile()特有の経路を通る。プロキシ/HTTP2無効化等の経路側の対策を
+    // 尽くしてもnet::ERR_ABORTEDが再発したことから、この経路自体に問題が
+    // ある可能性を疑い、ページ内JavaScriptでFile/DataTransferオブジェクトを
+    // 直接組み立てて<input>の.filesにセットする方式に変更する(実ファイルを
+    // 一切介さない)。これによりuploadFile()/CDPのDOM.setFileInputFilesを
+    // 完全に迂回できる。
+    const base64Image = Buffer.from(imageBuffer).toString('base64')
+    await fileInput.evaluate(
+      (el, args) => {
+        const input = el as HTMLInputElement
+        const binary = atob(args.base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const file = new File([bytes], args.fileName, { type: 'image/jpeg' })
+        const dataTransfer = new DataTransfer()
+        dataTransfer.items.add(file)
+        input.files = dataTransfer.files
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      },
+      { base64: base64Image, fileName }
+    )
+  }
+  log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
+  await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
 
-      log(`ファイル選択完了。「登録する」ボタンの活性化を待機中...(試行${attempt}/${maxAttempts})`)
-      await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+  {
 
-      // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
-      // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
-      // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
-      // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
-      const uploadEvents: string[] = []
-      const onRequestFinished = (req: any) => {
-        if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
-      }
-      const onResponse = async (res: any) => {
-        if (/doUpload/i.test(res.url())) {
-          let bodySnippet = ''
-          try {
-            bodySnippet = (await res.text()).slice(0, 300)
-          } catch {}
-          uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
-        }
-      }
-      const onRequestFailed = (req: any) => {
-        if (/doUpload/i.test(req.url())) {
-          uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
-        }
-      }
-      page.on('request', onRequestFinished)
-      page.on('response', onResponse)
-      page.on('requestfailed', onRequestFailed)
+    // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
+    // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
+    // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
+    // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
+    //
+    // 2026-08-13追記3: Puppeteerの高レベルAPI(page.on('request')等)と生の
+    // CDPイベントとでは配送経路の内部処理が異なり、実際の発生順序とログへの
+    // 追記順序が一致しない場合があることがわかった(ページ遷移検知がリクエスト
+    // 送信より先に記録されたが、本当に先に起きたのかは配列の並びだけからは
+    // 断定できない)。各イベントに発生時刻(アップロード試行開始からの経過ms)を
+    // 付けて、真の時系列を後から復元できるようにする。
+    const uploadStartedAt = Date.now()
+    const uploadEvents: string[] = []
+    const pushEvent = (msg: string) => uploadEvents.push(`+${Date.now() - uploadStartedAt}ms ${msg}`)
 
-      // 2026-08-11追記(診断用): Puppeteerの高レベルAPI(requestfailed)だけでは
-      // net::ERR_EMPTY_RESPONSEの詳細(プロキシのトンネル自体が張れなかったのか、
-      // 張った後に応答が来なかったのか)が分からない。CDPのNetwork.loadingFailedは
-      // blockedReason/corsErrorStatus等の追加情報を持つことがあるため、生のCDP
-      // イベントも合わせて記録する。
-      const cdpRequestUrls = new Map<string, string>()
-      let cdpClient: any = null
-      const onCdpRequestWillBeSent = (params: any) => {
-        cdpRequestUrls.set(params.requestId, params.request?.url ?? '')
-      }
-      const onCdpLoadingFailed = (params: any) => {
-        const url = cdpRequestUrls.get(params.requestId) ?? ''
-        if (/doUpload/i.test(url)) {
-          uploadEvents.push(
-            `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
-              `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
-          )
-        }
-      }
-      try {
-        const client = await page.target().createCDPSession()
-        await client.send('Network.enable')
-        client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
-        client.on('Network.loadingFailed', onCdpLoadingFailed)
-        cdpClient = client as any
-      } catch (e: any) {
-        uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
-      }
+    // 2026-08-13追記(高速失敗化): 従来はdoUploadが失敗した場合でも、
+    // 完了検知のwaitForFunctionが45秒のタイムアウトに達するまで律儀に
+    // 待ち続けていた。実際にはrequestfailed/CDP loadingFailedイベントで
+    // 数秒〜35秒程度で失敗が分かっていることが多いため、そのイベントを
+    // 検知した時点で即座に失敗として切り上げる(Promise.raceで先着判定)。
+    // これにより1回あたりの無駄待ちを減らし、同じ総時間内でより多くの
+    // 候補IPを試せるようにする。
+    let resolveDoUploadFailure: ((reason: string) => void) | null = null
+    const doUploadFailurePromise = new Promise<string>((resolve) => {
+      resolveDoUploadFailure = resolve
+    })
 
-      try {
-        // 2026-08-11修正(重大バグ): 実機ログで試行2・3回目に"Node is either
-        // not clickable or not an Element"というクリック失敗が確認された。
-        // isActive検知直後はモーダル内のDOM遷移(ファイル再選択後の再描画等)が
-        // まだ収まっていない可能性があるため、少し待ってからクリックし、
-        // それでも失敗する場合は短い間隔で数回リトライする。
-        await new Promise((resolve) => setTimeout(resolve, 500))
-        let clickError: any = null
-        for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
-          try {
-            await page.click('input.jscImageUploaderModalSubmitButton')
-            clickError = null
-            break
-          } catch (e: any) {
-            clickError = e
-            // 2026-08-11追記(診断用): 待機+リトライを追加してもなお
-            // "not clickable"が解消しないケースが実機で確認された。単純な
-            // アニメーションタイミングの問題ではない可能性があるため、
-            // クリック失敗時の実際のDOM状態(表示状態・座標・一致要素数)を
-            // 記録し、原因特定に使う。
-            try {
-              const buttonState = await page.evaluate(() => {
-                const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
-                return buttons.map((btn) => {
-                  const el = btn as HTMLInputElement
-                  const rect = el.getBoundingClientRect()
-                  const style = window.getComputedStyle(el)
-                  return {
-                    isActiveClass: el.classList.contains('isActive'),
-                    disabled: el.disabled,
-                    offsetParentIsNull: el.offsetParent === null,
-                    display: style.display,
-                    visibility: style.visibility,
-                    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-                  }
-                })
-              })
-              log(
-                `[診断:クリック失敗詳細](試行${attempt}/${maxAttempts}, クリック試行${clickAttempt}/3) ` +
-                  `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
-              )
-            } catch (evalErr: any) {
-              log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
-            }
-            await new Promise((resolve) => setTimeout(resolve, 500))
-          }
-        }
-        if (clickError) throw clickError
+    // 2026-08-13追記4(診断強化): doUpload関連のイベントだけでなく、待機中に
+    // 他の通信(広告/分析ビーコン等)が普通に流れているかも記録する。これにより
+    // 「プロキシ経路全体が詰まっているのか」「doUploadだけが狙い撃ちで
+    // 止められているのか」を次回の障害発生時に切り分けられるようにする。
+    // 件数が多くなりがちなので、詳細は先頭数件のサンプルのみ保持する。
+    let otherRequestCount = 0
+    let otherResponseCount = 0
+    let otherFailureCount = 0
+    const otherResponseSamples: string[] = []
+    const otherFailureSamples: string[] = []
 
-        // 2026-08-11追記(診断用): 人間の手動操作では「登録する」クリック後に
-        // 数秒のローディングアニメーションが表示され、その後モーダルが閉じて
-        // 画像IDが表示される。自動化のクリックが本当に同じ登録動作を引き起こして
-        // いるかを確認するため、当初はクリック直後のスクリーンショットをbase64で
-        // 記録していたが、実行履歴画面での表示・コピー時に長すぎる文字列が途中で
-        // 切れてしまい、しかもそれ以降(試行2・3回目分)のログまで一緒に失われる
-        // 実害が確認された。そのため画像ではなく、短いテキストで済むDOM状態の
-        // チェックに変更する。
+    const onRequestFinished = (req: any) => {
+      if (/doUpload/i.test(req.url())) {
+        pushEvent(`request送信: ${req.method()} ${req.url()}`)
+      } else {
+        otherRequestCount++
+      }
+    }
+    const onResponse = async (res: any) => {
+      if (/doUpload/i.test(res.url())) {
+        let bodySnippet = ''
         try {
-          await new Promise((resolve) => setTimeout(resolve, 500))
-          const domSnapshot = await page.evaluate(() => {
-            // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
-            // 誤検知するため、"loading"で判定する("upload"は含まない)。
-            const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
-              .map((el) => el.className)
-              .filter((c) => typeof c === 'string' && c.length > 0)
-              .slice(0, 5)
-            const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
-            const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
-            return {
-              loadingLikeClasses: loadingLike,
-              submitButtonStillInDom: !!submitButton,
-              submitButtonDisabled: submitButton ? submitButton.disabled : null,
-              completionSpanText: completionSpan ? completionSpan.textContent : null
-            }
-          })
-          log(`[診断:DOM状態](試行${attempt}/${maxAttempts}) クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
-        } catch (e: any) {
-          log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
-        }
+          bodySnippet = (await res.text()).slice(0, 300)
+        } catch {}
+        pushEvent(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
+      } else {
+        otherResponseCount++
+        if (otherResponseSamples.length < 3) otherResponseSamples.push(`status=${res.status()} ${res.url()}`)
+      }
+    }
+    const onRequestFailed = (req: any) => {
+      if (/doUpload/i.test(req.url())) {
+        const reason = req.failure?.()?.errorText ?? '不明'
+        pushEvent(`request失敗: ${req.url()} -> ${reason}`)
+        resolveDoUploadFailure?.(reason)
+      } else {
+        otherFailureCount++
+        const reason = req.failure?.()?.errorText ?? '不明'
+        if (otherFailureSamples.length < 3) otherFailureSamples.push(`${req.url()} -> ${reason}`)
+      }
+    }
+    page.on('request', onRequestFinished)
+    page.on('response', onResponse)
+    page.on('requestfailed', onRequestFailed)
 
-        log(`アップロード完了の検知を待機中...(試行${attempt}/${maxAttempts})`)
-        await page.waitForFunction(
+    // 2026-08-11追記(診断用): Puppeteerの高レベルAPI(requestfailed)だけでは
+    // net::ERR_EMPTY_RESPONSEの詳細(プロキシのトンネル自体が張れなかったのか、
+    // 張った後に応答が来なかったのか)が分からない。CDPのNetwork.loadingFailedは
+    // blockedReason/corsErrorStatus等の追加情報を持つことがあるため、生のCDP
+    // イベントも合わせて記録する。
+    const cdpRequestUrls = new Map<string, string>()
+    let cdpClient: any = null
+    const onCdpRequestWillBeSent = (params: any) => {
+      cdpRequestUrls.set(params.requestId, params.request?.url ?? '')
+    }
+    const onCdpLoadingFailed = (params: any) => {
+      const url = cdpRequestUrls.get(params.requestId) ?? ''
+      if (/doUpload/i.test(url)) {
+        pushEvent(
+          `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
+            `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
+        )
+        resolveDoUploadFailure?.(params.errorText)
+      }
+    }
+    // 2026-08-13追記(診断用): proxy-chain化・別セッションへの切替・HTTP/2無効化の
+    // いずれを行ってもnet::ERR_ABORTED(canceled=true)が同一症状で再発したため、
+    // 経路(プロキシ/プロトコル)側の問題という仮説を疑い直す必要が生じた。
+    // canceled=trueはCDP上「読み込み元(ブラウザ/ページ側)によるキャンセル」を
+    // 意味する値であり、doUpload実行中にページ遷移(ナビゲーション)が走れば
+    // Chromeは自動的に未完了のリクエストを全キャンセルする。この可能性を
+    // 直接確認するため、Page domainのフレーム遷移イベントも合わせて記録する。
+    //
+    // 2026-08-13追記2: 実機ログでabout:blankへの遷移が実際に検知された
+    // (frameStartedLoadingも2回発火)。ただしメインフレームなのか、無関係な
+    // 別iframe(広告/解析等)のリロードなのかで意味が全く異なる
+    // (別iframeのナビゲーションはそのiframe自身が発行したリクエストしか
+    // キャンセルしない)。両者を区別するため、メインフレームIDを事前に
+    // 取得しておき、遷移したフレームがメインかどうか・parentIdの有無を記録する。
+    let navigationDuringUpload = false
+    let mainFrameId: string | null = null
+    const onCdpFrameNavigated = (params: any) => {
+      navigationDuringUpload = true
+      const frameId = params.frame?.id ?? '不明'
+      const parentId = params.frame?.parentId ?? null
+      const isMainFrame = mainFrameId ? frameId === mainFrameId : parentId === null
+      pushEvent(
+        `[診断] ページ遷移を検知: url=${params.frame?.url ?? '不明'} frameId=${frameId} ` +
+          `parentId=${parentId ?? 'なし(トップレベル)'} メインフレーム判定=${isMainFrame ? 'はい' : 'いいえ(サブフレーム)'}`
+      )
+    }
+    const onCdpFrameStartedLoading = (params: any) => {
+      const frameId = params.frameId ?? '不明'
+      const isMainFrame = mainFrameId ? frameId === mainFrameId : '不明'
+      pushEvent(`[診断] フレームの再読み込み開始を検知(frameStartedLoading) frameId=${frameId} メインフレーム判定=${isMainFrame}`)
+    }
+    try {
+      const client = await page.target().createCDPSession()
+      await client.send('Network.enable')
+      await client.send('Page.enable')
+      try {
+        const frameTree: any = await client.send('Page.getFrameTree')
+        mainFrameId = frameTree?.frameTree?.frame?.id ?? null
+      } catch {}
+      client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
+      client.on('Network.loadingFailed', onCdpLoadingFailed)
+      client.on('Page.frameNavigated', onCdpFrameNavigated)
+      client.on('Page.frameStartedLoading', onCdpFrameStartedLoading)
+      cdpClient = client as any
+    } catch (e: any) {
+      uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+    }
+
+    try {
+      // 2026-08-11修正(重大バグ): isActive検知直後はモーダル内のDOM遷移が
+      // まだ収まっていない可能性があるため、少し待ってからクリックし、
+      // それでも失敗する場合は短い間隔で数回リトライする(これはSALON BOARD
+      // 側との通信を伴わない純粋なUI操作のリトライであり、IPを変える対象の
+      // 「アップロード失敗」とは別物のため引き続き行う)。
+      await new Promise((resolve) => setTimeout(resolve, 500))
+      let clickError: any = null
+      for (let clickAttempt = 1; clickAttempt <= 3; clickAttempt++) {
+        try {
+          await page.click('input.jscImageUploaderModalSubmitButton')
+          clickError = null
+          break
+        } catch (e: any) {
+          clickError = e
+          try {
+            const buttonState = await page.evaluate(() => {
+              const buttons = Array.from(document.querySelectorAll('input.jscImageUploaderModalSubmitButton'))
+              return buttons.map((btn) => {
+                const el = btn as HTMLInputElement
+                const rect = el.getBoundingClientRect()
+                const style = window.getComputedStyle(el)
+                return {
+                  isActiveClass: el.classList.contains('isActive'),
+                  disabled: el.disabled,
+                  offsetParentIsNull: el.offsetParent === null,
+                  display: style.display,
+                  visibility: style.visibility,
+                  rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+                }
+              })
+            })
+            log(
+              `[診断:クリック失敗詳細](クリック試行${clickAttempt}/3) ` +
+                `一致要素数=${buttonState.length} 詳細=${JSON.stringify(buttonState)}`
+            )
+          } catch (evalErr: any) {
+            log(`[診断:クリック失敗詳細] 取得失敗: ${String(evalErr?.message || evalErr)}`)
+          }
+          await new Promise((resolve) => setTimeout(resolve, 500))
+        }
+      }
+      if (clickError) throw clickError
+
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 500))
+        const domSnapshot = await page.evaluate(() => {
+          // "load"だと"upload"系のクラス名(常時存在するアップロード一覧UI)を
+          // 誤検知するため、"loading"で判定する("upload"は含まない)。
+          const loadingLike = Array.from(document.querySelectorAll('[class*="loading" i], [class*="spinner" i], [class*="progress" i]'))
+            .map((el) => el.className)
+            .filter((c) => typeof c === 'string' && c.length > 0)
+            .slice(0, 5)
+          const submitButton = document.querySelector('input.jscImageUploaderModalSubmitButton') as HTMLInputElement | null
+          const completionSpan = document.getElementById('FRONT_IMG_ID_ID')
+          return {
+            loadingLikeClasses: loadingLike,
+            submitButtonStillInDom: !!submitButton,
+            submitButtonDisabled: submitButton ? submitButton.disabled : null,
+            completionSpanText: completionSpan ? completionSpan.textContent : null,
+            // 2026-08-13追記(診断用): headless:falseだがXvfb上の仮想ディスプレイに
+            // 実ユーザー操作が無いため、salonboard側のJSがdocument.hidden/
+            // hasFocus()を見て非アクティブタブ扱いのXHRを中断している可能性を
+            // 確認するために記録する。
+            visibilityState: document.visibilityState,
+            hidden: document.hidden,
+            hasFocus: document.hasFocus()
+          }
+        })
+        log(`[診断:DOM状態] クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
+      } catch (e: any) {
+        log(`[診断:DOM状態] 取得失敗(診断機能のみに影響): ${String(e?.message || e)}`)
+      }
+
+      log('アップロード完了の検知を待機中...')
+      await Promise.race([
+        page.waitForFunction(
           () => {
             const el = document.getElementById('FRONT_IMG_ID_ID')
             return !!el && !!el.textContent && el.textContent.trim().length > 0
           },
           { timeout: 45000 }
-        )
-        lastError = null
-        break
-      } catch (clickOrWaitError: any) {
-        // 2026-08-11修正(診断用): 従来はcatchの中身を受け取っておらず、
-        // 「登録する」クリック自体が例外で失敗した場合(要素が操作可能に
-        // ならない等のPuppeteerのアクショナビリティチェック失敗)の実際の
-        // エラーメッセージが握りつぶされていた。試行2回目以降で
-        // [診断:DOM状態]のログすら出ない(=クリックの行で例外が飛んでいる)
-        // ことが実機で確認されたため、原因特定のためにこのメッセージも記録する。
-        const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
-        const diag =
-          uploadEvents.length > 0
-            ? uploadEvents.join(' / ')
-            : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
-        lastError = new Error(
-          '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-            `45秒待っても検知できませんでした [診断] ${diag}`
-        )
-        if (attempt < maxAttempts) {
-          log(`画像アップロード失敗(試行${attempt}/${maxAttempts})、ファイル再選択から再試行します... [診断] ${diag}`)
-          await new Promise((resolve) => setTimeout(resolve, 3000))
-        }
-      } finally {
-        page.off('request', onRequestFinished)
-        page.off('response', onResponse)
-        page.off('requestfailed', onRequestFailed)
-        if (cdpClient) {
-          cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
-          cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
-          await cdpClient.detach().catch(() => {})
-        }
+        ),
+        doUploadFailurePromise.then((reason) => {
+          throw new Error(`doUploadリクエストが失敗しました(${reason})`)
+        })
+      ])
+    } catch (clickOrWaitError: any) {
+      const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
+      const diag =
+        uploadEvents.length > 0
+          ? uploadEvents.join(' / ')
+          : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
+      const navFlag = navigationDuringUpload ? '[診断]アップロード中にページ遷移を検知=あり ' : '[診断]アップロード中にページ遷移を検知=なし '
+      const otherTrafficFlag =
+        `[診断:他の通信] 送信=${otherRequestCount} 応答=${otherResponseCount} 失敗=${otherFailureCount}` +
+        (otherResponseSamples.length > 0 ? ` 応答例=[${otherResponseSamples.join(', ')}]` : '') +
+        (otherFailureSamples.length > 0 ? ` 失敗例=[${otherFailureSamples.join(', ')}]` : '')
+      throw new Error(
+        '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
+          `45秒待っても検知できませんでした ${navFlag}${otherTrafficFlag} [診断] ${diag}`
+      )
+    } finally {
+      page.off('request', onRequestFinished)
+      page.off('response', onResponse)
+      page.off('requestfailed', onRequestFailed)
+      if (cdpClient) {
+        cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
+        cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
+        cdpClient.off('Page.frameNavigated', onCdpFrameNavigated)
+        cdpClient.off('Page.frameStartedLoading', onCdpFrameStartedLoading)
+        await cdpClient.detach().catch(() => {})
       }
     }
-    if (lastError && process.env.SALONBOARD_PROXY_SERVER) {
-      log('[診断] プロキシなしでの比較テストを実行します(結果はこのジョブの成否には影響しません)...')
-      const comparisonResult = await diagnoseUploadWithoutProxy(page, imageBuffer, fileName).catch(
-        (e) => `[診断:プロキシなし比較] 比較テスト自体が例外で失敗: ${String(e)}`
-      )
-      log(comparisonResult)
-      lastError = new Error(`${lastError.message} ${comparisonResult}`)
-    }
-    if (lastError) throw lastError
-  } finally {
-    await unlink(tmpPath).catch(() => {})
   }
 
   const imageId = await page.evaluate(() => document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() ?? '')

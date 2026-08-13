@@ -45,6 +45,22 @@ env:
   # terraform applyしてもAPP_BASE_URL(Fargateワーカーへのコールバック先)が
   # 更新されない。デプロイの度にここで正しい値に上書きする。
   APP_BASE_URL: https://salonmotion.com
+  # /admin/status の連続失敗検知アラート用SNSトピックARN(infra/monitoring.tf、
+  # 非機密情報)。同じくlifecycle.ignore_changesの都合で、既存タスク定義には
+  # 含まれていないため、下のステップで無ければ追加する。
+  SNS_ALERT_TOPIC_ARN: arn:aws:sns:ap-northeast-1:102798329434:salonboard-worker-alerts
+  # 2026-08-14追記(重大バグ修正): NATゲートウェイ導入時、worker用の専用
+  # プライベートサブネット(subnet-06aeffd3665aec13a)にECS_SUBNET_IDSを
+  # 一時的に上書きしていたが、NATゲートウェイ撤去に伴いこのサブネット自体を
+  # terraform destroyで削除した。ECS_SUBNET_IDSを上書きするステップ自体は
+  # 撤去時に削除したが、既存タスク定義には削除済みサブネットIDが値として
+  # 残ったままカーリーオーバーし続け、以後のRunTask(手動投稿含む)が
+  # 全て「サブネットが存在しない」エラーで失敗する不具合が発生した
+  # (infra/ecs-app.tfのlifecycle.ignore_changesにより、Terraform側の
+  # 正しい値も既存タスク定義には反映されない)。デフォルトVPCの
+  # パブリックサブネット(nat-gateway.tf撤去前にNATゲートウェイ自体が
+  # 使っていた実在サブネットで確認済み)へ明示的に戻す。
+  ECS_SUBNET_IDS: subnet-0bc262c8c71215530
 
 permissions:
   id-token: write # OIDCでAWS認証するために必要
@@ -85,12 +101,70 @@ jobs:
             --query taskDefinition \
             > task-definition.json
 
+      # infra/ecs-app.tfのlifecycle.ignore_changes=[container_definitions]により、
+      # Terraform側でsecrets配列からAWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEYを
+      # 削除しても既存タスク定義には反映されない(このワークフローが実質的な
+      # 管理者のため)。発行元のSecrets Managerシークレット自体は既に削除済みで、
+      # 参照が残ったままだと新しいタスクの起動時にResourceNotFoundExceptionで
+      # 失敗し続ける(実機で確認済みの不具合)。取り除いておく。
+      - name: Remove obsolete AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY secrets
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .secrets = ((.secrets // []) | map(select(.name != "AWS_ACCESS_KEY_ID" and .name != "AWS_SECRET_ACCESS_KEY")))
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
       - name: Fix APP_BASE_URL environment variable
         run: |
           jq --arg name "$ECS_CONTAINER_NAME" --arg url "$APP_BASE_URL" '
             .containerDefinitions |= map(
               if .name == $name then
                 .environment |= map(if .name == "APP_BASE_URL" then .value = $url else . end)
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
+      # APP_BASE_URLと違い、SNS_ALERT_TOPIC_ARNは古いタスク定義には
+      # そもそも存在しないため、無ければ追加・あれば更新の両方に対応する。
+      - name: Fix SNS_ALERT_TOPIC_ARN environment variable
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" --arg arn "$SNS_ALERT_TOPIC_ARN" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .environment = (
+                  (.environment // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  (if ($names | index("SNS_ALERT_TOPIC_ARN"))
+                    then ($existing | map(if .name == "SNS_ALERT_TOPIC_ARN" then .value = $arn else . end))
+                    else $existing + [{name: "SNS_ALERT_TOPIC_ARN", value: $arn}]
+                  end)
+                )
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
+      # ECS_SUBNET_IDSにNATゲートウェイ導入時代の(既に削除済みの)プライベート
+      # サブネットIDが残ったままカーリーオーバーし続ける不具合の是正
+      # (このファイル冒頭のenv.ECS_SUBNET_IDSのコメント参照)。
+      - name: Fix ECS_SUBNET_IDS environment variable
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" --arg subnetId "$ECS_SUBNET_IDS" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .environment = (
+                  (.environment // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  (if ($names | index("ECS_SUBNET_IDS"))
+                    then ($existing | map(if .name == "ECS_SUBNET_IDS" then .value = $subnetId else . end))
+                    else $existing + [{name: "ECS_SUBNET_IDS", value: $subnetId}]
+                  end)
+                )
               else . end
             )
           ' task-definition.json > task-definition.fixed.json

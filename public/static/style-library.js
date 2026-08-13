@@ -66,6 +66,32 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // テンプレート反映対象の選択(自動投稿対象=auto_post_enabled_flagとは別物、
+  // DBには保存しないページ内限定の一時的な選択。常に未選択から始まる)
+  const templateTargetCountEl = document.getElementById('template-target-selected-count')
+  function updateTemplateTargetCount() {
+    if (templateTargetCountEl) {
+      templateTargetCountEl.textContent = document.querySelectorAll('.template-target-checkbox:checked').length
+    }
+  }
+  document.querySelectorAll('.template-target-checkbox').forEach((checkbox) => {
+    checkbox.addEventListener('change', updateTemplateTargetCount)
+  })
+  const templateTargetSelectAllBtn = document.getElementById('template-target-select-all-btn')
+  if (templateTargetSelectAllBtn) {
+    templateTargetSelectAllBtn.addEventListener('click', () => {
+      document.querySelectorAll('.template-target-checkbox').forEach((cb) => (cb.checked = true))
+      updateTemplateTargetCount()
+    })
+  }
+  const templateTargetDeselectAllBtn = document.getElementById('template-target-deselect-all-btn')
+  if (templateTargetDeselectAllBtn) {
+    templateTargetDeselectAllBtn.addEventListener('click', () => {
+      document.querySelectorAll('.template-target-checkbox').forEach((cb) => (cb.checked = false))
+      updateTemplateTargetCount()
+    })
+  }
+
   // No.欄の手入力による並び替え
   document.querySelectorAll('.style-order-input').forEach((input) => {
     input.addEventListener('change', async (e) => {
@@ -102,7 +128,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm('この画像を削除しますか？')) return
 
       try {
-        await fetch(`/style/library/delete/${imageId}`, { method: 'POST' })
+        const res = await fetch(`/style/library/delete/${imageId}`, { method: 'POST' })
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data || !data.success) {
+          alert('削除に失敗しました。')
+          return
+        }
         const card = document.querySelector(`[data-image-id="${imageId}"]`)
         if (card) card.remove()
         location.reload()
@@ -123,7 +154,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return
       }
 
-      const styleIds = Array.from(document.querySelectorAll('.style-checkbox:checked')).map((cb) =>
+      const styleIds = Array.from(document.querySelectorAll('.template-target-checkbox:checked')).map((cb) =>
         Number(cb.getAttribute('data-image-id'))
       )
       if (styleIds.length === 0) {

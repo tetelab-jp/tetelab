@@ -29,48 +29,16 @@ resource "aws_iam_role" "task" {
   assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
 }
 
-# ---------- Cloudflare(Workers)からECS RunTaskを呼ぶためのIAMユーザー ----------
-# aws4fetchでのSigV4署名にアクセスキーを使うため、ロールではなくユーザーにする。
-# 権限はこのタスク定義ファミリーへのRunTaskと、2つのロールへのPassRoleのみに絞る。
-
-resource "aws_iam_user" "cloudflare_caller" {
-  name = var.cloudflare_iam_user_name
-}
-
-data "aws_iam_policy_document" "cloudflare_caller" {
-  statement {
-    sid     = "RunStylePostTask"
-    actions = ["ecs:RunTask"]
-    # 2026-08-10追記: arn_without_revisionだけ(末尾のリビジョン番号なし)を
-    # Resourceに指定すると、実際のRunTask呼び出し時のリソースARN(必ず
-    # task-definition/salonboard-worker:6のようにリビジョン番号付き)とは
-    # 文字列として一致せず、IAMのARNマッチングはワイルドカード無指定では
-    # 完全一致のみのため、常にAccessDeniedになっていた(実機で確認済みの不具合)。
-    # 末尾に:*を付け、任意のリビジョンを許可するよう修正。
-    resources = ["${aws_ecs_task_definition.worker.arn_without_revision}:*"]
-    condition {
-      test     = "ArnEquals"
-      variable = "ecs:cluster"
-      values   = [aws_ecs_cluster.worker.arn]
-    }
-  }
-
-  statement {
-    sid       = "PassWorkerRoles"
-    actions   = ["iam:PassRole"]
-    resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn]
-  }
-}
-
-resource "aws_iam_user_policy" "cloudflare_caller" {
-  name   = "${var.project_name}-run-task"
-  user   = aws_iam_user.cloudflare_caller.name
-  policy = data.aws_iam_policy_document.cloudflare_caller.json
-}
-
-resource "aws_iam_access_key" "cloudflare_caller" {
-  user = aws_iam_user.cloudflare_caller.name
-}
+# ---------- (廃止) Cloudflare(Workers)からECS RunTaskを呼ぶためのIAMユーザー ----------
+# 2026-08-13追記(監査指摘の是正): 元はCloudflare Workers時代の名残で、
+# アプリ本体がECS RunTask/SNS Publishを呼ぶために長期の静的アクセスキーを
+# 発行していた。アプリ自身が既にECSタスクロール(app_task、ecs-app.tf)として
+# 動いており、同等の権限(ecs:RunTask/iam:PassRole/sns:Publish)を持つため、
+# 静的キーは不要と判断し撤去した(アプリ側のコードも
+# fromHttp()でタスクロールのアンビエント認証情報を使うよう既に変更済み)。
+# 万一過去にこのユーザーのアクセスキーが漏洩していた場合に備え、
+# `aws iam list-access-keys --user-name salonboard-worker-app-caller` で
+# 残存キーが無いことを確認すること。
 
 # ---------- GitHub Actions用OIDC(ECRへのpush・タスク定義登録のみ) ----------
 # アカウントに既にtoken.actions.githubusercontent.comのOIDCプロバイダが
@@ -149,10 +117,60 @@ data "aws_iam_policy_document" "github_actions_deploy" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn, aws_iam_role.app_task.arn]
   }
+  # deploy-app.ymlの「Add admin secrets if missing」ステップがadmin用シークレットの
+  # 存在確認(describe-secret)に使う。これが無いと常にAccessDenied→未作成扱いとなり、
+  # ADMIN_INITIAL_PASSWORD等がタスク定義に注入されないまま気づかずスキップされ続ける
+  # (実機で確認済みの不具合)。
+  statement {
+    sid       = "DescribeAdminSecrets"
+    actions   = ["secretsmanager:DescribeSecret"]
+    resources = [aws_secretsmanager_secret.admin_jwt_secret.arn, aws_secretsmanager_secret.admin_initial_password.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "github_actions_deploy" {
   name   = "${var.project_name}-deploy"
   role   = aws_iam_role.github_actions_deploy.name
   policy = data.aws_iam_policy_document.github_actions_deploy.json
+}
+
+# ---------- CloudWatch Logs閲覧専用ユーザー(調査・デバッグ用) ----------
+# app/workerのログを読むためだけの最小権限。他のAWSリソースへの権限は一切与えない。
+# デバッグ目的の一時的な認証情報のため、不要になったらaws_iam_access_key.log_readerを
+# ローテーション(terraform taint等)するか、このリソース自体を削除すること。
+
+resource "aws_iam_user" "log_reader" {
+  name = "${var.project_name}-log-reader"
+}
+
+data "aws_iam_policy_document" "log_reader" {
+  statement {
+    # logs:DescribeLogGroupsはアカウント内一覧取得APIのため、特定のロググループ単位では
+    # 権限を絞れず、Resource="*"が必須(実機で確認済み: 特定ARNを指定するとAccessDenied)。
+    sid       = "ListLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+  statement {
+    sid = "ReadAppAndWorkerLogs"
+    actions = [
+      "logs:DescribeLogStreams",
+      "logs:GetLogEvents",
+      "logs:FilterLogEvents"
+    ]
+    resources = [
+      "${aws_cloudwatch_log_group.app.arn}:*",
+      "${aws_cloudwatch_log_group.worker.arn}:*"
+    ]
+  }
+}
+
+resource "aws_iam_user_policy" "log_reader" {
+  name   = "${var.project_name}-log-reader"
+  user   = aws_iam_user.log_reader.name
+  policy = data.aws_iam_policy_document.log_reader.json
+}
+
+resource "aws_iam_access_key" "log_reader" {
+  user = aws_iam_user.log_reader.name
 }

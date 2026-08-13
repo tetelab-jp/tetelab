@@ -1,24 +1,20 @@
 import { Hono } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireSeoEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { formatJstDateTime } from '../lib/date-format'
 import { measureRank } from '../lib/ranking-scraper'
-import {
-  SERVICE_AREAS,
-  serviceAreaName,
-  getMiddleAreas,
-  getSmallAreas,
-  getSalonOptions,
-  getAreaCounts,
-  crawlAllAreas,
-  type AreaOption
-} from '../lib/ranking-areas'
+import { getPrimarySalonArea, buildAreaLabel, type PrimarySalonArea } from '../lib/ranking-areas'
+import { timingSafeEqual } from '../lib/crypto'
 import type { Bindings, AppUser } from '../types'
 
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-const KEYWORD_SLOTS = 10
-const MEASURE_MAX_PAGES = 50
+const KEYWORD_SLOTS_MAX = 20
+// 2026-08-13変更: 圏外(見つからない)キーワードは以前50ページ(1000位相当)まで
+// 全部読みに行っていたが、プロキシが従量課金(月内GB上限あり)のDataImpulseに
+// なったため通信量を抑える必要が生じた。100位(5ページ、1ページ20件)より下は
+// 実運用上ほぼ意味が無い順位のため、走査を5ページ=100位までに打ち切る。
+const MEASURE_MAX_PAGES = 5
 
 // --------------------------------------------
 // 指定テンプレート(未指定なら有効な全テンプレート)を1つのrunでまとめて計測する。
@@ -58,22 +54,18 @@ async function runTemplates(
         .bind(q.id)
         .all<{ keyword: string }>()
 
-      for (const { keyword } of kws) {
-        const result = await measureRank(
-          {
-            serviceAreaCd: q.service_area_cd,
-            middleAreaCd: q.middle_area_cd || undefined,
-            smallAreaCd: q.small_area_cd || undefined
-          },
-          q.salon_name,
-          keyword,
-          { proxyUrl: env.RANKING_PROXY_URL, maxPages: MEASURE_MAX_PAGES }
-        )
+      const measureOptions = { proxyUrl: env.RANKING_PROXY_URL, maxPages: MEASURE_MAX_PAGES }
+      const insertResult = async (
+        keyword: string,
+        scope: 'middle' | 'small',
+        smallAreaCd: string | null,
+        result: Awaited<ReturnType<typeof measureRank>>
+      ) => {
         await env.DB.prepare(
           `INSERT INTO ranking_results
             (user_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
-             keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+             area_scope, keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             userId,
@@ -83,7 +75,8 @@ async function runTemplates(
             q.area_label,
             q.service_area_cd,
             q.middle_area_cd,
-            q.small_area_cd,
+            smallAreaCd,
+            scope,
             keyword,
             result.rank,
             result.resultCount,
@@ -93,6 +86,32 @@ async function runTemplates(
             result.errorMessage || null
           )
           .run()
+      }
+
+      for (const { keyword } of kws) {
+        // 中エリア(小エリアで絞り込まない)での順位
+        const middleResult = await measureRank(
+          { serviceAreaCd: q.service_area_cd, middleAreaCd: q.middle_area_cd || undefined },
+          q.salon_name,
+          keyword,
+          measureOptions
+        )
+        await insertResult(keyword, 'middle', null, middleResult)
+
+        // 小エリア(検出できていれば)での順位
+        if (q.small_area_cd) {
+          const smallResult = await measureRank(
+            {
+              serviceAreaCd: q.service_area_cd,
+              middleAreaCd: q.middle_area_cd || undefined,
+              smallAreaCd: q.small_area_cd
+            },
+            q.salon_name,
+            keyword,
+            measureOptions
+          )
+          await insertResult(keyword, 'small', q.small_area_cd, smallResult)
+        }
       }
     }
     await env.DB.prepare(
@@ -136,170 +155,405 @@ function jstYmd(jst: Date): string {
 
 function parseKeywords(body: Record<string, unknown>): string[] {
   const out: string[] = []
-  for (let i = 0; i < KEYWORD_SLOTS; i++) {
+  for (let i = 0; i < KEYWORD_SLOTS_MAX; i++) {
     const v = body[`keyword_${i}`]
     if (typeof v === 'string' && v.trim()) out.push(v.trim())
   }
-  return out
+  return out.slice(0, KEYWORD_SLOTS_MAX)
 }
 
-// 対策キーワード入力フォームのエリア/キーワード部品(設定画面・編集画面で共用)
-function AreaAndKeywordFields({
-  serviceAreaCd,
-  middleOptions,
-  middleAreaCd,
-  smallOptions,
-  smallAreaCd,
-  keywords
-}: {
-  serviceAreaCd?: string
-  middleOptions?: AreaOption[]
-  middleAreaCd?: string | null
-  smallOptions?: AreaOption[]
-  smallAreaCd?: string | null
-  keywords?: string[]
-}) {
-  const kw = keywords || []
+// サロン名・対策エリア(中/小)は選択式ではなく、サロンボード連携の同期情報から
+// 自動入力する(詳細はgetPrimarySalonArea()参照)。フォームには送信用フィールドを
+// 持たせず、サーバー側で改めて算出した値を使う(POSTハンドラ参照)。
+// data-has-salon/data-has-areaはクライアント側の送信前チェック(ranking.js)用マーカー。
+function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
+  const hasSalon = !!salon?.salonName
+  const hasMiddle = !!salon?.middleAreaCd
+  const hasSmall = !!salon?.smallAreaCd
   return (
-    <>
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            大エリア <span class="text-pink-500">*</span>
-          </label>
-          <select
-            id="service-area"
-            name="service_area_cd"
-            required
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください</option>
-            {SERVICE_AREAS.map((a) => (
-              <option value={a.cd} selected={serviceAreaCd === a.cd}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
-          <select
-            id="middle-area"
-            name="middle_area_cd"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください</option>
-            {(middleOptions || []).map((o) => (
-              <option value={o.code} selected={middleAreaCd === o.code}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
-          <select
-            id="small-area"
-            name="small_area_cd"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-          >
-            <option value="">選択してください（任意）</option>
-            {(smallOptions || []).map((o) => (
-              <option value={o.code} selected={smallAreaCd === o.code}>
-                {o.name}
-              </option>
-            ))}
-          </select>
-        </div>
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div id="salon-auto-field" data-has-salon={hasSalon ? '1' : '0'}>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-store text-pink-400"></i>サロン名
+        </label>
+        {hasSalon ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.salonName}
+          </p>
+        ) : (
+          <p class="text-xs text-amber-600">
+            サロン名が未取得です。「サロンボード連携設定」でサロンボードと同期すると自動反映されます。
+          </p>
+        )}
       </div>
-      <input type="hidden" id="area-label" name="area_label" value="" />
-
+      <div id="area-auto-field" data-has-area={hasMiddle ? '1' : '0'}>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-map text-pink-400"></i>中エリア
+        </label>
+        {hasMiddle ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.middleAreaName}
+          </p>
+        ) : (
+          <p class="text-xs text-amber-600">
+            対策エリアが未取得です。「サロンボード連携設定」でサロンボードと同期すると、HPBのサロンページから自動反映されます。
+          </p>
+        )}
+      </div>
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-2">キーワード</label>
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          {Array.from({ length: KEYWORD_SLOTS }).map((_, i) => (
-            <input
-              type="text"
-              name={`keyword_${i}`}
-              id={`keyword_${i}`}
-              value={kw[i] || ''}
-              placeholder={`キーワード${i + 1}`}
-              class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
-            />
-          ))}
-        </div>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-location-dot text-pink-400"></i>小エリア
+        </label>
+        {hasSmall ? (
+          <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
+            {salon!.smallAreaName}
+          </p>
+        ) : (
+          <p class="text-xs text-gray-400">-</p>
+        )}
       </div>
-    </>
+    </div>
   )
 }
 
-// 順位セル(今回順位 + 前回比較バッジ)
-function RankCell({
-  status,
-  rank,
-  hadBefore,
-  prevRank
-}: {
-  status: string
-  rank: number | null
-  hadBefore: boolean
-  prevRank: number | null
-}) {
-  if (status === 'error') return <span class="text-xs text-red-500">エラー</span>
-  if (rank == null) {
+/** area_label(「中エリア > 小エリア」形式の結合文字列)を、中/小がひと目で
+ *  わかるようラベル付きバッジで表示する。buildAreaLabel()の結合形式に対応。 */
+function splitAreaLabel(label: string | null): { middle: string | null; small: string | null } {
+  if (!label) return { middle: null, small: null }
+  const parts = label.split(' > ')
+  return { middle: parts[0] || null, small: parts[1] || null }
+}
+
+function AreaLabelBadges({ label }: { label: string | null }) {
+  const { middle, small } = splitAreaLabel(label)
+  if (!middle && !small) return <p class="text-sm text-gray-500">-</p>
+  return (
+    <div class="flex flex-col gap-1 mt-0.5">
+      {middle && (
+        <span class="inline-flex items-center gap-1.5 text-sm sm:text-base text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-pink-50 text-pink-600 font-semibold text-[10px] sm:text-xs leading-none">
+            中エリア
+          </span>
+          <span class="truncate">{middle}</span>
+        </span>
+      )}
+      {small && (
+        <span class="inline-flex items-center gap-1.5 text-sm sm:text-base text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold text-[10px] sm:text-xs leading-none">
+            小エリア
+          </span>
+          <span class="truncate">{small}</span>
+        </span>
+      )}
+    </div>
+  )
+}
+
+// キーワード入力欄(設定画面・編集画面で共用)。
+// 入力欄は1個のみで、Enterキーまたは「追加」ボタンでチップとして追加していく
+// (public/static/ranking.js側で管理)。送信用のhidden inputはチップの増減に
+// 合わせてJS側で keyword_0, keyword_1... と振り直して再生成する。
+function KeywordFields({ keywords }: { keywords?: string[] }) {
+  const kw = (keywords || []).slice(0, KEYWORD_SLOTS_MAX)
+  return (
+    <div>
+      <label class="block text-sm font-medium text-gray-700 mb-2">
+        登録済みの対策キーワード（<span id="keyword-count">{kw.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
+      </label>
+      <div class="flex gap-2 mb-3">
+        <input
+          type="text"
+          id="keyword-input"
+          placeholder="追加するキーワードを入力"
+          class="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
+        />
+        <button
+          type="button"
+          id="keyword-add-btn"
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm flex-shrink-0"
+        >
+          追加
+        </button>
+      </div>
+      <div id="keyword-chips" class="flex flex-wrap gap-2"></div>
+      <div id="keyword-hidden-container">
+        {kw.map((k, i) => (
+          <input type="hidden" name={`keyword_${i}`} value={k} class="keyword-hidden-input" />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+type Cell = { rank: number | null; status: string; resultCount: number | null } | undefined
+type CellSize = 'sm' | 'lg'
+
+// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)。
+function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Cell; size?: CellSize }) {
+  const baseTextCls = size === 'lg' ? 'text-sm' : 'text-xs'
+  const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  // 2026-08-13変更: 背景付きバッジ(ピンクグラデーション+白文字)は数字が
+  // 見づらいという指摘があったため、背景無し・ピンク文字のみのシンプルな
+  // 表示に変更した。
+  const badgeCls =
+    size === 'lg'
+      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-base'
+      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-sm'
+
+  if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
+  if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
+
+  if (current.rank == null) {
     return (
-      <span class="text-gray-400">
-        圏外
-        {hadBefore && prevRank != null && (
-          <span class="ml-1 text-xs text-red-500">▼ 前回{prevRank}位</span>
+      <span class="inline-flex flex-col items-center">
+        <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>100位圏外</span>
+        {prev && prev.rank != null && (
+          <span class={`block ${deltaCls} leading-tight text-black mt-0.5 whitespace-nowrap`}>▼前回{prev.rank}位</span>
         )}
       </span>
     )
   }
-  let badge = <span class="ml-1 text-xs text-gray-400">初回</span>
-  if (hadBefore) {
-    if (prevRank == null) {
-      badge = <span class="ml-1 text-xs text-green-600">▲ 前回圏外</span>
+
+  // 2026-08-13追記(ユーザー指定): 前回比は順位の下に別行で表示せず、
+  // 順位の隣に括弧書きで表示する。マイナス(下降)の場合も赤ではなく
+  // 黒色にする(上昇=緑、変化なし=グレーは維持)。
+  let deltaText: string | null = null
+  let deltaColorCls = 'text-gray-600'
+  if (prev) {
+    if (prev.rank == null) {
+      deltaText = '▲前回100位圏外'
+      deltaColorCls = 'text-green-600'
     } else {
-      const diff = prevRank - rank
-      badge =
-        diff > 0 ? (
-          <span class="ml-1 text-xs text-green-600">▲{diff}</span>
-        ) : diff < 0 ? (
-          <span class="ml-1 text-xs text-red-500">▼{-diff}</span>
-        ) : (
-          <span class="ml-1 text-xs text-gray-400">±0</span>
-        )
+      const diff = prev.rank - current.rank
+      if (diff > 0) {
+        deltaText = `▲${diff}`
+        deltaColorCls = 'text-green-600'
+      } else if (diff < 0) {
+        deltaText = `▼${-diff}`
+        deltaColorCls = 'text-black'
+      } else {
+        deltaText = '±0'
+        deltaColorCls = 'text-gray-600'
+      }
     }
   }
+
   return (
-    <span>
-      <span class="font-semibold text-gray-900">{rank}位</span>
-      {badge}
+    <span class="inline-flex items-baseline gap-1 whitespace-nowrap">
+      <span class={badgeCls}>{current.rank}</span>
+      {deltaText && <span class={`${deltaCls} font-semibold ${deltaColorCls}`}>({deltaText})</span>}
     </span>
   )
 }
 
+// 該当店舗数だけを表示する部品(最新列でRankPivotCellと組み合わせて使う)
+function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) {
+  const cls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  if (!cell || cell.resultCount == null) return <span class={`text-gray-300 ${cls}`}>-</span>
+  return <span class={`${cls} text-gray-700 whitespace-nowrap`}>{cell.resultCount}店舗中</span>
+}
+
+// 最新列専用: 順位バッジと店舗数を1マスにまとめて表示する(中エリア/小エリアそれぞれ1列)
+function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
+  return (
+    <span class="inline-flex flex-col items-center gap-0.5">
+      <RankPivotCell current={current} prev={prev} size={size} />
+      <StoreCountCell cell={current} size={size} />
+    </span>
+  )
+}
+
+/** 計測日を「2026/8/12」のような短い表記にする(年も含める) */
+function shortDate(sqliteTimestamp: string): string {
+  const ymd = formatJstDateTime(sqliteTimestamp).slice(0, 10)
+  const [y, m, d] = ymd.split('-')
+  return `${y}/${Number(m)}/${Number(d)}`
+}
+
+const MEASURE_RUN_COLUMNS = 12
+
+// 順位測定表のサイズ設定。スマホ(sm未満)は固定表示なし・コンパクトに
+// 横スクロールで全列見せる。sm以上(タブレット・PC)はキーワード列と
+// 最新計測列を固定表示にしつつ、文字・マス目を大きくして見やすくする。
+type TableVariant = {
+  size: CellSize
+  keywordPx: number
+  latestGroupPx: number
+  oldColPx: number
+  keywordColClass: string
+  latestCol1Class: string
+  latestCol2Class: string
+  headText: string
+  subHeadText: string
+  bodyText: string
+}
+
+const MOBILE_TABLE_VARIANT: TableVariant = {
+  size: 'sm',
+  keywordPx: 116,
+  latestGroupPx: 88,
+  oldColPx: 56,
+  keywordColClass: '',
+  latestCol1Class: '',
+  latestCol2Class: '',
+  headText: 'text-xs',
+  subHeadText: 'text-[10px]',
+  bodyText: 'text-xs'
+}
+
+const DESKTOP_TABLE_VARIANT: TableVariant = {
+  size: 'lg',
+  keywordPx: 168,
+  latestGroupPx: 132,
+  oldColPx: 88,
+  keywordColClass: 'sticky left-0 z-10',
+  latestCol1Class: 'sticky left-[168px] z-10',
+  latestCol2Class: 'sticky left-[300px] z-10',
+  headText: 'text-sm',
+  subHeadText: 'text-xs',
+  bodyText: 'text-sm'
+}
+
+// 対策KW×計測日の順位表を1つ描画する。中/小エリアは常に2列(最新列は
+// そのマスの中に順位バッジと店舗数を両方まとめて表示、それより古い列は
+// 順位のみ)なので、runごとの列数は常に2で統一している。
+function renderRankTable(
+  runs: { id: number; measuredAt: string }[],
+  keywordsList: string[],
+  cellMap: Map<string, Cell>,
+  v: TableVariant
+) {
+  const tableWidthPx =
+    runs.length === 0
+      ? 0
+      : v.keywordPx + v.latestGroupPx * 2 + Math.max(runs.length - 1, 0) * v.oldColPx * 2
+
+  return (
+    <table class="table-fixed text-center border-collapse" style={`width:${tableWidthPx}px`}>
+      <colgroup>
+        <col style={`width:${v.keywordPx}px`} />
+        {runs.map((_, i) => (
+          <>
+            <col style={`width:${i === 0 ? v.latestGroupPx : v.oldColPx}px`} />
+            <col style={`width:${i === 0 ? v.latestGroupPx : v.oldColPx}px`} />
+          </>
+        ))}
+      </colgroup>
+      <thead>
+        <tr class="bg-pink-50/60 border-b border-pink-100">
+          <th
+            rowspan={2}
+            class={`py-3 px-3 text-left align-middle font-semibold text-gray-900 bg-pink-50 whitespace-nowrap ${v.headText} ${v.keywordColClass}`}
+          >
+            対策キーワード
+          </th>
+          {runs.map((run, i) => (
+            <th
+              class={
+                `py-3 px-1 font-semibold text-gray-900 border-l border-pink-100 whitespace-nowrap ${v.headText}` +
+                (i === 0 ? ` bg-pink-50 ${v.latestCol1Class}` : '')
+              }
+              colspan={2}
+            >
+              {shortDate(run.measuredAt)}
+              {i === 0 && <span class="ml-1 text-pink-500">●最新</span>}
+            </th>
+          ))}
+        </tr>
+        <tr class="bg-pink-50/60 border-b-2 border-pink-100">
+          {runs.map((_, i) => (
+            <>
+              <th
+                class={
+                  `py-1.5 px-1 font-medium text-gray-700 border-l border-pink-100 whitespace-nowrap ${v.subHeadText}` +
+                  (i === 0 ? ` bg-pink-50 ${v.latestCol1Class}` : '')
+                }
+              >
+                中エリア
+              </th>
+              <th
+                class={
+                  `py-1.5 px-1 font-medium text-gray-700 whitespace-nowrap ${v.subHeadText}` +
+                  (i === 0 ? ` bg-pink-50 border-r-2 border-pink-200 ${v.latestCol2Class}` : '')
+                }
+              >
+                小エリア
+              </th>
+            </>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {keywordsList.map((kw, rowIdx) => (
+          <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
+            <td
+              class={
+                `py-3 px-3 text-left font-semibold text-gray-900 truncate ${v.bodyText} ${v.keywordColClass}` +
+                (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
+              }
+              title={kw}
+            >
+              {kw}
+            </td>
+            {runs.map((run, i) => {
+              const nextRun = runs[i + 1]
+              const middleCurrent = cellMap.get(`${run.id}||${kw}||middle`)
+              const smallCurrent = cellMap.get(`${run.id}||${kw}||small`)
+              const middlePrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||middle`) : undefined
+              const smallPrev = nextRun ? cellMap.get(`${nextRun.id}||${kw}||small`) : undefined
+              const isLatest = i === 0
+              const rowBg = rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white'
+              if (!isLatest) {
+                return (
+                  <>
+                    <td class="py-3 px-1 border-l border-gray-100">
+                      <RankPivotCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                    </td>
+                    <td class="py-3 px-1">
+                      <RankPivotCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                    </td>
+                  </>
+                )
+              }
+              return (
+                <>
+                  <td class={`py-3 px-1 border-l border-gray-100 ${v.latestCol1Class}${rowBg}`}>
+                    <LatestAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                  </td>
+                  <td class={`py-3 px-1 border-r-2 border-gray-200 ${v.latestCol2Class}${rowBg}`}>
+                    <LatestAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                  </td>
+                </>
+              )
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
 // ============================================
-// 計測(テンプレートを選んで測定 + ログをコンテナ表示)
+// 計測(表形式: 対策KW×計測日。左が最新、右にいくほど古い。中/小エリアを列で並記)
 // ============================================
-ranking.get('/seo', requireAuth, async (c) => {
+ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
 
-  const { results: templates } = await c.env.DB.prepare(
-    `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
+  const primaryQuery = await c.env.DB.prepare(
+    `SELECT id, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`
   )
     .bind(user.id)
-    .all<{ id: number; name: string | null; salon_name: string; area_label: string | null }>()
+    .first<{ id: number; salon_name: string; area_label: string | null }>()
 
-  const { results: kwCounts } = await c.env.DB.prepare(
-    `SELECT k.query_id, COUNT(*) AS n FROM ranking_query_keywords k
-     JOIN ranking_queries q ON q.id = k.query_id
-     WHERE q.user_id = ? GROUP BY k.query_id`
-  )
-    .bind(user.id)
-    .all<{ query_id: number; n: number }>()
-  const kwCountByQuery = new Map<number, number>(kwCounts.map((r) => [r.query_id, r.n]))
+  let keywordsList: string[] = []
+  if (primaryQuery) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
+    )
+      .bind(primaryQuery.id)
+      .all<{ keyword: string }>()
+    keywordsList = results.map((r) => r.keyword)
+  }
 
   const runningRun = await c.env.DB.prepare(
     `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND status = 'running'`
@@ -308,112 +562,118 @@ ranking.get('/seo', requireAuth, async (c) => {
     .first<{ n: number }>()
   const hasRunning = (runningRun?.n || 0) > 0
 
-  // 直近の計測結果(前回比較のため昇順で走査してからコンテナ化)
-  const { results: recent } = await c.env.DB.prepare(
-    `SELECT run_id, salon_name, area_label, keyword, rank, result_count, status, measured_at
-     FROM ranking_results WHERE user_id = ? ORDER BY id DESC LIMIT 500`
-  )
-    .bind(user.id)
-    .all<{
-      run_id: number
-      salon_name: string
-      area_label: string | null
-      keyword: string
-      rank: number | null
-      result_count: number | null
-      status: string
-      measured_at: string
-    }>()
+  // 計測日の列(直近から最大MEASURE_RUN_COLUMNS件、左が最新)
+  let runs: { id: number; measuredAt: string }[] = []
+  const cellMap = new Map<string, Cell>()
+  if (primaryQuery) {
+    // 同日(JST)に複数回計測している場合は最新の1件だけを列として残す。
+    // run_idはDESC(新しい順)で取得しているため、同じ日付が最初に出てきた
+    // ものが最新であり、それ以降の同日分はスキップすればよい。
+    // 表示列数(MEASURE_RUN_COLUMNS)分のユニークな日付を確保するため、
+    // 生の行は余裕を持って多めに取得する。
+    const { results: runRows } = await c.env.DB.prepare(
+      `SELECT run_id, MIN(measured_at) AS measured_at FROM ranking_results
+       WHERE user_id = ? AND query_id = ? GROUP BY run_id ORDER BY run_id DESC LIMIT ?`
+    )
+      .bind(user.id, primaryQuery.id, MEASURE_RUN_COLUMNS * 10)
+      .all<{ run_id: number; measured_at: string }>()
 
-  type Row = (typeof recent)[number] & { hadBefore: boolean; prevRank: number | null }
-  const asc = [...recent].reverse()
-  const seen = new Set<string>()
-  const lastRank = new Map<string, number | null>()
-  const withPrev: Row[] = asc.map((r) => {
-    const key = `${r.salon_name}||${r.area_label}||${r.keyword}`
-    const hadBefore = seen.has(key)
-    const prevRank = lastRank.has(key) ? (lastRank.get(key) as number | null) : null
-    seen.add(key)
-    lastRank.set(key, r.rank)
-    return { ...r, hadBefore, prevRank }
-  })
-
-  type Container = { salon: string; area: string; datetime: string; rows: Row[] }
-  const containerMap = new Map<string, Container>()
-  const order: string[] = []
-  for (const r of [...withPrev].reverse()) {
-    const ckey = `${r.run_id}||${r.salon_name}||${r.area_label}`
-    let cont = containerMap.get(ckey)
-    if (!cont) {
-      cont = { salon: r.salon_name, area: r.area_label || '-', datetime: r.measured_at, rows: [] }
-      containerMap.set(ckey, cont)
-      order.push(ckey)
+    const seenDays = new Set<string>()
+    for (const r of runRows) {
+      const day = jstYmd(toJstDate(r.measured_at))
+      if (seenDays.has(day)) continue
+      seenDays.add(day)
+      runs.push({ id: r.run_id, measuredAt: r.measured_at })
+      if (runs.length >= MEASURE_RUN_COLUMNS) break
     }
-    cont.rows.push(r)
+
+    if (runs.length > 0) {
+      const runIds = runs.map((r) => r.id)
+      const { results: cellRows } = await c.env.DB.prepare(
+        `SELECT run_id, keyword, area_scope, rank, result_count, status FROM ranking_results
+         WHERE user_id = ? AND query_id = ? AND run_id IN (${runIds.map(() => '?').join(',')})`
+      )
+        .bind(user.id, primaryQuery.id, ...runIds)
+        .all<{
+          run_id: number
+          keyword: string
+          area_scope: string
+          rank: number | null
+          result_count: number | null
+          status: string
+        }>()
+      for (const r of cellRows) {
+        cellMap.set(`${r.run_id}||${r.keyword}||${r.area_scope}`, {
+          rank: r.rank,
+          status: r.status,
+          resultCount: r.result_count
+        })
+      }
+    }
   }
-  const containers = order.slice(0, 30).map((k) => containerMap.get(k) as Container)
 
   const measured = c.req.query('measured') === '1'
 
   return c.render(
-    <PageLayout active="ranking-measure" salonName={user.salon_name} title="順位測定">
+    <PageLayout
+      active="ranking-measure"
+      salonName={user.salon_name}
+      title="順位測定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+      seoEnabled={user.seo_enabled !== 0}
+    >
       {measured && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>計測を開始しました。完了次第、下のログに反映されます。
+          <i class="fas fa-circle-check mr-2"></i>計測を開始しました。完了次第、下の表に反映されます。
         </div>
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center justify-between mb-4">
-          <p class="font-semibold text-gray-900">計測するキーワード設定を選択</p>
-          <a href="/seo/keywords" class="text-xs text-pink-600 hover:underline">
-            <i class="fas fa-plus mr-1"></i>対策キーワード設定を追加
-          </a>
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div class="flex items-center gap-3 min-w-0">
+            <div class="w-10 h-10 rounded-full bg-pink-50 flex items-center justify-center flex-shrink-0">
+              <i class="fas fa-store text-pink-500"></i>
+            </div>
+            <div class="min-w-0">
+              {primaryQuery ? (
+                <>
+                  <p class="font-bold text-gray-900 text-lg truncate">{primaryQuery.salon_name}</p>
+                  <AreaLabelBadges label={primaryQuery.area_label} />
+                </>
+              ) : (
+                <p class="font-semibold text-gray-900">対策キーワード設定が未登録です</p>
+              )}
+            </div>
+          </div>
+          {keywordsList.length > 0 && (
+            <button
+              type="button"
+              id="measure-run-btn"
+              class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition disabled:opacity-50"
+            >
+              <i class="fas fa-magnifying-glass-chart mr-2"></i>測定
+            </button>
+          )}
         </div>
 
-        {templates.length === 0 ? (
-          <p class="text-sm text-gray-400">
-            登録済みの対策キーワード設定がありません。
+        {keywordsList.length === 0 ? (
+          <p class="text-sm text-gray-400 mt-4">
+            登録済みのキーワードがありません。
             <a href="/seo/keywords" class="text-pink-600 hover:underline ml-1">
               対策キーワード設定
             </a>
-            で登録してください。
+            で追加してください。
           </p>
         ) : (
-          <>
-            <div class="space-y-2">
-              {templates.map((t) => (
-                <label class="flex items-center gap-3 p-3 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
-                  <input type="checkbox" class="tmpl-check w-4 h-4" value={t.id} />
-                  <span class="min-w-0">
-                    <span class="font-medium text-gray-800">{t.name || `${t.salon_name}（無名）`}</span>
-                    <span class="text-xs text-gray-400 ml-2">
-                      {t.salon_name} ／ {t.area_label || '-'} ／ キーワード{kwCountByQuery.get(t.id) || 0}件
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
-
-            <p id="measure-status" class="text-sm text-pink-600 mt-4"></p>
-
-            <div class="flex items-center justify-end mt-4">
-              <button
-                type="button"
-                id="measure-run-btn"
-                class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm disabled:opacity-50"
-              >
-                <i class="fas fa-magnifying-glass-chart mr-1"></i>測定
-              </button>
-            </div>
-          </>
+          <p id="measure-status" class="text-sm text-pink-600 mt-3"></p>
         )}
       </div>
 
-      {/* 計測ログ(1測定=1コンテナ) */}
+      {/* 計測結果(対策KW×計測日の表。左が最新、右へ横スクロールで過去分) */}
       <div class="flex items-center justify-between">
         <p class="font-semibold">
-          <i class="fas fa-clock-rotate-left mr-2 text-pink-500"></i>計測ログ
+          <i class="fas fa-table mr-2 text-pink-500"></i>キーワードの順位
         </p>
         {hasRunning && (
           <span class="text-xs text-pink-600">
@@ -422,49 +682,25 @@ ranking.get('/seo', requireAuth, async (c) => {
         )}
       </div>
 
-      {containers.length === 0 ? (
+      {runs.length === 0 || keywordsList.length === 0 ? (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="text-sm text-gray-400">まだ計測ログがありません</p>
+          <p class="text-sm text-gray-400">まだ計測結果がありません</p>
         </div>
       ) : (
-        containers.map((cont) => (
-          <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
-            <div class="bg-gray-50 border-b border-gray-100 px-5 py-3 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <span class="font-semibold text-gray-900">{cont.salon}</span>
-              <span class="text-sm text-gray-500">{cont.area}</span>
-              <span class="text-xs text-gray-400 ml-auto">{formatJstDateTime(cont.datetime)}</span>
-            </div>
-            <div class="overflow-x-auto">
-              <table class="w-full text-sm">
-                <thead>
-                  <tr class="text-left text-gray-400 border-b border-gray-100">
-                    <th class="py-2 px-5">キーワード</th>
-                    <th class="py-2 pr-5">順位（前回比）</th>
-                    <th class="py-2 pr-5">該当数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {cont.rows.map((r) => (
-                    <tr class="border-b border-gray-50">
-                      <td class="py-2 px-5 text-gray-700">{r.keyword}</td>
-                      <td class="py-2 pr-5">
-                        <RankCell
-                          status={r.status}
-                          rank={r.rank}
-                          hadBefore={r.hadBefore}
-                          prevRank={r.prevRank}
-                        />
-                      </td>
-                      <td class="py-2 pr-5 text-gray-500">
-                        {r.result_count != null ? `${r.result_count}件` : '-'}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+        <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          {/* スマホ(sm未満): 固定表示なし・コンパクトな文字で横スクロール全体を見せる。
+              sm以上(タブレット・PC): キーワード列+最新計測列を固定表示にしつつ、
+              文字・マス目を大きくする。幅の異なる2つの<table>を両方描画し、
+              CSSのsm:表示切替だけで出し分ける(1つのtableで幅をブレークポイントごとに
+              変える方法は、table-layout:fixedの列幅指定を動的なTailwindクラスとして
+              静的解析させられず崩れるため採用しない)。 */}
+          <div class="overflow-x-auto sm:hidden">
+            {renderRankTable(runs, keywordsList, cellMap, MOBILE_TABLE_VARIANT)}
           </div>
-        ))
+          <div class="overflow-x-auto hidden sm:block">
+            {renderRankTable(runs, keywordsList, cellMap, DESKTOP_TABLE_VARIANT)}
+          </div>
+        </div>
       )}
 
       <script src="/static/ranking.js"></script>
@@ -472,32 +708,35 @@ ranking.get('/seo', requireAuth, async (c) => {
   )
 })
 
-// 計測実行(選択したテンプレートをバックグラウンドで測定 / JSON)
-ranking.post('/seo/measure', requireAuth, async (c) => {
+// 計測実行(登録済みの対策キーワード設定をバックグラウンドで測定 / JSON)
+ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  let body: Record<string, unknown>
-  try {
-    body = await c.req.json()
-  } catch {
-    return c.json({ success: false, error: 'リクエスト形式が不正です' }, 400)
+
+  const primaryQuery = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(user.id)
+    .first<{ id: number }>()
+  if (!primaryQuery) {
+    return c.json({ success: false, error: '対策キーワード設定がありません' }, 400)
   }
 
-  const queryIds = Array.isArray(body.queryIds)
-    ? (body.queryIds as unknown[]).map((v) => Number(v)).filter((n) => Number.isFinite(n))
-    : []
-  if (queryIds.length === 0) {
-    return c.json({ success: false, error: '計測するキーワード設定を選択してください' }, 400)
+  const kwCount = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM ranking_query_keywords WHERE query_id = ?`)
+    .bind(primaryQuery.id)
+    .first<{ n: number }>()
+  if ((kwCount?.n || 0) === 0) {
+    return c.json({ success: false, error: 'キーワードが登録されていません' }, 400)
   }
 
-  // 所有チェック(自分のテンプレートに絞る)
-  const { results: owned } = await c.env.DB.prepare(
-    `SELECT id FROM ranking_queries WHERE user_id = ? AND id IN (${queryIds.map(() => '?').join(',')})`
+  // 2026-08-13追記(重大バグ修正): 連打・複数タブからの同時POSTに対する
+  // 重複防止が無く、同じユーザーの計測runが並行して複数実行され得た
+  // (結果の重複・HPBへの過剰アクセスにつながる)。既に実行中のrunが
+  // あれば新規開始を拒否する。
+  const runningRun = await c.env.DB.prepare(
+    `SELECT id FROM ranking_runs WHERE user_id = ? AND status = 'running' LIMIT 1`
   )
-    .bind(user.id, ...queryIds)
-    .all<{ id: number }>()
-  const ownedIds = owned.map((r) => r.id)
-  if (ownedIds.length === 0) {
-    return c.json({ success: false, error: '対象が見つかりません' }, 400)
+    .bind(user.id)
+    .first<{ id: number }>()
+  if (runningRun) {
+    return c.json({ success: false, error: '既に計測が実行中です。完了までお待ちください' }, 409)
   }
 
   const run = await c.env.DB.prepare(
@@ -505,146 +744,112 @@ ranking.post('/seo/measure', requireAuth, async (c) => {
   )
     .bind(user.id)
     .run()
-  void runTemplates(c.env, user.id, run.meta.last_row_id as number, ownedIds)
+  void runTemplates(c.env, user.id, run.meta.last_row_id as number, [primaryQuery.id])
 
-  return c.json({ success: true, count: ownedIds.length })
+  return c.json({ success: true })
 })
 
-// ============================================
-// 対策キーワード設定(登録フォーム + 登録済み一覧)
-// ============================================
-ranking.get('/seo/keywords', requireAuth, async (c) => {
-  const user = c.get('user')
-  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
+/**
+ * ユーザーの「対策キーワード設定」は、サロン名・エリアが自動検出の1本だけになった
+ * ため、名前を付けての複数登録はやめ、既存の最初の1件(無ければ自動作成)へ
+ * キーワードを直接追加/削除する方式にした。
+ */
+async function getOrCreatePrimaryQueryId(env: Bindings, userId: number, salon: PrimarySalonArea): Promise<number> {
+  const existing = await env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(userId)
+    .first<{ id: number }>()
+  if (existing) return existing.id
 
-  const { results: queries } = await c.env.DB.prepare(
-    `SELECT id, name, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id DESC`
+  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
+  const q = await env.DB.prepare(
+    `INSERT INTO ranking_queries (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
+     VALUES (?, NULL, ?, ?, ?, ?, ?)`
   )
-    .bind(user.id)
-    .all<{ id: number; name: string | null; salon_name: string; area_label: string | null }>()
+    .bind(userId, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
+    .run()
+  return q.meta.last_row_id as number
+}
 
-  const registered = c.req.query('registered') === '1'
+// ============================================
+// 対策キーワード設定(1個ずつ追加 → その場で登録済み一覧に反映)
+// ============================================
+ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
+  const user = c.get('user')
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+
+  const existingQuery = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(user.id)
+    .first<{ id: number }>()
+  let keywords: { id: number; keyword: string }[] = []
+  if (existingQuery) {
+    const { results } = await c.env.DB.prepare(
+      `SELECT id, keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
+    )
+      .bind(existingQuery.id)
+      .all<{ id: number; keyword: string }>()
+    keywords = results
+  }
 
   return c.render(
-    <PageLayout active="ranking-keywords" salonName={user.salon_name} title="対策キーワード設定">
-      {registered && (
-        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>対策キーワードを登録しました。「計測」画面で選んで測定できます。
-        </div>
-      )}
-
+    <PageLayout
+      active="ranking-keywords"
+      salonName={user.salon_name}
+      title="対策キーワード設定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+      seoEnabled={user.seo_enabled !== 0}
+    >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-5 text-gray-900">対策キーワード・情報入力</p>
-
-        <form id="ranking-form" method="post" action="/seo/templates" class="space-y-5">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              サロン名 <span class="text-pink-500">*</span>
-            </label>
-            <select
-              name="salon"
-              required
-              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              <option value="">選択してください</option>
-              {salons.map((s) => (
-                <option value={s}>{s}</option>
-              ))}
-            </select>
-            {salons.length === 0 && (
-              <p class="text-xs text-amber-600 mt-1">
-                サロン名が未登録です。「サロンボード連携設定」でサロン名を登録すると選択できます。
-              </p>
-            )}
-          </div>
-
-          <AreaAndKeywordFields />
-
-          <input type="hidden" id="template-name" name="name" value="" />
-
-          <p class="text-xs text-gray-500">
-            「登録」ボタンを押すと入力した対策キーワードが保存され、「計測」画面で選択して測定できます。
-          </p>
-
-          <p id="measure-status" class="text-sm text-pink-600"></p>
-
-          <div class="flex items-center justify-end">
-            <button
-              type="button"
-              id="register-open-btn"
-              class="bg-green-500 hover:bg-green-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm"
-            >
-              登録
-            </button>
-          </div>
-        </form>
-      </div>
-
-      {/* 登録名入力モーダル */}
-      <div id="register-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-        <div class="bg-white rounded-xl shadow-xl w-full max-w-md p-6">
-          <p class="font-semibold text-gray-900 mb-1">対策キーワードの登録</p>
-          <p class="text-xs text-gray-500 mb-4">この設定に名前を付けて保存します（管理用）。</p>
-          <label class="block text-sm font-medium text-gray-700 mb-1">
-            登録名 <span class="text-pink-500">*</span>
-          </label>
+        <p class="font-semibold mb-4 text-gray-900">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>対策キーワードを追加する
+        </p>
+        <div class="flex gap-2">
           <input
             type="text"
-            id="modal-template-name"
-            placeholder="例: 赤羽・髪質改善セット"
-            class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-pink-200"
+            id="keyword-input"
+            placeholder="追加するキーワードを入力"
+            class="flex-1 border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-pink-200"
           />
-          <p id="modal-error" class="text-xs text-red-500 min-h-[1rem]"></p>
-          <div class="flex items-center justify-end gap-3 mt-3">
-            <button type="button" id="register-cancel-btn" class="text-sm text-gray-500 hover:text-gray-700 px-4 py-2">
-              キャンセル
-            </button>
-            <button
-              type="button"
-              id="register-confirm-btn"
-              class="bg-green-500 hover:bg-green-600 text-white font-semibold px-6 py-2 rounded-lg text-sm"
+          <button
+            type="button"
+            id="keyword-add-btn"
+            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm flex-shrink-0"
+          >
+            追加
+          </button>
+        </div>
+        <p id="keyword-add-status" class="text-xs text-red-500 mt-2 min-h-[1rem]"></p>
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <p class="font-semibold mb-4">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>
+          登録済みの対策キーワード<br class="sm:hidden" />
+          （<span id="keyword-count">{keywords.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
+        </p>
+        <div id="keyword-chips" class="flex flex-wrap gap-2">
+          {keywords.length === 0 && (
+            <p id="keyword-empty" class="text-sm text-gray-400">
+              まだ登録がありません。上の入力欄からキーワードを追加してください。
+            </p>
+          )}
+          {keywords.map((k) => (
+            <span
+              class="keyword-chip inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm"
+              data-id={k.id}
             >
-              保存する
-            </button>
-          </div>
+              <span>{k.keyword}</span>
+              <button type="button" class="keyword-remove-btn text-pink-400 hover:text-pink-600 leading-none" data-id={k.id}>
+                ×
+              </button>
+            </span>
+          ))}
         </div>
       </div>
 
-      {/* 登録済み一覧 */}
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-4">
-          <i class="fas fa-list-check mr-2 text-pink-500"></i>登録済みの対策キーワード（{queries.length}件）
-        </p>
-        {queries.length === 0 ? (
-          <p class="text-sm text-gray-400 text-center py-6">まだ登録がありません。上のフォームから登録してください。</p>
-        ) : (
-          <table class="w-full text-sm">
-            <thead>
-              <tr class="text-left text-gray-400 border-b border-gray-100">
-                <th class="py-2">登録名</th>
-                <th class="py-2">設定エリア</th>
-                <th class="py-2 text-right"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {queries.map((q) => (
-                <tr class="border-b border-gray-50">
-                  <td class="py-2">
-                    <a href={`/seo/templates/${q.id}/edit`} class="text-pink-600 hover:underline">
-                      {q.name || `${q.salon_name}（無名）`}
-                    </a>
-                  </td>
-                  <td class="py-2 text-gray-600">{q.area_label || '-'}</td>
-                  <td class="py-2 text-right">
-                    <a href={`/seo/templates/${q.id}/edit`} class="text-xs text-gray-400 hover:text-pink-600">
-                      編集
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        <p class="font-semibold mb-5 text-gray-900">サロン情報・対象エリア</p>
+        <SalonAndAreaAutoField salon={salon} />
       </div>
 
       <script src="/static/ranking.js"></script>
@@ -652,48 +857,60 @@ ranking.get('/seo/keywords', requireAuth, async (c) => {
   )
 })
 
-// 対策キーワードの作成(「登録」モーダル)
-ranking.post('/seo/templates', requireAuth, async (c) => {
+// キーワードを1件追加(既存の対策キーワード設定が無ければ自動作成)
+ranking.post('/api/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  const body = (await c.req.parseBody()) as Record<string, unknown>
+  const body = await c.req.json().catch(() => ({}) as Record<string, unknown>)
+  const keyword = String(body.keyword || '').trim()
+  if (!keyword) return c.json({ success: false, error: 'キーワードを入力してください' }, 400)
 
-  const name = String(body.name || '').trim()
-  const salon = String(body.salon || '').trim()
-  const serviceAreaCd = String(body.service_area_cd || '').trim()
-  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
-  const smallAreaCd = String(body.small_area_cd || '').trim() || null
-  const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
-  const keywords = parseKeywords(body)
-
-  if (!salon || !serviceAreaCd || keywords.length === 0) {
-    return c.redirect('/seo/keywords?error=1')
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd) {
+    return c.json({ success: false, error: 'サロン名または対策エリアが未取得です。サロンボードと同期してください' }, 400)
   }
 
-  const q = await c.env.DB.prepare(
-    `INSERT INTO ranking_queries
-      (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  const queryId = await getOrCreatePrimaryQueryId(c.env, user.id, salon)
+  const { results: existing } = await c.env.DB.prepare(
+    `SELECT id, keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
   )
-    .bind(user.id, name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel)
-    .run()
-  const queryId = q.meta.last_row_id as number
+    .bind(queryId)
+    .all<{ id: number; keyword: string }>()
 
-  let order = 0
-  for (const kw of keywords) {
+  if (existing.some((e) => e.keyword === keyword)) {
+    return c.json({ success: true, keywords: existing })
+  }
+  if (existing.length >= KEYWORD_SLOTS_MAX) {
+    return c.json({ success: false, error: `キーワードは最大${KEYWORD_SLOTS_MAX}件までです` }, 400)
+  }
+
+  const ins = await c.env.DB.prepare(
+    `INSERT INTO ranking_query_keywords (query_id, keyword, sort_order) VALUES (?, ?, ?)`
+  )
+    .bind(queryId, keyword, existing.length)
+    .run()
+
+  return c.json({ success: true, keywords: [...existing, { id: ins.meta.last_row_id as number, keyword }] })
+})
+
+// キーワードを1件削除
+ranking.post('/api/seo/keywords/:id/delete', requireAuth, requireSeoEnabled, async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+  if (Number.isFinite(id)) {
     await c.env.DB.prepare(
-      `INSERT INTO ranking_query_keywords (query_id, keyword, sort_order) VALUES (?, ?, ?)`
+      `DELETE FROM ranking_query_keywords
+       WHERE id = ? AND query_id IN (SELECT id FROM ranking_queries WHERE user_id = ?)`
     )
-      .bind(queryId, kw, order++)
+      .bind(id, user.id)
       .run()
   }
-
-  return c.redirect('/seo/keywords?registered=1')
+  return c.json({ success: true })
 })
 
 // ============================================
 // 対策キーワード編集
 // ============================================
-ranking.get('/seo/templates/:id/edit', requireAuth, async (c) => {
+ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const q = await c.env.DB.prepare(
@@ -719,25 +936,17 @@ ranking.get('/seo/templates/:id/edit', requireAuth, async (c) => {
     .all<{ keyword: string }>()
   const keywords = kwRows.map((r) => r.keyword)
 
-  const salons = await getSalonOptions(c.env, user.id, user.salon_name)
-  if (!salons.includes(q.salon_name)) salons.unshift(q.salon_name)
-
-  const labelParts = (q.area_label || '').split('>').map((s) => s.trim())
-  let middleOptions: AreaOption[] = []
-  let smallOptions: AreaOption[] = []
-  try {
-    middleOptions = await getMiddleAreas(c.env, q.service_area_cd)
-  } catch {
-    if (q.middle_area_cd) middleOptions = [{ code: q.middle_area_cd, name: labelParts[1] || q.middle_area_cd }]
-  }
-  try {
-    if (q.middle_area_cd) smallOptions = await getSmallAreas(c.env, q.service_area_cd, q.middle_area_cd)
-  } catch {
-    if (q.small_area_cd) smallOptions = [{ code: q.small_area_cd, name: labelParts[2] || q.small_area_cd }]
-  }
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
 
   return c.render(
-    <PageLayout active="ranking-keywords" salonName={user.salon_name} title="対策キーワード編集">
+    <PageLayout
+      active="ranking-keywords"
+      salonName={user.salon_name}
+      title="対策キーワード編集"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+      seoEnabled={user.seo_enabled !== 0}
+    >
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-3xl">
         <p class="font-semibold mb-5 text-gray-900">対策キーワード編集</p>
         <form id="ranking-form" method="post" action={`/seo/templates/${q.id}`} class="space-y-5">
@@ -754,31 +963,9 @@ ranking.get('/seo/templates/:id/edit', requireAuth, async (c) => {
             />
           </div>
 
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              サロン名 <span class="text-pink-500">*</span>
-            </label>
-            <select
-              name="salon"
-              required
-              class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-pink-200"
-            >
-              {salons.map((s) => (
-                <option value={s} selected={s === q.salon_name}>
-                  {s}
-                </option>
-              ))}
-            </select>
-          </div>
+          <SalonAndAreaAutoField salon={salon} />
 
-          <AreaAndKeywordFields
-            serviceAreaCd={q.service_area_cd}
-            middleOptions={middleOptions}
-            middleAreaCd={q.middle_area_cd}
-            smallOptions={smallOptions}
-            smallAreaCd={q.small_area_cd}
-            keywords={keywords}
-          />
+          <KeywordFields keywords={keywords} />
 
           <div class="flex items-center justify-between pt-2">
             <button
@@ -802,7 +989,7 @@ ranking.get('/seo/templates/:id/edit', requireAuth, async (c) => {
   )
 })
 
-ranking.post('/seo/templates/:id', requireAuth, async (c) => {
+ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const body = (await c.req.parseBody()) as Record<string, unknown>
@@ -813,12 +1000,14 @@ ranking.post('/seo/templates/:id', requireAuth, async (c) => {
   if (!owned) return c.redirect('/seo/keywords')
 
   const name = String(body.name || '').trim()
-  const salon = String(body.salon || '').trim()
-  const serviceAreaCd = String(body.service_area_cd || '').trim()
-  const middleAreaCd = String(body.middle_area_cd || '').trim() || null
-  const smallAreaCd = String(body.small_area_cd || '').trim() || null
-  const areaLabel = String(body.area_label || '').trim() || serviceAreaName(serviceAreaCd)
+  // 作成時と同様、サロン名・対策エリアは画面上で編集不可(自動入力)のため送信値を信用しない。
+  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
   const keywords = parseKeywords(body)
+
+  if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd || keywords.length === 0) {
+    return c.redirect(`/seo/templates/${id}/edit?error=1`)
+  }
+  const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
 
   await c.env.DB.prepare(
     `UPDATE ranking_queries
@@ -826,7 +1015,7 @@ ranking.post('/seo/templates/:id', requireAuth, async (c) => {
            area_label = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ? AND user_id = ?`
   )
-    .bind(name || null, salon, serviceAreaCd, middleAreaCd, smallAreaCd, areaLabel, id, user.id)
+    .bind(name || null, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel, id, user.id)
     .run()
 
   await c.env.DB.prepare(`DELETE FROM ranking_query_keywords WHERE query_id = ?`).bind(id).run()
@@ -842,7 +1031,7 @@ ranking.post('/seo/templates/:id', requireAuth, async (c) => {
   return c.redirect('/seo/keywords')
 })
 
-ranking.post('/seo/templates/:id/delete', requireAuth, async (c) => {
+ranking.post('/seo/templates/:id/delete', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   if (Number.isFinite(id)) {
@@ -856,7 +1045,7 @@ ranking.post('/seo/templates/:id/delete', requireAuth, async (c) => {
 // ============================================
 // 定期測定設定
 // ============================================
-ranking.get('/seo/schedule', requireAuth, async (c) => {
+ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const sched = await c.env.DB.prepare(
     `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ?`
@@ -866,13 +1055,17 @@ ranking.get('/seo/schedule', requireAuth, async (c) => {
 
   const saved = c.req.query('saved') === '1'
   const enabled = sched?.enabled === 1
-  const frequency = sched?.frequency || 'daily'
-  const runTime = sched?.run_time || '09:00'
   const lastRunAt = sched?.last_run_at || null
-  const areaCounts = await getAreaCounts(c.env)
 
   return c.render(
-    <PageLayout active="ranking-schedule" salonName={user.salon_name} title="定期測定設定">
+    <PageLayout
+      active="ranking-schedule"
+      salonName={user.salon_name}
+      title="定期測定設定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+      seoEnabled={user.seo_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
           <i class="fas fa-circle-check mr-2"></i>定期測定設定を保存しました。
@@ -881,84 +1074,39 @@ ranking.get('/seo/schedule', requireAuth, async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
         <p class="font-semibold mb-4">定期測定設定</p>
         <p class="text-sm text-gray-500 mb-2">
-          「対策キーワード設定」に登録した条件を、設定した頻度で自動計測します。
+          「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
         </p>
         <p class="text-xs text-gray-400 mb-5">
           前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
         </p>
-        <form method="post" action="/seo/schedule" class="space-y-5">
-          <label class="flex items-center gap-2 text-sm">
-            <input type="checkbox" name="enabled" value="1" checked={enabled} class="w-4 h-4" />
-            定期測定を有効にする
+        <form method="post" action="/seo/schedule">
+          <label class="flex items-center gap-3 cursor-pointer w-fit">
+            <span class="relative inline-flex items-center flex-shrink-0">
+              <input
+                type="checkbox"
+                name="enabled"
+                value="1"
+                checked={enabled}
+                onchange="this.form.submit()"
+                class="sr-only peer"
+              />
+              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </span>
+            <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
           </label>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">頻度</label>
-            <select name="frequency" class="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm bg-white">
-              <option value="daily" selected={frequency === 'daily'}>
-                毎日
-              </option>
-              <option value="weekly" selected={frequency === 'weekly'}>
-                毎週
-              </option>
-            </select>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">実行時刻(JST)</label>
-            <input
-              type="time"
-              name="run_time"
-              value={runTime}
-              class="border border-gray-300 rounded-lg px-3 py-2.5 text-sm"
-            />
-          </div>
-          <div class="flex justify-end">
-            <button
-              type="submit"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-8 py-2.5 rounded-lg text-sm"
-            >
-              保存
-            </button>
-          </div>
         </form>
       </div>
-
-      {/* エリアマスター(全国エリアの一括取得) */}
-      <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
-        <p class="font-semibold mb-2">エリアマスター</p>
-        <p class="text-sm text-gray-500 mb-3">
-          「対策キーワード設定」のエリア選択肢に使う全国エリア（中/小）を一括取得します。
-          数分かかります。取得後にページを再読み込みすると件数が更新されます。
-        </p>
-        <p class="text-sm text-gray-700 mb-3">
-          現在：中エリア <b>{areaCounts.middle}</b> 件 ／ 小エリア <b>{areaCounts.small}</b> 件
-        </p>
-        <button
-          type="button"
-          id="area-refresh-btn"
-          class="border border-gray-300 hover:border-pink-400 text-gray-700 font-semibold px-5 py-2 rounded-lg text-sm disabled:opacity-50"
-        >
-          <i class="fas fa-cloud-arrow-down mr-1"></i>全国エリアを一括取得
-        </button>
-        <p id="area-refresh-status" class="text-sm text-gray-500 mt-3"></p>
-      </div>
-
-      <script src="/static/ranking.js"></script>
     </PageLayout>
   )
 })
 
-// 全国エリアの一括クロール(バックグラウンド起動)
-ranking.post('/seo/areas/refresh', requireAuth, async (c) => {
-  void crawlAllAreas(c.env, { force: true }).catch((e) => console.error('crawlAllAreas failed:', e))
-  return c.json({ success: true })
-})
-
-ranking.post('/seo/schedule', requireAuth, async (c) => {
+ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const body = (await c.req.parseBody()) as Record<string, unknown>
   const enabled = body.enabled ? 1 : 0
-  const frequency = String(body.frequency || 'daily')
-  const runTime = String(body.run_time || '09:00')
+  const frequency = 'weekly'
+  const runTime = '20:00'
 
   const existing = await c.env.DB.prepare(`SELECT id FROM ranking_schedules WHERE user_id = ?`)
     .bind(user.id)
@@ -985,7 +1133,7 @@ ranking.post('/seo/schedule', requireAuth, async (c) => {
 ranking.post('/api/cron/run-ranking', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
   const expected = c.env.CRON_SECRET
-  if (!expected || authHeader !== `Bearer ${expected}`) {
+  if (!expected || !timingSafeEqual(authHeader, `Bearer ${expected}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
 
@@ -996,8 +1144,18 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   ).padStart(2, '0')}`
   const jstToday = jstYmd(jstNow)
 
+  // 定期測定は毎週月曜日固定(getUTCDay: 0=日,1=月,...)。
+  if (jstNow.getUTCDay() !== 1) {
+    return c.json({ time: jstHHMM, date: jstToday, enabled: 0, triggered: [], skipped: 'not-monday' })
+  }
+
+  // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(seo_enabled=0)にされた
+  // サロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT user_id, frequency, run_time, last_run_at FROM ranking_schedules WHERE enabled = 1`
+    `SELECT s.user_id, s.frequency, s.run_time, s.last_run_at
+     FROM ranking_schedules s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1`
   ).all<{ user_id: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
 
   const triggered: number[] = []
@@ -1025,29 +1183,6 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   }
 
   return c.json({ time: jstHHMM, date: jstToday, enabled: schedules.length, triggered })
-})
-
-// ============================================
-// エリアのカスケード用JSON API(中/小エリアをオンデマンド取得)
-// ============================================
-ranking.get('/seo/api/areas', requireAuth, async (c) => {
-  const level = c.req.query('level')
-  const service = String(c.req.query('service') || '').trim()
-  const middle = String(c.req.query('middle') || '').trim()
-  if (!service) return c.json({ options: [] })
-  try {
-    if (level === 'middle') {
-      const options = await getMiddleAreas(c.env, service)
-      return c.json({ options })
-    }
-    if (level === 'small' && middle) {
-      const options = await getSmallAreas(c.env, service, middle)
-      return c.json({ options })
-    }
-  } catch (e) {
-    return c.json({ options: [], error: e instanceof Error ? e.message : String(e) }, 200)
-  }
-  return c.json({ options: [] })
 })
 
 export default ranking

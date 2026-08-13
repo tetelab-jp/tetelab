@@ -66,3 +66,15 @@ output "style_images_bucket" {
   description = "データ移行スクリプト(scripts/migrate-r2-to-s3.ts)実行時にS3_BUCKETとして渡す値"
   value       = aws_s3_bucket.style_images.bucket
 }
+
+output "log_reader_access_key_id" {
+  description = "CloudWatch Logs閲覧専用ユーザーのアクセスキーID(調査・デバッグ用)"
+  value       = aws_iam_access_key.log_reader.id
+  sensitive   = true
+}
+
+output "log_reader_secret_access_key" {
+  description = "CloudWatch Logs閲覧専用ユーザーのシークレットアクセスキー(調査・デバッグ用)"
+  value       = aws_iam_access_key.log_reader.secret
+  sensitive   = true
+}

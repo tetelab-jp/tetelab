@@ -3,18 +3,27 @@ import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
-import { syncStylists, syncCoupons, syncSalonInfo } from '../lib/salonboard-sync'
+import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea } from '../lib/salonboard-sync'
 import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const dashboard = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-dashboard.use('*', requireAuth)
+// 2026-08-12追記(重大バグ修正): '*'で登録すると、index.tsxで全サブアプリが
+// 同じベースパス('/')にapp.route()マウントされている都合上、このサブアプリに
+// 存在しないパス(例: /admin/*)に対してもこのミドルウェアが先に反応し、
+// 未ログイン/契約OFF等の理由でリダイレクトを返してしまい、後続でマウントされる
+// 他のサブアプリ(admin等)へのリクエストを乗っ取ってしまう(実機で確認済みの
+// 不具合)。自分が実際に持つルートのパスパターンだけを明示することで防ぐ。
+dashboard.use('/dashboard', requireAuth)
+dashboard.use('/settings/*', requireAuth)
+dashboard.use('/api/settings/*', requireAuth)
 
 // ---------- Dashboard ----------
 
 dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
+  const blockedError = c.req.query('error')
   const cred = await c.env.DB.prepare(
     'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, salonboard_login_id_enc, last_error FROM salon_credentials WHERE user_id = ?'
   )
@@ -44,9 +53,11 @@ dashboard.get('/dashboard', async (c) => {
     }
   }
 
-  const postsCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM posts WHERE user_id = ?')
+  const blogArticlesRow = await c.env.DB.prepare(
+    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ?"
+  )
     .bind(user.id)
-    .first<{ cnt: number }>()
+    .first<{ total: number; approved: number }>()
 
   const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ?')
     .bind(user.id)
@@ -66,7 +77,20 @@ dashboard.get('/dashboard', async (c) => {
     .first<{ cnt: number }>()
 
   return c.render(
-    <PageLayout active="dashboard" salonName={user.salon_name} title="ダッシュボード">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="dashboard"
+      salonName={user.salon_name}
+      title="ダッシュボード"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
+      {blockedError && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          {blockedError}
+        </div>
+      )}
       {cred && (
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
           <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
@@ -145,10 +169,10 @@ dashboard.get('/dashboard', async (c) => {
             <i class="fas fa-pen-to-square mr-2 text-pink-500"></i>ブログ投稿
           </p>
           <p class="text-sm text-gray-600 mb-3">
-            投稿者・カテゴリ・クーポンを事前登録し、AIで本文を生成して投稿予約できます。
+            カテゴリ別テンプレートで画像から記事をAI生成し、承認した記事を投稿できます。
           </p>
-          <a href="/blog/posts" class="text-sm font-semibold text-pink-600 hover:underline">
-            ブログ投稿を作成する <i class="fas fa-arrow-right ml-1"></i>
+          <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
+            投稿記事一覧を開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
       </div>
@@ -173,8 +197,10 @@ dashboard.get('/dashboard', async (c) => {
           </p>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">ブログ投稿予約数</p>
-          <p class="text-lg font-bold text-gray-800">{postsCountRow?.cnt ?? 0} 件</p>
+          <p class="text-xs text-gray-400 mb-1">ブログ記事（承認済み/総数）</p>
+          <p class="text-lg font-bold text-gray-800">
+            {blogArticlesRow?.approved ?? 0} / {blogArticlesRow?.total ?? 0} 件
+          </p>
         </div>
       </div>
 
@@ -290,7 +316,14 @@ dashboard.get('/settings/salonboard', async (c) => {
   }
 
   return c.render(
-    <PageLayout active="settings" salonName={user.salon_name} title="サロンボード連携設定">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="settings"
+      salonName={user.salon_name}
+      title="サロンボード連携設定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -467,6 +500,10 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
 
     // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
     const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
+    if (salonInfo?.storeId) {
+      // サロンID(STORE_ID)からHPBの公開サロンページを開き、対策エリア(中/小)を自動検出する
+      await syncSalonArea(c.env, user.id, `sln${salonInfo.storeId}`, () => {})
+    }
     const stylistCount = await syncStylists(page, c.env, user.id, () => {})
     const couponCount = await syncCoupons(page, c.env, user.id, () => {})
     console.log(

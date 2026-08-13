@@ -80,6 +80,16 @@ data "aws_iam_policy_document" "app_task" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn]
   }
+  # 2026-08-13追記(監査指摘の是正に伴う追加): 管理者サイト(/admin/status)の
+  # 連続失敗検知アラート送信(src/lib/sns-alert.ts)が、廃止したcloudflare_caller
+  # ユーザーの静的キーではなくこのタスクロールのアンビエント認証情報を使う
+  # よう切り替わったため、同ロールにsns:Publish権限を追加する(これが無いと
+  # アラート送信がAccessDeniedで静かに失敗し続ける)。
+  statement {
+    sid       = "PublishAlerts"
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
 }
 
 resource "aws_iam_role_policy" "app_task" {
@@ -112,15 +122,14 @@ resource "aws_ecs_task_definition" "app" {
         { name = "ECS_TASK_DEFINITION", value = aws_ecs_task_definition.worker.family },
         { name = "ECS_CONTAINER_NAME", value = "worker" },
         { name = "ECS_SUBNET_IDS", value = join(",", data.aws_subnets.default_public.ids) },
-        { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id }
+        { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id },
+        { name = "SNS_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },
         { name = "JWT_SECRET", valueFrom = aws_secretsmanager_secret.jwt_secret.arn },
         { name = "ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
         { name = "CRON_SECRET", valueFrom = aws_secretsmanager_secret.cron_secret.arn },
-        { name = "AWS_ACCESS_KEY_ID", valueFrom = aws_secretsmanager_secret.aws_access_key_id.arn },
-        { name = "AWS_SECRET_ACCESS_KEY", valueFrom = aws_secretsmanager_secret.aws_secret_access_key.arn },
         { name = "ADMIN_JWT_SECRET", valueFrom = aws_secretsmanager_secret.admin_jwt_secret.arn },
         { name = "ADMIN_INITIAL_PASSWORD", valueFrom = aws_secretsmanager_secret.admin_initial_password.arn }
       ]
@@ -159,6 +168,16 @@ resource "aws_ecs_service" "app" {
     target_group_arn = aws_lb_target_group.app.arn
     container_name   = "app"
     container_port   = 3000
+  }
+
+  # 2026-08-13追記(監査指摘の是正): デプロイサーキットブレーカーが未設定
+  # だったため、壊れたイメージをデプロイしても自動ロールバックされず、
+  # ヘルスチェックに失敗し続けるタスク定義がACTIVEのまま残って手動介入が
+  # 必須になっていた。ロールアウトが安定しない場合は自動的に直前の
+  # 正常なタスク定義へロールバックする。
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
   }
 
   depends_on = [aws_lb_listener.https]

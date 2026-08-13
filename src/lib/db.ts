@@ -100,10 +100,28 @@ export function createDb(connectionString: string): PgDatabase {
     // 待機中のクエリと競合し得るため、接続時オプションとして渡す。
     sharedPool = new Pool({
       connectionString,
-      options: '-c TimeZone=UTC',
+      // -c statement_timeout: 1本のクエリが異常に長時間ブロックし続けて
+      // プールのコネクションを占有し続ける(=他リクエストがコネクション
+      // 枯渇で無制限に待たされる)事態を避けるための上限。
+      options: '-c TimeZone=UTC -c statement_timeout=30000',
       // RDSはSSL接続を必須にしているため有効化する(自己署名扱いのRDS CA
       // チェーンを都度検証する構成は今回のスコープでは行わず簡略化する)
-      ssl: { rejectUnauthorized: false }
+      ssl: { rejectUnauthorized: false },
+      // 2026-08-13追記(監査指摘の是正): 全てpg既定値(max=10、idle/connection
+      // timeoutは実質無制限)任せだったため、コネクションプール枯渇時に
+      // リクエストが無制限に滞留するリスクがあった。明示的に上限を設ける。
+      max: 10,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000
+    })
+    // 2026-08-13追記(重大バグ修正): pgのPoolはidle中のクライアントで
+    // エラー(RDSのフェイルオーバー・アイドル接続の切断等)が起きると
+    // 'error'イベントを発行する。リスナーが無いとNode.jsは未処理の
+    // 'error'イベントを例外として扱いプロセス全体をクラッシュさせるため、
+    // ログ出力のみ行い揉み消す(pgは内部でそのクライアントをプールから
+    // 破棄し、次回利用時に新しい接続を張り直す)。
+    sharedPool.on('error', (err) => {
+      console.error('DBコネクションプールでエラーが発生しました(接続は自動的に張り直されます):', err)
     })
   }
   return new PgDatabase(sharedPool)

@@ -13,15 +13,14 @@ import { buildSearchUrl, type AreaSelection } from './ranking-url'
 import {
   parseSearchResultPage,
   findSalonRankInPage,
-  extractMiddleAreas,
-  extractSmallAreas,
-  type AreaLink
+  extractSalonAreaFromSlnPage,
+  type SalonAreaInfo
 } from './ranking-parse'
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
 const PER_PAGE = 20
-const DEFAULT_MAX_PAGES = 50 // Python版と同じ上限
+const DEFAULT_MAX_PAGES = 5 // 100位(1ページ20件×5)より下は打ち切り。呼び出し側(ranking.tsx)は明示的にmaxPagesを渡す
 const DEFAULT_DELAY_MS = 1500 // ページ送りの間隔(サイトに優しく・弾かれ軽減)
 const FETCH_RETRY = 3
 
@@ -144,34 +143,15 @@ export async function measureRank(
 }
 
 // --------------------------------------------
-// エリアマスター用クロール
+// サロン自身のHPBページからの対策エリア自動検出
 // --------------------------------------------
 
-/** 大エリアページ(svc{XX}/)から中エリア一覧を取得 */
-export async function crawlMiddleAreas(
-  serviceAreaCd: string,
+/** サロンの公開ページ(https://beauty.hotpepper.jp/sln{STORE_ID}/)から中/小エリアを取得 */
+export async function fetchSalonAreaFromHpb(
+  hpbSlnId: string,
   options: ScrapeOptions = {}
-): Promise<AreaLink[]> {
+): Promise<SalonAreaInfo> {
   const dispatcher = await makeDispatcher(options.proxyUrl)
-  const html = await fetchHtml(
-    `https://beauty.hotpepper.jp/svc${serviceAreaCd}/`,
-    dispatcher,
-    options.signal
-  )
-  return extractMiddleAreas(html, serviceAreaCd)
-}
-
-/** 中エリアページ(svc{XX}/mac{YY}/)から小エリア一覧を取得 */
-export async function crawlSmallAreas(
-  serviceAreaCd: string,
-  middleAreaCd: string,
-  options: ScrapeOptions = {}
-): Promise<AreaLink[]> {
-  const dispatcher = await makeDispatcher(options.proxyUrl)
-  const html = await fetchHtml(
-    `https://beauty.hotpepper.jp/svc${serviceAreaCd}/mac${middleAreaCd}/`,
-    dispatcher,
-    options.signal
-  )
-  return extractSmallAreas(html, serviceAreaCd, middleAreaCd)
+  const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/`, dispatcher, options.signal)
+  return extractSalonAreaFromSlnPage(html)
 }

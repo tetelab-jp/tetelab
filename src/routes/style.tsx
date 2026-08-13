@@ -1,16 +1,27 @@
 import { Hono, type Context } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
+import { processStyleImage } from '../lib/image-process'
+import { INITIAL_BURST_COUNT, resetStuckJobsForUser } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
 
 const style = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-style.use('*', requireAuth)
+// 2026-08-12追記(重大バグ修正): '*'で登録すると、index.tsxで全サブアプリが
+// 同じベースパス('/')にapp.route()マウントされている都合上、このサブアプリに
+// 存在しないパス(例: /admin/*)に対してもこのミドルウェアが先に反応し、
+// 未ログイン/機能OFF等の理由でリダイレクトを返してしまい、後続でマウントされる
+// 他のサブアプリ(blog、admin等)へのリクエストを乗っ取ってしまう(実機で確認
+// 済みの不具合)。自分が実際に持つルートのパスパターンだけを明示することで防ぐ。
+style.use('/style/*', requireAuth)
+style.use('/api/style/*', requireAuth)
+style.use('/style/*', requireStyleEnabled)
+style.use('/api/style/*', requireStyleEnabled)
 
 // ---------- 共通ヘルパー ----------
 
@@ -253,14 +264,20 @@ function StyleListSection({
   totalCount,
   selectedCount,
   showCreateLink = true,
-  heading = '登録済みスタイル'
+  heading = '登録済みスタイル',
+  checkboxMode = 'auto-post'
 }: {
   styles: StyleListRow[]
   totalCount: number
   selectedCount: number
   showCreateLink?: boolean
   heading?: string
+  // 'auto-post': 自動投稿対象(auto_post_enabled_flag、DBへ即時保存)の選択。
+  // 'template-target': テンプレート一括適用の対象選択のみの、ページ内限定の一時的な
+  // チェック(DBには保存しない、常に未選択から始まる、登録スタイル側の状態に影響しない)。
+  checkboxMode?: 'auto-post' | 'template-target'
 }) {
+  const isTemplateMode = checkboxMode === 'template-target'
   return (
     <>
       <div class="flex items-center justify-between flex-wrap gap-2">
@@ -269,21 +286,21 @@ function StyleListSection({
         </p>
         <div class="flex items-center gap-3">
           <span class="text-sm text-gray-600">
-            投稿対象:{' '}
-            <span id="selected-count" class="font-bold text-pink-600">
-              {selectedCount}
+            {isTemplateMode ? '選択中' : '投稿対象'}:{' '}
+            <span id={isTemplateMode ? 'template-target-selected-count' : 'selected-count'} class="font-bold text-pink-600">
+              {isTemplateMode ? 0 : selectedCount}
             </span>{' '}
             / {totalCount} 件
           </span>
           <button
-            id="select-all-btn"
+            id={isTemplateMode ? 'template-target-select-all-btn' : 'select-all-btn'}
             type="button"
             class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
           >
             全選択
           </button>
           <button
-            id="deselect-all-btn"
+            id={isTemplateMode ? 'template-target-deselect-all-btn' : 'deselect-all-btn'}
             type="button"
             class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
           >
@@ -326,8 +343,11 @@ function StyleListSection({
                 />
                 <input
                   type="checkbox"
-                  class="style-checkbox w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0"
-                  checked={s.auto_post_enabled_flag === 1}
+                  class={
+                    (isTemplateMode ? 'template-target-checkbox' : 'style-checkbox') +
+                    ' w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0'
+                  }
+                  checked={!isTemplateMode && s.auto_post_enabled_flag === 1}
                   data-image-id={s.id}
                 />
                 <a href={`/style/${s.id}/edit`} class="flex-shrink-0">
@@ -404,7 +424,7 @@ function TemplateBulkApplySection({
         <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
       <p class="text-xs text-gray-400">
-        下のリストでチェックした（自動投稿対象の）スタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
+        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
       </p>
     </div>
   )
@@ -418,14 +438,20 @@ style.get('/style/library', async (c) => {
   const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
 
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル一覧">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル一覧"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-2">
           <i class="fas fa-circle-info mr-2 text-pink-500"></i>使い方
         </p>
         <p class="text-sm text-gray-600 leading-relaxed">
-          自動更新するスタイルを一元管理します。
-          チェックを入れると「自動投稿対象」になり、サロンボードへの登録＋反映申請まで自動で実行されます。
+          自動更新するスタイルを管理します。
+          チェックを入れると「自動投稿対象」になり、サロンボードへの登録＋反映申請まで実行されます。
         </p>
       </div>
 
@@ -474,7 +500,13 @@ style.get('/style/import', async (c) => {
     .first<{ id: number }>()
 
   return c.render(
-    <PageLayout active="style-import" salonName={user.salon_name} title="既存スタイルの取り込み">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-import"
+      salonName={user.salon_name}
+      title="既存スタイルの取り込み"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {!cred && (
         <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
           <i class="fas fa-triangle-exclamation mr-2"></i>
@@ -486,11 +518,12 @@ style.get('/style/import', async (c) => {
         <button
           id="fetch-list-btn"
           disabled={!cred}
-          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+          class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
         >
-          <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードから一覧取得
+          <i class="fas fa-cloud-arrow-down mr-2"></i>
+          <span id="fetch-list-btn-label">サロンボードからスタイル取得</span>
         </button>
-        <p id="import-status" class="text-sm text-gray-500 mt-3"></p>
+        <p id="import-status" class="text-sm text-gray-500 mt-3 whitespace-pre-line"></p>
       </div>
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
@@ -501,15 +534,16 @@ style.get('/style/import', async (c) => {
       </div>
 
       <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
-        <div class="flex items-center justify-between mb-3">
-          <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
+        <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-1">
           <button
             id="import-execute-btn"
-            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+            class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 sm:px-8 sm:py-3.5 rounded-lg disabled:opacity-50"
           >
-            選択したスタイルを取り込む
+            <span id="import-execute-btn-label">選択したスタイルを取り込む</span>
           </button>
+          <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
         </div>
+        <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
       </div>
 
@@ -644,13 +678,15 @@ function StyleForm({
   detail,
   stylists,
   coupons,
-  templates
+  templates,
+  imageError
 }: {
   mode: 'new' | 'edit'
   detail: StyleDetailRow | null
   stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
   templates: TemplateForAutofill[]
+  imageError?: boolean
 }) {
   const category = detail?.category_value || 'SG01'
   const menuCodes: string[] = detail ? JSON.parse(detail.menu_values_json || '[]') : []
@@ -666,6 +702,12 @@ function StyleForm({
       data-has-existing-image={detail?.front_style_image_id ? 'true' : 'false'}
       class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl"
     >
+      {imageError && (
+        <div class="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          画像の処理に失敗しました。別の画像でもう一度お試しください。
+        </div>
+      )}
       {mode === 'new' && templates.length > 0 && (
         <div class="bg-pink-50 border border-pink-100 rounded-lg p-3">
           <label class="block text-sm font-medium text-gray-700 mb-1">テンプレートから作成（任意）</label>
@@ -834,13 +876,15 @@ function StyleForm({
           {mode === 'new' ? '作成する' : '更新する'}
         </button>
         {mode === 'edit' && (
-          <a
-            href={`/style/${detail?.id}/delete`}
+          <button
+            type="submit"
+            formaction={`/style/${detail?.id}/delete`}
+            formmethod="post"
             onclick="return confirm('このスタイルを削除しますか？')"
             class="px-5 py-2.5 rounded-lg border border-red-200 text-red-500 text-sm font-semibold hover:bg-red-50"
           >
             削除
-          </a>
+          </button>
         )}
       </div>
       <script src="/static/style-form.js"></script>
@@ -855,12 +899,23 @@ style.get('/style/new', async (c) => {
     loadActiveTemplates(c, user)
   ])
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル新規作成">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル新規作成"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <StyleForm mode="new" detail={null} stylists={stylists} coupons={coupons} templates={templates} />
     </PageLayout>,
     { title: 'スタイル新規作成' }
   )
 })
+
+// public/static/style-form.jsのHASHTAGS_ALLOWED_PATTERNと同じ許可文字
+// (英数字・記号無し)。JSを経由しない直接POSTでも同じ制約を強制するため、
+// サーバー側でも同じパターンでフィルタする(部分一致ではなく1タグ丸ごと)。
+const HASHTAG_ALLOWED_PATTERN = /^[\p{L}\p{N}]+$/u
 
 function parseStyleForm(body: Record<string, any>) {
   const category = String(body.category_value || 'SG01') as 'SG01' | 'SG02'
@@ -872,6 +927,7 @@ function parseStyleForm(body: Record<string, any>) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+    .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
 
   return {
     // 2026-08-09追記: 実際のサロンボードの文字数上限は30/50/120であり、
@@ -906,11 +962,18 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
   if (!file || !(file instanceof File) || file.size === 0) return
 
   const arrayBuffer = await file.arrayBuffer()
-  const ext = (file.name.split('.').pop() || 'jpg').toLowerCase()
-  const key = `style/${user.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`
+  // プロキシ経由のアップロードが大きいPOSTボディで失敗しやすいため、保存前に
+  // 縦4:横3・最大600x800px・300KB以下のJPEGへ正規化する(image-process.ts参照)。
+  // 出力は常にJPEGになるため拡張子もjpgで統一する。
+  const { buffer, contentType } = await processStyleImage(arrayBuffer)
+  const key = `style/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
+  // 元ファイル名の拡張子(.png/.heic等)をそのまま保存すると、実際の中身は
+  // JPEGなのにファイル名だけ拡張子が食い違ったまま自動投稿時のアップロード
+  // ファイル名に使われてしまう。出力は常にJPEGなので拡張子もjpgへ統一する。
+  const fileName = `${(file.name || 'style').replace(/\.[^./\\]+$/, '')}.jpg`
 
-  await c.env.STYLE_IMAGES.put(key, arrayBuffer, {
-    httpMetadata: { contentType: file.type || 'image/jpeg' }
+  await c.env.STYLE_IMAGES.put(key, buffer, {
+    httpMetadata: { contentType }
   })
 
   const existingFront = await c.env.DB.prepare(
@@ -921,14 +984,17 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
 
   if (existingFront) {
     await c.env.STYLE_IMAGES.delete(existingFront.r2_key).catch(() => {})
-    await c.env.DB.prepare(`UPDATE style_images SET r2_key = ?, file_name = ? WHERE id = ?`)
-      .bind(key, file.name, existingFront.id)
+    await c.env.DB.prepare(
+      `UPDATE style_images SET r2_key = ?, file_name = ?, compressed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(key, fileName, existingFront.id)
       .run()
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order) VALUES (?, 'FRONT', ?, ?, 0)`
+      `INSERT INTO style_images (style_id, image_role, r2_key, file_name, sort_order, compressed_at)
+       VALUES (?, 'FRONT', ?, ?, 0, CURRENT_TIMESTAMP)`
     )
-      .bind(styleId, key, file.name)
+      .bind(styleId, key, fileName)
       .run()
   }
 }
@@ -968,7 +1034,17 @@ style.post('/style/new', async (c) => {
     .run()
 
   const styleId = Number(insert.meta.last_row_id)
-  await saveImageIfProvided(c, user, styleId, body)
+  try {
+    await saveImageIfProvided(c, user, styleId, body)
+  } catch (err: any) {
+    // 2026-08-13追記(重大バグ修正): 画像処理(sharp)が不正なファイル等で
+    // 例外を投げると、スタイル行は既にINSERT済みのまま素の500エラーで
+    // 終わっていた(内部ステータスがreadyのまま画像無しの中途半端な
+    // レコードが残る恐れもあった)。ステータスをdraftへ差し戻し、
+    // ユーザーへ編集画面でエラーを伝える。
+    await c.env.DB.prepare(`UPDATE styles SET internal_save_status = 'draft' WHERE id = ?`).bind(styleId).run().catch(() => {})
+    return c.redirect(`/style/${styleId}/edit?imageError=1`)
+  }
 
   return c.redirect('/style/library?saved=1')
 })
@@ -993,8 +1069,21 @@ style.get('/style/:id/edit', async (c) => {
   const { stylists, coupons } = await loadFormMasters(c, user)
 
   return c.render(
-    <PageLayout active="style-library" salonName={user.salon_name} title="スタイル編集">
-      <StyleForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} templates={[]} />
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-library"
+      salonName={user.salon_name}
+      title="スタイル編集"
+      blogEnabled={user.blog_enabled !== 0}
+    >
+      <StyleForm
+        mode="edit"
+        detail={detail}
+        stylists={stylists}
+        coupons={coupons}
+        templates={[]}
+        imageError={c.req.query('imageError') === '1'}
+      />
     </PageLayout>,
     { title: 'スタイル編集' }
   )
@@ -1011,7 +1100,11 @@ style.post('/style/:id/edit', async (c) => {
     .first<{ id: number }>()
   if (!owned) return c.notFound()
 
-  await saveImageIfProvided(c, user, id, body)
+  try {
+    await saveImageIfProvided(c, user, id, body)
+  } catch (err: any) {
+    return c.redirect(`/style/${id}/edit?imageError=1`)
+  }
 
   const hasImage = await c.env.DB.prepare(
     `SELECT id FROM style_images WHERE style_id = ? AND image_role = 'FRONT'`
@@ -1049,9 +1142,19 @@ style.post('/style/:id/edit', async (c) => {
   return c.redirect('/style/library?saved=1')
 })
 
-style.get('/style/:id/delete', async (c) => {
+style.post('/style/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
+
+  // 2026-08-13追記(重大バグ修正): 所有権チェックをせずstyle_idだけでS3画像を
+  // 削除していたため、他サロンのstyle_idを指定すればそのサロンの画像を
+  // 削除できてしまっていた(DB行自体はuser_id条件で守られていたが、
+  // 画像だけが孤立して消える実害があった)。まずstyles.user_idで所有権を
+  // 確認してから画像削除に進む。
+  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ?')
+    .bind(id, user.id)
+    .first<{ id: number }>()
+  if (!owned) return c.redirect('/style/library?deleted=1')
 
   const images = await c.env.DB.prepare('SELECT r2_key FROM style_images WHERE style_id = ?').bind(id).all<{ r2_key: string }>()
   for (const img of images.results || []) {
@@ -1248,21 +1351,27 @@ style.post('/style/library/delete/:id', async (c) => {
 
 // ---------- 自動投稿・手動投稿 ----------
 
-// 自動投稿の時間窓(JST)。src/lib/style-post-runner.tsのDAILY_WINDOW_START/END_MINUTESと一致させること。
-const DAILY_WINDOW_START_LABEL = '7:00'
-const DAILY_WINDOW_END_LABEL = '24:00'
-// SalonMotion側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
-const DAILY_POST_LIMIT_LABEL = 100
+// 自動投稿を停止する時間帯(JST)。src/lib/style-post-runner.tsの
+// BLACKOUT_START/END_MINUTESと一致させること。
+const BLACKOUT_START_LABEL = '2:00'
+const BLACKOUT_END_LABEL = '7:00'
+// 通常運転時の投稿間隔(分)。src/lib/style-post-runner.tsのPOST_INTERVAL_MINUTESと一致させること。
+const POST_INTERVAL_MINUTES_LABEL = 60
 
 style.get('/style/schedule', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
+  const clearedCount = c.req.query('cleared')
 
-  const schedule = await c.env.DB.prepare('SELECT enabled FROM style_post_schedules WHERE user_id = ?')
+  const schedule = await c.env.DB.prepare(
+    'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ?'
+  )
     .bind(user.id)
-    .first<{ enabled: number }>()
+    .first<{ enabled: number; burst_remaining: number; paused_until: string | null }>()
 
   const enabled = schedule?.enabled === 1
+  const isPaused = !!schedule?.paused_until && new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime() > Date.now()
+  const isBursting = enabled && (schedule?.burst_remaining ?? 0) > 0
 
   const selectedRow = await c.env.DB.prepare(
     "SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1 AND internal_save_status = 'ready'"
@@ -1272,10 +1381,25 @@ style.get('/style/schedule', async (c) => {
   const selectedCount = selectedRow?.cnt ?? 0
 
   return c.render(
-    <PageLayout active="style-schedule" salonName={user.salon_name} title="自動投稿・手動投稿">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-schedule"
+      salonName={user.salon_name}
+      title="自動投稿・手動投稿"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+
+      {clearedCount !== undefined && (
+        <div class="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>
+          {clearedCount === '0'
+            ? '古い進行中ジョブは見つかりませんでした(15分未満のジョブは対象外です)'
+            : `${clearedCount}件の古い進行中ジョブをリセットしました`}
         </div>
       )}
 
@@ -1297,16 +1421,41 @@ style.get('/style/schedule', async (c) => {
             <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
           </span>
           <span class="text-sm font-medium text-gray-700">
-            自動投稿を有効にする（{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}に分散、最大{DAILY_POST_LIMIT_LABEL}件/日）
+            自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
           </span>
         </label>
       </form>
 
+      {isPaused && (
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700 flex items-center justify-between gap-4 flex-wrap">
+          <span>
+            <i class="fas fa-triangle-exclamation mr-2"></i>
+            5件連続で投稿が失敗したため、自動投稿を一時停止しています。5時間経過後に自動的に再開します。
+          </span>
+          <form method="post" action="/style/schedule/clear-pause">
+            <button type="submit" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-700 hover:bg-red-100">
+              今すぐ再開する
+            </button>
+          </form>
+        </div>
+      )}
+
+      {!isPaused && isBursting && (
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+          <i class="fas fa-bolt mr-2"></i>
+          自動投稿を有効にした直後の動作確認として、登録順の先頭3件を間隔を空けず連続投稿しています
+          （残り{schedule?.burst_remaining}件）。完了後は通常運転（{POST_INTERVAL_MINUTES_LABEL}分おきに1件）に移ります。
+        </div>
+      )}
+
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿を有効にすると、<b>{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}</b>の間に、自動投稿対象（入力完了済み）の
-        スタイルを登録順に、時間帯全体へ均等に分散させながら「登録＋反映申請」まで自動実行します
-        （1日最大<b>{DAILY_POST_LIMIT_LABEL}件</b>まで。短時間に集中投稿しないよう、対象件数に応じて投稿間隔を自動調整します）。
+        自動投稿を有効にすると、まず動作確認として登録順の先頭3件を連続投稿し、その後は
+        <b>深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯</b>に、自動投稿対象（入力完了済み）の
+        スタイルを登録順に、{POST_INTERVAL_MINUTES_LABEL}分おきに1件ずつ巡回しながら「登録＋反映申請」まで自動実行します
+        （最後まで行ったら先頭に戻り、日付をまたいでも継続します）。
+        また、5件連続で投稿に失敗した場合は5時間自動的に停止します。
+        いったんOFFにしてから再度ONにすると、先頭3件からの動作確認をやり直します。
         現在<b>{selectedCount}件</b>が対象です。
       </div>
 
@@ -1322,6 +1471,11 @@ style.get('/style/schedule', async (c) => {
           <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+        <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
+          <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
+            「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
+          </button>
+        </form>
       </div>
 
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
@@ -1343,23 +1497,62 @@ style.post('/style/schedule', async (c) => {
 
   const enabled = body.enabled === 'on' || body.enabled === 'true'
 
-  const existing = await c.env.DB.prepare('SELECT id FROM style_post_schedules WHERE user_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id, enabled FROM style_post_schedules WHERE user_id = ?')
     .bind(user.id)
-    .first<{ id: number }>()
+    .first<{ id: number; enabled: number }>()
+
+  // 2026-08-13追記(ユーザー指定ルール): OFF→ONに切り替えた瞬間(既存レコードが
+  // 無い=初回ONの場合も含む)、動作確認のため登録順の先頭3件を連続投稿する
+  // 「初回バースト」をリセットする。ON→OFF→ONで再度ONにした場合も同様。
+  const turningOn = enabled && existing?.enabled !== 1
 
   if (existing) {
-    await c.env.DB.prepare(
-      `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
-    )
-      .bind(enabled ? 1 : 0, user.id)
-      .run()
+    if (turningOn) {
+      await c.env.DB.prepare(
+        `UPDATE style_post_schedules
+         SET enabled = 1, burst_remaining = ?, next_cursor_style_id = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`
+      )
+        .bind(INITIAL_BURST_COUNT, user.id)
+        .run()
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(enabled ? 1 : 0, user.id)
+        .run()
+    }
   } else {
-    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled) VALUES (?, ?)`)
-      .bind(user.id, enabled ? 1 : 0)
+    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled, burst_remaining) VALUES (?, ?, ?)`)
+      .bind(user.id, enabled ? 1 : 0, enabled ? INITIAL_BURST_COUNT : 0)
       .run()
   }
 
   return c.redirect('/style/schedule?saved=1')
+})
+
+// 2026-08-14追記(ユーザー指定): 5件連続失敗による5時間の自動一時停止を、
+// ユーザーの判断で今すぐ解除できるようにする(原因が解消したにも関わらず
+// 5時間待つ必要がないようにするため)。連続失敗カウント自体もリセットし、
+// 解除直後にまた5件連続失敗と判定されて即座に再度停止することを防ぐ。
+style.post('/style/schedule/clear-pause', async (c) => {
+  const user = c.get('user')
+  await c.env.DB.prepare(
+    `UPDATE style_post_schedules SET paused_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+  )
+    .bind(user.id)
+    .run()
+  await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
+  return c.redirect('/style/schedule?saved=1')
+})
+
+// 2026-08-14追記(ユーザー指定): 「進行中ジョブがある」と判定され続けて
+// 自動投稿対象・手動実行対象から除外されているスタイルを、ユーザー自身の
+// 判断で今すぐ復旧できるようにする(sweepStaleJobsの15分を待たない)。
+style.post('/style/schedule/reset-stuck-jobs', async (c) => {
+  const user = c.get('user')
+  const clearedCount = await resetStuckJobsForUser(c.env, user.id)
+  return c.redirect(`/style/schedule?cleared=${clearedCount}`)
 })
 
 // ---------- テンプレート管理 ----------
@@ -1391,7 +1584,13 @@ style.get('/style/template', async (c) => {
   const selectedCount = styles.filter((s) => s.auto_post_enabled_flag === 1).length
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート作成・適用">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート作成・適用"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1457,6 +1656,7 @@ style.get('/style/template', async (c) => {
         selectedCount={selectedCount}
         showCreateLink={false}
         heading="テンプレート反映スタイル"
+        checkboxMode="template-target"
       />
 
       <script src="/static/style-library.js"></script>
@@ -1643,13 +1843,15 @@ function TemplateForm({
           {mode === 'new' ? '作成する' : '更新する'}
         </button>
         {mode === 'edit' && (
-          <a
-            href={`/style/template/${detail?.id}/delete`}
+          <button
+            type="submit"
+            formaction={`/style/template/${detail?.id}/delete`}
+            formmethod="post"
             onclick="return confirm('このテンプレートを削除しますか？')"
             class="px-5 py-2.5 rounded-lg border border-red-200 text-red-500 text-sm font-semibold hover:bg-red-50"
           >
             削除
-          </a>
+          </button>
         )}
       </div>
       <script src="/static/style-form.js"></script>
@@ -1667,6 +1869,7 @@ function parseTemplateForm(body: Record<string, any>) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+    .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
 
   return {
     templateName: String(body.template_name || '').trim(),
@@ -1688,7 +1891,13 @@ style.get('/style/template/new', async (c) => {
   const user = c.get('user')
   const { stylists, coupons } = await loadFormMasters(c, user)
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート新規作成">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート新規作成"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <TemplateForm mode="new" detail={null} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート新規作成' }
@@ -1747,7 +1956,13 @@ style.get('/style/template/:id/edit', async (c) => {
   const { stylists, coupons } = await loadFormMasters(c, user)
 
   return c.render(
-    <PageLayout active="style-template" salonName={user.salon_name} title="テンプレート編集">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-template"
+      salonName={user.salon_name}
+      title="テンプレート編集"
+      blogEnabled={user.blog_enabled !== 0}
+    >
       <TemplateForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} />
     </PageLayout>,
     { title: 'テンプレート編集' }
@@ -1792,7 +2007,7 @@ style.post('/style/template/:id/edit', async (c) => {
   return c.redirect('/style/template?saved=1')
 })
 
-style.get('/style/template/:id/delete', async (c) => {
+style.post('/style/template/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   await c.env.DB.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?').bind(id, user.id).run()

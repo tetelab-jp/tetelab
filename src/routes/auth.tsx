@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { setCookie, deleteCookie } from 'hono/cookie'
-import { hashPassword, verifyPassword } from '../lib/crypto'
+import { hashPassword, verifyPasswordConstantTime } from '../lib/crypto'
 import { signJwt } from '../lib/jwt'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import type { Bindings } from '../types'
@@ -106,8 +106,11 @@ auth.post('/signup', async (c) => {
   }
 
   const passwordHash = await hashPassword(password)
+  // 契約状況(is_active)は既定のDEFAULT 1(契約中)のままでよいが、スタイル/
+  // ブログ/SEOの各機能は、管理者サイト(/admin/tool)で有効化するまでは
+  // 使わせない運用のため、新規登録時は明示的にOFFで作成する。
   const result = await c.env.DB.prepare(
-    'INSERT INTO users (email, password_hash, salon_name) VALUES (?, ?, ?)'
+    'INSERT INTO users (email, password_hash, salon_name, style_enabled, blog_enabled, seo_enabled) VALUES (?, ?, ?, 0, 0, 0)'
   )
     .bind(email, passwordHash, salonName)
     .run()
@@ -164,22 +167,64 @@ auth.get('/login', (c) => {
   )
 })
 
+// 2026-08-13追記(監査指摘の是正): ブルートフォース対策が皆無だったため追加。
+// 同一アカウントへの失敗が一定回数溜まったら一時的にロックする。
+const MAX_FAILED_LOGIN_ATTEMPTS = 10
+const LOGIN_LOCKOUT_MINUTES = 15
+
 auth.post('/login', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '').trim().toLowerCase()
   const password = String(body.password || '')
+  const wrongCredsError = () =>
+    c.redirect('/login?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
 
-  const user = await c.env.DB.prepare('SELECT id, email, password_hash FROM users WHERE email = ?')
+  const user = await c.env.DB.prepare(
+    'SELECT id, email, password_hash, failed_login_count, login_locked_until FROM users WHERE email = ?'
+  )
     .bind(email)
-    .first<{ id: number; email: string; password_hash: string }>()
+    .first<{
+      id: number
+      email: string
+      password_hash: string
+      failed_login_count: number
+      login_locked_until: string | null
+    }>()
 
-  if (!user) {
-    return c.redirect('/login?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  if (user?.login_locked_until) {
+    const lockedUntilMs = new Date(user.login_locked_until.replace(' ', 'T') + 'Z').getTime()
+    if (lockedUntilMs > Date.now()) {
+      return c.redirect(
+        '/login?error=' +
+          encodeURIComponent('ログイン試行が続けて失敗したため、しばらく時間をおいてから再度お試しください')
+      )
+    }
   }
 
-  const valid = await verifyPassword(password, user.password_hash)
-  if (!valid) {
-    return c.redirect('/login?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  // 未登録メールでもPBKDF2検証の計算コストを払い、応答時間差での
+  // メールアドレス在不在の推測(ユーザー列挙)を避ける。
+  const valid = await verifyPasswordConstantTime(password, user?.password_hash ?? null)
+
+  if (!user || !valid) {
+    if (user) {
+      await c.env.DB.prepare(
+        `UPDATE users SET failed_login_count = failed_login_count + 1,
+           login_locked_until = CASE
+             WHEN failed_login_count + 1 >= ? THEN now() + (? || ' minutes')::interval
+             ELSE login_locked_until
+           END
+         WHERE id = ?`
+      )
+        .bind(MAX_FAILED_LOGIN_ATTEMPTS, LOGIN_LOCKOUT_MINUTES, user.id)
+        .run()
+    }
+    return wrongCredsError()
+  }
+
+  if (user.failed_login_count > 0 || user.login_locked_until) {
+    await c.env.DB.prepare('UPDATE users SET failed_login_count = 0, login_locked_until = NULL WHERE id = ?')
+      .bind(user.id)
+      .run()
   }
 
   await setSession(c, user.id, user.email)
@@ -194,7 +239,8 @@ auth.post('/logout', (c) => {
 })
 
 async function setSession(c: any, userId: number, email: string) {
-  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
+  const secret = c.env.JWT_SECRET
+  if (!secret) throw new Error('JWT_SECRETが未設定です')
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS
   const token = await signJwt({ sub: userId, email, exp }, secret)
   // ALB配下ではTLSがALBで終端され、コンテナへは平文HTTPで届くため

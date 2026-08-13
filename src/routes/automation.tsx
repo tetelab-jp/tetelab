@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { requireAuth } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import {
   runStyleAutomationForUser,
@@ -8,9 +8,11 @@ import {
   currentJstTimeLabel,
   getStyleRowForJob,
   getStyleNo,
-  sweepStaleJobs
+  sweepStaleJobs,
+  updateConsecutiveFailureAndNotify,
+  finalizeRunIfComplete
 } from '../lib/style-post-runner'
-import { decryptSecret } from '../lib/crypto'
+import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
@@ -26,43 +28,32 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-// 2026-08-12追記: Bright Dataのプロキシ契約を確認したところ、実際には
-// 少数(5個)の専用固定IPのプールであることが判明した(一般家庭回線を
-// 都度借りるローテーション型ではない)。そのため「新しいセッションID=
-// 未知のIP」ではなく、常にこの5つの中のどれかを使うことになる。
-// このプール内の各セッションIDごとに連続障害回数を記録し(DB:
-// proxy_session_pool_stats)、その時点で最も調子の良い(連続障害回数が
-// 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
-// 2026-08-12追記(重大バグ修正): セッションIDにハイフン(-)を含めると、
-// Bright Data側のユーザー名解析(brd-customer-...-session-<ID>という
-// 形式でIDを読み取る仕組み)がID内のハイフンを別パラメータの区切りと
-// 誤認識し、HTTP 407(プロキシ認証エラー)で全滅する不具合があった。
-// そのため英数字のみのIDに変更する。
-const PROXY_SESSION_POOL = ['salonmotionpool1', 'salonmotionpool2', 'salonmotionpool3', 'salonmotionpool4', 'salonmotionpool5']
+// 2026-08-12追記: 当時のBright Data契約が少数(5個)の専用固定IPのプールだった
+// ため、「新しいセッションID=未知のIP」ではなく常にこの5つの中のどれかを
+// 使うことになっていた。そのためプール内の各セッションIDごとに連続障害回数を
+// 記録し(DB: proxy_session_pool_stats)、その時点で最も調子の良いものを
+// 優先的に選ぶ仕組みにしていた。
+//
+// 2026-08-13追記(方針転換): プロキシ契約をDataImpulse(日本国内だけで
+// 2,300IPの大きなレジデンシャルプール)へ変更した。実機ログで「1件目の
+// 投稿は成功、直後の2件目は同じ症状(net::ERR_ABORTED)で失敗」という
+// パターンが確認され、固定プール運用時代の「調子の良いIPを使い回す」
+// 選び方そのものが、直前に使ったIPをSALON BOARD/Akamai側に警戒される
+// 原因になっている可能性が浮上した。プールが十分大きいDataImpulseでは
+// IPを使い回す利点がそもそも無いため、実績追跡(proxy_session_pool_stats)は
+// 廃止し、ジョブ(投稿1回)ごとに毎回ランダムな新しいセッションIDを
+// 生成するだけのシンプルな方式に変更する。
+// 2026-08-13追記(方針転換4): ワーカー側の試行上限を3→5に引き上げた
+// (worker/src/index.ts の MAX_ATTEMPTS_PER_STYLE 参照)。ただし画像
+// アップロード成功後に後続工程で失敗した場合はIP切り替えを行わず
+// 即座に打ち切るため、実際に5回すべて使い切るのはログイン失敗が
+// 連続するケースなど一部に限られる。候補生成数も合わせて5にする。
+// 2026-08-13追記2(ユーザー指定): 3〜4回目の試行で成功する実例が確認できた
+// ため5→10に引き上げ。候補生成数も合わせる。
+const PROXY_CANDIDATE_COUNT = 10
 
-async function markProxySessionSuccess(env: Bindings, userId: number, sessionId: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-     VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
-     ON CONFLICT (user_id, session_id) DO UPDATE SET
-       consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
-  )
-    .bind(userId, sessionId)
-    .run()
-    .catch(() => {})
-}
-
-async function markProxySessionFailure(env: Bindings, userId: number, sessionId: string, reason: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-     VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT (user_id, session_id) DO UPDATE SET
-       consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
-       last_result = ?, last_used_at = CURRENT_TIMESTAMP`
-  )
-    .bind(userId, sessionId, reason, reason)
-    .run()
-    .catch(() => {})
+function randomSessionId(): string {
+  return Math.random().toString(36).slice(2, 10)
 }
 
 // ---------- 手動実行・履歴画面 ----------
@@ -96,6 +87,8 @@ type ExecutionLogRow = {
   category: string
   categoryClass: string
   content: any
+  contentLabel: any
+  contentName: any
   statusLabel: string
   statusClass: string
   borderClass: string
@@ -111,14 +104,18 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
     <>
       {/* PC表示: テーブル */}
       <div class="hidden md:block overflow-x-auto">
-        <table class="w-full text-sm">
+        {/* 2026-08-13追記: 成功時も投稿ログに全工程の経過を載せるようにしたため、
+            table-fixedで列幅を固定しないと投稿ログ列が際限なく横に伸びてしまい、
+            line-clamp-2(2行省略)が実質効かなくなる(横に長い1〜2行に収まって
+            しまい省略の意味がなくなる)不具合があった。列幅を明示して防ぐ。 */}
+        <table class="w-full text-sm table-fixed">
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
-              <th class="py-2 pl-3">実行日時</th>
-              <th class="py-2">カテゴリ</th>
-              <th class="py-2">内容</th>
-              <th class="py-2">ステータス</th>
-              <th class="py-2">エラー</th>
+              <th class="py-2 pl-3 w-[9%]">実行日時</th>
+              <th class="py-2 w-[6%] text-center">カテゴリ</th>
+              <th class="py-2 w-[25%]">内容</th>
+              <th class="py-2 w-[8%] text-center">ステータス</th>
+              <th class="py-2 w-1/2">投稿ログ</th>
             </tr>
           </thead>
           <tbody>
@@ -127,14 +124,14 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
                 <td class={'py-2 pl-3 border-l-4 text-xs text-gray-500 whitespace-nowrap ' + r.borderClass}>
                   {r.dateLabel}
                 </td>
-                <td class="py-2">
+                <td class="py-2 text-center">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
                 </td>
-                <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
-                <td class="py-2">
+                <td class="py-2 text-xs text-gray-700 truncate">{r.content}</td>
+                <td class="py-2 text-center">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
                 </td>
-                <td class="py-2 text-xs text-gray-400 max-w-xs">
+                <td class="py-2 text-xs text-gray-400">
                   <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
                   {r.showToggle && (
                     <button
@@ -164,8 +161,9 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
               <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
                 {r.category}
               </span>
-              <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+              {r.contentLabel}
             </div>
+            <div class="text-sm text-gray-700 mt-0.5 truncate">{r.contentName}</div>
             {r.errorText !== '-' && (
               <div class="mt-1.5">
                 <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
@@ -216,7 +214,21 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
   const logRows = (logs || []).map((l) => {
     const category = l.post_id ? 'ブログ' : 'スタイル'
-    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 2000)
+    const errorText = (l.message || '').slice(0, 10000)
+    const contentLabel = l.execution_type && (
+      <span class="text-xs font-semibold text-gray-400">
+        [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+      </span>
+    )
+    const contentName = l.style_id ? (
+      <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+        No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
+      </a>
+    ) : l.post_id ? (
+      l.post_title || `投稿${l.post_id}`
+    ) : (
+      '-'
+    )
     return {
       id: l.id,
       dateLabel: formatJstDate(l.created_at),
@@ -224,22 +236,12 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       categoryClass: category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600',
       content: (
         <>
-          {l.execution_type && (
-            <span class="text-xs font-semibold text-gray-400 mr-1">
-              [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
-            </span>
-          )}
-          {l.style_id ? (
-            <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-              No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
-            </a>
-          ) : l.post_id ? (
-            l.post_title || `投稿${l.post_id}`
-          ) : (
-            '-'
-          )}
+          {contentLabel && <span class="mr-1">{contentLabel}</span>}
+          {contentName}
         </>
       ),
+      contentLabel,
+      contentName,
       statusLabel: LOG_RESULT_LABEL[l.status] || l.status,
       statusClass: LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500',
       borderClass: LOG_RESULT_BORDER[l.status] || 'border-gray-300',
@@ -252,10 +254,16 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
 
   // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
+  // No.は登録スタイル一覧(StyleListSection)と同じ並び順(sort_order)での通し番号。
+  // 対象を絞り込む前の全件に対して番号を振ってから絞り込む必要があるためサブクエリにしている。
   const { results: retryTargets } = await c.env.DB.prepare(
-    `SELECT id, title, salonboard_register_status, reflection_request_status, last_error
-     FROM styles
-     WHERE user_id = ? AND (salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked'))
+    `SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, style_no
+     FROM (
+       SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, updated_at,
+         ROW_NUMBER() OVER (ORDER BY sort_order ASC, id DESC) AS style_no
+       FROM styles WHERE user_id = ?
+     ) ranked
+     WHERE salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked')
      ORDER BY updated_at DESC LIMIT 20`
   )
     .bind(user.id)
@@ -264,11 +272,19 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       title: string | null
       salonboard_register_status: string
       reflection_request_status: string
-      last_error: string | null
+      last_executed_at: string | null
+      style_no: number
     }>()
 
   return c.render(
-    <PageLayout active="style-test-run" salonName={user.salon_name} title="実行履歴">
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="style-test-run"
+      salonName={user.salon_name}
+      title="実行履歴"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
       {retryTargets && retryTargets.length > 0 && (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
@@ -281,13 +297,13 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                 <li class="flex items-center justify-between gap-3 py-2">
                   <div class="min-w-0">
                     <a href={`/style/${t.id}/edit`} class="font-medium text-gray-700 hover:text-pink-600 truncate block">
-                      {t.title || `スタイル${t.id}`}
+                      No.{t.style_no} {t.title || `スタイル${t.id}`}
                     </a>
                     <p class="text-xs text-gray-400 truncate">
                       <span class={'px-1.5 py-0.5 rounded font-semibold mr-1 ' + (isBlocked ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600')}>
                         {isBlocked ? 'ブロック' : '失敗'}
                       </span>
-                      {t.last_error || ''}
+                      {formatJstDate(t.last_executed_at)}
                     </p>
                   </div>
                   <button
@@ -340,7 +356,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
 // ---------- 手動実行API（ログイン中ユーザー本人のみ） ----------
 
-automation.post('/api/automation/test-run', requireAuth, async (c) => {
+automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, async (c) => {
   const user = c.get('user')
   try {
     const summary = await runStyleAutomationForUser(c.env, user.id, 'manual-test')
@@ -349,7 +365,8 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
       dispatchedCount: summary.dispatchedCount,
       failedToDispatchCount: summary.failedToDispatchCount,
       totalImages: summary.totalImages,
-      status: summary.status
+      status: summary.status,
+      error: summary.errorMessage
     })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
@@ -358,7 +375,7 @@ automation.post('/api/automation/test-run', requireAuth, async (c) => {
 
 // ---------- 個別スタイルの再実行API(docs/phase3-mvp-design.md 5-6) ----------
 
-automation.post('/api/style/:id/retry', requireAuth, async (c) => {
+automation.post('/api/style/:id/retry', requireAuth, requireStyleEnabled, async (c) => {
   const user = c.get('user')
   const styleId = Number(c.req.param('id'))
   try {
@@ -383,7 +400,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
 
-  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
   if (job.status !== 'pending' && job.status !== 'running') {
@@ -391,10 +408,15 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?`
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
+     FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+    }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
   }
@@ -417,39 +439,19 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .run()
 
-  // 手動実行で複数スタイルを同時投入すると、複数のFargateタスクが同じ
-  // 「直近成功実績のあるプロキシセッションID(出口IP固定)」を同時に使い回し、
-  // 特に画像アップロードのリクエストがnet::ERR_EMPTY_RESPONSEで失敗する事例を
-  // 確認した(プロキシ側が同一セッションへの同時並行リクエストを捌けていない
-  // 可能性が高い)。同じユーザーで他に実行中のジョブがある場合は、セッション
-  // 使い回しを行わず、ワーカー側に新規セッションを選ばせて競合を避ける。
-  const concurrentRunningRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM style_post_jobs WHERE user_id = ? AND status = 'running' AND id != ?`
-  )
-    .bind(job.user_id, jobId)
-    .first<{ cnt: number }>()
-  const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
-
-  // プール内の各セッションIDを連続障害回数の昇順(=調子の良い順)に並べ、
-  // ワーカー側に候補リストとして渡す。ワーカーは先頭から順にログインを
-  // 試し、失敗した候補もその成否をアプリ側へ報告するため、途中で失敗した
-  // 候補の実績も取りこぼさず記録できる(記録が無いものは0回として扱う。
-  // 同点の場合は配列の元の並び順を優先し、健全な間はできるだけ同じ
-  // セッションを使い続ける)。
-  const poolStats = await c.env.DB.prepare(
-    `SELECT session_id, consecutive_fail_count FROM proxy_session_pool_stats WHERE user_id = ?`
-  )
-    .bind(job.user_id)
-    .all<{ session_id: string; consecutive_fail_count: number }>()
-  const failCounts = new Map((poolStats.results || []).map((r) => [r.session_id, r.consecutive_fail_count]))
-  const proxySessionCandidates = [...PROXY_SESSION_POOL].sort(
-    (a, b) => (failCounts.get(a) ?? 0) - (failCounts.get(b) ?? 0)
-  )
+  // 2026-08-13追記3(ユーザー指定ルール): 投稿が成功したセッション(IP)は
+  // 「次のスタイル投稿で失敗するまで」使い続ける。前回成功したセッションID
+  // (salon_credentials.last_successful_proxy_session_id、結果コールバック側で
+  // 更新・失敗時にクリアする)があれば候補の先頭に置き、それが失敗した場合の
+  // 保険として残りは従来通りランダムな新しいセッションで埋める。
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
 
   return c.json({
     loginId,
     password,
-    proxySessionCandidates: hasConcurrentJob ? undefined : proxySessionCandidates,
+    proxySessionCandidates,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -486,9 +488,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
     `SELECT id, style_id, user_id, job_token, status, run_id FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string; run_id: number | null }>()
+    .first<{
+      id: number
+      style_id: number
+      user_id: number
+      job_token: string
+      status: string
+      run_id: number | null
+    }>()
 
-  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
   // 既に結果を受信済み(二重コールバック・タイムアウト後の遅延コールバック等)は冪等に無視する
@@ -500,8 +509,12 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   if (!body) return c.json({ error: 'invalid body' }, 400)
 
   const { style_id: styleId, user_id: userId } = job
-  const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
-  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 2000)
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 投稿ログ: ${body.logs.join(' | ')}` : ''
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
+  // 2026-08-13追記(ユーザー指定): 成功時も、完了までの経過(ログイン〜各工程の
+  // ログ)を「投稿ログ」として残す(従来は固定文言のみで経過が分からなかった)。
+  const registerSuccessMessage = ('スタイル登録成功' + diagnostics).slice(0, 10000)
+  const reflectSuccessMessage = ('反映申請成功' + diagnostics).slice(0, 10000)
   const styleNo = await getStyleNo(c.env, userId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
@@ -517,32 +530,6 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .catch(() => {})
   }
 
-  // 2026-08-12追記: プロキシは少数(5個)の専用固定IPプールのため、
-  // 使われたセッションID(=プールの1メンバー)ごとに連続障害回数を記録する。
-  // ワーカーはログイン候補を先頭から順に試すため、途中で失敗した候補
-  // (最終的に使われなかったもの)もloginAttemptsに含まれる。これを
-  // 先に処理しないと、ログインで失敗したセッションの実績が記録されず
-  // 何度も選ばれ続けてしまう。その後、最終的に使われたセッション
-  // (body.proxySessionId)について、ジョブ全体の成否を反映する。
-  // プール外のセッションID(同時実行回避時などのフォールバック)は対象外。
-  for (const attempt of body.loginAttempts || []) {
-    if (!PROXY_SESSION_POOL.includes(attempt.sessionId)) continue
-    if (attempt.success) {
-      await markProxySessionSuccess(c.env, userId, attempt.sessionId)
-    } else {
-      await markProxySessionFailure(c.env, userId, attempt.sessionId, 'login_failed')
-    }
-  }
-
-  const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
-  if (body.proxySessionId && PROXY_SESSION_POOL.includes(body.proxySessionId)) {
-    if (body.success) {
-      await markProxySessionSuccess(c.env, userId, body.proxySessionId)
-    } else if (networkErrorSignal) {
-      await markProxySessionFailure(c.env, userId, body.proxySessionId, 'network_error')
-    }
-  }
-
   let jobStatus: string
   if (body.success) {
     await c.env.DB.prepare(
@@ -553,15 +540,15 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', '反映申請成功')`
+       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, reflectSuccessMessage)
       .run()
     jobStatus = 'success'
   } else if (body.step === 'reflect') {
@@ -575,9 +562,9 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
@@ -587,9 +574,12 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     jobStatus = reflectStatus
   } else {
-    // login/navigate/draft_register/image_upload段階での失敗 = 登録自体が失敗
+    // login/navigate/draft_register/image_upload段階での失敗 = 登録自体が失敗。
+    // reflection_request_statusも合わせて'failed'にしないと、前回の反映成功時の
+    // 'success'が残ったままになり、登録スタイル一覧の表示が「公開」のままに
+    // なってしまう(実機で確認済みの不具合)。
     await c.env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
+      `UPDATE styles SET salonboard_register_status = 'failed', reflection_request_status = 'failed', last_error = ?, last_executed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
       .bind(messageWithDiagnostics, styleId)
       .run()
@@ -602,6 +592,30 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
     jobStatus = 'failed'
   }
 
+  // 2026-08-13追記3(ユーザー指定ルール): 投稿成功セッションを「次のスタイル
+  // 投稿で失敗するまで」使い続けるための記録更新。成功時は実際に使われた
+  // セッションID(body.proxySessionId、複数候補を試した場合は最終的に成功した
+  // もの)を保存し、次のジョブの候補選定(GET /api/automation/jobs/:id)で
+  // 先頭に使う。失敗時はクリアし、次のジョブが同じ失敗済みIPを引き継がない
+  // ようにする。
+  if (jobStatus === 'success' && body.proxySessionId) {
+    await c.env.DB
+      .prepare(
+        `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+      .bind(body.proxySessionId, userId)
+      .run()
+      .catch(() => {})
+  } else if (jobStatus !== 'success') {
+    await c.env.DB
+      .prepare(`UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
+
   await c.env.DB.prepare(
     `UPDATE style_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
   )
@@ -611,32 +625,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   // 2026-08-11追記(不具合修正): 実行履歴(style_post_runs)一覧のステータスが
   // 各ジョブの結果を集計せず常に'processing'のまま表示され続けていた。
   // このジョブが属するrunに紐づく全ジョブが完了(pending/running以外)に
-  // なった時点で、run全体のステータスを確定させる。
+  // なった時点で、run全体のステータスを確定させる(共通関数化、
+  // sweepStaleJobs/resetStuckJobsForUser側からも同じ処理を呼ぶ)。
   if (job.run_id) {
-    const { results: pendingJobs } = await c.env.DB.prepare(
-      `SELECT id FROM style_post_jobs WHERE run_id = ? AND status IN ('pending', 'running')`
-    )
-      .bind(job.run_id)
-      .all<{ id: number }>()
-
-    if (!pendingJobs || pendingJobs.length === 0) {
-      const { results: finishedJobs } = await c.env.DB.prepare(
-        `SELECT status FROM style_post_jobs WHERE run_id = ?`
-      )
-        .bind(job.run_id)
-        .all<{ status: string }>()
-
-      const statuses = (finishedJobs || []).map((j) => j.status)
-      const runStatus = statuses.every((s) => s === 'success')
-        ? 'done'
-        : statuses.every((s) => s !== 'success')
-        ? 'failed'
-        : 'partial_failure'
-
-      await c.env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-        .bind(runStatus, job.run_id)
-        .run()
-    }
+    await finalizeRunIfComplete(c.env, job.run_id)
   }
 
   return c.json({ ok: true })
@@ -651,7 +643,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 automation.post('/api/cron/run-style-posts', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
   const expected = c.env.CRON_SECRET
-  if (!expected || authHeader !== `Bearer ${expected}`) {
+  if (!expected || !timingSafeEqual(authHeader, `Bearer ${expected}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
 
@@ -665,8 +657,12 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   // 固定時刻での一括投稿から変更)。外部Cronは数分間隔でこのエンドポイントを
   // 叩く想定で、呼ばれるたびに各ユーザーごとに「今が投稿すべきタイミングか」
   // をrunNextStyleForUser()内で判定し、タイミングであれば1件だけ処理する。
+  // 管理者サイトで契約OFF(is_active=0)またはスタイル機能OFF(style_enabled=0)に
+  // されたサロンはcronの対象から除外する。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT user_id FROM style_post_schedules WHERE enabled = 1`
+    `SELECT s.user_id FROM style_post_schedules s
+     JOIN users u ON u.id = s.user_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.style_enabled = 1`
   ).all<{ user_id: number }>()
 
   const targets = schedules || []
