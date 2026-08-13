@@ -5,6 +5,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const listContainer = document.getElementById('import-list-container')
   const listEl = document.getElementById('import-list')
   const executeBtn = document.getElementById('import-execute-btn')
+  const executeBtnLabel = document.getElementById('import-execute-btn-label')
+  const executeStatusEl = document.getElementById('import-execute-status')
 
   if (fetchBtn) {
     fetchBtn.addEventListener('click', async () => {
@@ -91,7 +93,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm(styleIds.length + '件のスタイルを取り込みます。よろしいですか？')) return
 
       executeBtn.disabled = true
-      statusEl.textContent = '取り込み中です。このままお待ちください\n（数十秒〜数分かかる場合があります）'
+      if (executeBtnLabel) executeBtnLabel.textContent = '反映中'
+      if (executeStatusEl) executeStatusEl.textContent = '反映までこのままで少し待ち下さい'
       try {
         const res = await fetch('/api/style/import/execute', {
           method: 'POST',
@@ -101,21 +104,24 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json()
         if (data.success) {
           if (data.errors && data.errors.length > 0) {
-            statusEl.textContent =
-              '完了: ' + data.importedCount + '件取り込みました（一部失敗: ' + data.errors.join(', ') + '）'
-          } else {
-            statusEl.textContent = '登録スタイルページをご確認ください'
+            if (executeStatusEl) {
+              executeStatusEl.textContent =
+                '完了: ' + data.importedCount + '件取り込みました（一部失敗: ' + data.errors.join(', ') + '）'
+            }
+          } else if (executeStatusEl) {
+            executeStatusEl.textContent = '登録スタイルページをご確認ください'
           }
           setTimeout(() => {
             window.location.href = '/style/library'
           }, 5000)
-        } else {
-          statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
+        } else if (executeStatusEl) {
+          executeStatusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
         }
       } catch (e) {
-        statusEl.textContent = '通信エラーが発生しました'
+        if (executeStatusEl) executeStatusEl.textContent = '通信エラーが発生しました'
       } finally {
         executeBtn.disabled = false
+        if (executeBtnLabel) executeBtnLabel.textContent = '選択したスタイルを取り込む'
       }
     })
   }

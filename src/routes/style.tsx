@@ -533,15 +533,16 @@ style.get('/style/import', async (c) => {
       </div>
 
       <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
-        <div class="flex items-center justify-between mb-3">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-1">
           <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
           <button
             id="import-execute-btn"
-            class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
+            class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg disabled:opacity-50"
           >
-            選択したスタイルを取り込む
+            <span id="import-execute-btn-label">選択したスタイルを取り込む</span>
           </button>
         </div>
+        <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
       </div>
 
