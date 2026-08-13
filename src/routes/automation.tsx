@@ -109,38 +109,9 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // ため5→10に引き上げ。候補生成数も合わせる。
 const PROXY_CANDIDATE_COUNT = 10
 
-// 2026-08-13追記(IPホワイトリスト認証方式へ全面変更): DataImpulseへの接続を
-// ID/パスワード認証からIPホワイトリスト認証(worker側のFargateタスクを
-// NATゲートウェイ経由の固定IPにし、そのIPをDataImpulse側で許可する方式。
-// infra/nat-gateway.tf参照)に切り替えたことに伴い、セッション(同一出口IP
-// の維持単位)の指定方法もユーザー名へのパラメータ埋め込みから、接続先の
-// ポート番号(10000〜20000の範囲、1ポート=1セッション、既定で約30分間
-// 同じ出口IPを維持)に変わった。そのため候補セッションIDは、この範囲の
-// ポート番号として生成する(worker/src/salonboard-automation.tsのlaunchBrowser
-// 参照)。
 function randomSessionId(): string {
-  return String(10000 + Math.floor(Math.random() * 10000))
+  return Math.random().toString(36).slice(2, 10)
 }
-
-// 2026-08-13追記(ユーザー提案の3段階リトライ方針): NATゲートウェイの固定IP
-// (プロキシ不使用)を先頭候補として試し、DIRECT_ATTEMPT_COUNT回連続で
-// 失敗した場合のみ残りの候補(通常のプロキシセッション)へフォールバックする。
-// これによりdoUpload約35秒タイムアウトが「DataImpulseのレジデンシャル
-// プロキシ網」自体に起因するかを、通常運用のジョブごとに継続して切り分けられる。
-// 固定IPが3回とも投稿を完了できなかった場合は、5時間はこの経路を試さず
-// 通常のプロキシ候補のみを使う(worker/src/salonboard-automation.tsの
-// DIRECT_SESSION_IDと文字列を一致させる必要がある)。
-//
-// 2026-08-13追記(ユーザー指定・一時的な単独検証): 「3回失敗したらプロキシに
-// 逃げる」動作だと固定IPだけの結果が薄まってしまうため、この検証期間中は
-// プロキシへのフォールバックを完全に無効化(DIRECT_ONLY_TEST_MODE)し、
-// 固定IPをDIRECT_ATTEMPT_COUNT回だけ試して、全滅した場合はそのまま失敗させる
-// (失敗しても良いとユーザー了承済み)。結果を見てから通常運用
-// (3回失敗でプロキシにフォールバック)に戻すか判断する。
-const DIRECT_ONLY_TEST_MODE = true
-const DIRECT_SESSION_ID = 'direct'
-const DIRECT_ATTEMPT_COUNT = 5
-const DIRECT_IP_COOLDOWN_HOURS = 5
 
 // ---------- 手動実行・履歴画面 ----------
 
@@ -493,7 +464,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id, direct_ip_cooldown_until
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
      FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
@@ -501,7 +472,6 @@ automation.get('/api/automation/jobs/:id', async (c) => {
       salonboard_login_id_enc: string
       salonboard_password_enc: string
       last_successful_proxy_session_id: string | null
-      direct_ip_cooldown_until: string | null
     }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
@@ -530,26 +500,9 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   // (salon_credentials.last_successful_proxy_session_id、結果コールバック側で
   // 更新・失敗時にクリアする)があれば候補の先頭に置き、それが失敗した場合の
   // 保険として残りは従来通りランダムな新しいセッションで埋める。
-  const directCooldownActive =
-    !!cred.direct_ip_cooldown_until &&
-    new Date(cred.direct_ip_cooldown_until.replace(' ', 'T') + 'Z').getTime() > Date.now()
-  const proxyFallbackCount = DIRECT_ONLY_TEST_MODE
-    ? 0
-    : Math.max(0, directCooldownActive ? PROXY_CANDIDATE_COUNT : PROXY_CANDIDATE_COUNT - DIRECT_ATTEMPT_COUNT)
-  const proxyFallbackCandidates =
-    proxyFallbackCount === 0
-      ? []
-      : cred.last_successful_proxy_session_id
-        ? [cred.last_successful_proxy_session_id, ...Array.from({ length: proxyFallbackCount - 1 }, () => randomSessionId())]
-        : Array.from({ length: proxyFallbackCount }, () => randomSessionId())
-  // 2026-08-13追記(ユーザー提案の3段階リトライ方針): クールダウン中でなければ
-  // 先頭DIRECT_ATTEMPT_COUNT件をNATゲートウェイの固定IP直接接続にする。
-  // DIRECT_ONLY_TEST_MODE中は、以前のテストで付いたクールダウンが残っていても
-  // 無視し、常に固定IPのみの候補にする。
-  const proxySessionCandidates =
-    directCooldownActive && !DIRECT_ONLY_TEST_MODE
-      ? proxyFallbackCandidates
-      : [...Array.from({ length: DIRECT_ATTEMPT_COUNT }, () => DIRECT_SESSION_ID), ...proxyFallbackCandidates]
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
 
   return c.json({
     loginId,
@@ -705,29 +658,6 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   } else if (jobStatus !== 'success') {
     await c.env.DB
       .prepare(`UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`)
-      .bind(userId)
-      .run()
-      .catch(() => {})
-  }
-
-  // 2026-08-13追記(ユーザー提案の3段階リトライ方針): NATゲートウェイの固定IP
-  // (DIRECT_SESSION_ID)がDIRECT_ATTEMPT_COUNT回とも投稿を完了できなかった場合、
-  // DIRECT_IP_COOLDOWN_HOURS時間はこの経路を候補から外す(GET側のcooldown判定)。
-  // 逆に固定IPで成功した場合は、以前のクールダウンが残っていれば解除する
-  // (固定IPが復旧した可能性が高いため、次回もまず固定IPから試す)。
-  const directAttemptCount = (body.loginAttempts || []).filter((a) => a.sessionId === DIRECT_SESSION_ID).length
-  const directSucceeded = jobStatus === 'success' && body.proxySessionId === DIRECT_SESSION_ID
-  if (directSucceeded) {
-    await c.env.DB
-      .prepare(`UPDATE salon_credentials SET direct_ip_cooldown_until = NULL WHERE user_id = ?`)
-      .bind(userId)
-      .run()
-      .catch(() => {})
-  } else if (directAttemptCount >= DIRECT_ATTEMPT_COUNT) {
-    await c.env.DB
-      .prepare(
-        `UPDATE salon_credentials SET direct_ip_cooldown_until = CURRENT_TIMESTAMP + INTERVAL '${DIRECT_IP_COOLDOWN_HOURS} hours' WHERE user_id = ?`
-      )
       .bind(userId)
       .run()
       .catch(() => {})

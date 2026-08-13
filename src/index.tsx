@@ -274,16 +274,6 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(style_post_schedules拡張列)に失敗しました:', err)
   }
   try {
-    // 2026-08-13追記(ユーザー提案の3段階リトライ方針、詳細はmigrations-pg/0015_*.sql参照):
-    // 「NATゲートウェイの固定IPを先に試し、3回連続で失敗したらプロキシへ切り替え、
-    // 5時間後にまた固定IPから試す」ためのクールダウン解除予定時刻。
-    await bindings.DB.prepare(
-      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS direct_ip_cooldown_until TIMESTAMP`
-    ).run()
-  } catch (err) {
-    console.error('起動時マイグレーション(salon_credentials.direct_ip_cooldown_until)に失敗しました:', err)
-  }
-  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

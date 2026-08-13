@@ -61,11 +61,7 @@ export async function runStylePostTask(params: RunStylePostTaskParams): Promise<
         awsvpcConfiguration: {
           subnets: params.subnetIds,
           securityGroups: params.securityGroupIds,
-          // 2026-08-13追記: workerタスクをNATゲートウェイ経由の固定IP
-          // (infra/nat-gateway.tf)を持つプライベートサブネットに移したため、
-          // タスク自体に公開IPを割り当てる必要は無くなった(むしろプライベート
-          // サブネットでは公開IPを割り当てても外部到達性が無く意味が無い)。
-          assignPublicIp: 'DISABLED'
+          assignPublicIp: 'ENABLED'
         }
       },
       overrides: {

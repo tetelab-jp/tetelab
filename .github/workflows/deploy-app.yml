@@ -49,12 +49,6 @@ env:
   # 非機密情報)。同じくlifecycle.ignore_changesの都合で、既存タスク定義には
   # 含まれていないため、下のステップで無ければ追加する。
   SNS_ALERT_TOPIC_ARN: arn:aws:sns:ap-northeast-1:102798329434:salonboard-worker-alerts
-  # 2026-08-13追記(NATゲートウェイ経由の固定IP化): 投稿ワーカー(worker)を
-  # DataImpulseのIPホワイトリスト認証に対応させるため、専用のプライベート
-  # サブネット(infra/nat-gateway.tf、NATゲートウェイ経由で固定IPになる)に
-  # 移した。appがECS RunTaskで渡すECS_SUBNET_IDS(非機密情報)を、同じく
-  # lifecycle.ignore_changesの都合でここで上書きする。
-  WORKER_SUBNET_ID: subnet-06aeffd3665aec13a
 
 permissions:
   id-token: write # OIDCでAWS認証するために必要
@@ -136,28 +130,6 @@ jobs:
                   (if ($names | index("SNS_ALERT_TOPIC_ARN"))
                     then ($existing | map(if .name == "SNS_ALERT_TOPIC_ARN" then .value = $arn else . end))
                     else $existing + [{name: "SNS_ALERT_TOPIC_ARN", value: $arn}]
-                  end)
-                )
-              else . end
-            )
-          ' task-definition.json > task-definition.fixed.json
-          mv task-definition.fixed.json task-definition.json
-
-      # ECS_SUBNET_IDSも同じくlifecycle.ignore_changesの都合で、Terraform側の
-      # 値(infra/ecs-app.tf)を変更しても既存タスク定義には反映されない。
-      # worker用のプライベートサブネット1つだけに固定する(以前は複数の
-      # パブリックサブネットのカンマ区切りだったが、workerは常にこのIDのみ)。
-      - name: Fix ECS_SUBNET_IDS environment variable
-        run: |
-          jq --arg name "$ECS_CONTAINER_NAME" --arg subnetId "$WORKER_SUBNET_ID" '
-            .containerDefinitions |= map(
-              if .name == $name then
-                .environment = (
-                  (.environment // []) as $existing |
-                  ($existing | map(.name)) as $names |
-                  (if ($names | index("ECS_SUBNET_IDS"))
-                    then ($existing | map(if .name == "ECS_SUBNET_IDS" then .value = $subnetId else . end))
-                    else $existing + [{name: "ECS_SUBNET_IDS", value: $subnetId}]
                   end)
                 )
               else . end

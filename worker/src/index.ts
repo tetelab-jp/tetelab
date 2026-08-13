@@ -17,6 +17,7 @@ import {
   draftRegisterStyle,
   submitReflectApplication,
   launchBrowser,
+  closeAnonymizedProxy,
   checkExitIp,
   ReflectionBlockedError,
   type StylePostInput,
@@ -126,9 +127,10 @@ function sleep(ms: number): Promise<void> {
 type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any; topPageUrl: string | null }
 
 /**
- * セッション(出口ポート番号)ごとに--proxy-serverが変わるため、1つの
- * ブラウザを使い回してページだけ差し替えることはできない。候補セッション
- * IDごとに、ブラウザの起動からやり直す。
+ * 2026-08-13追記: proxy-chain方式では、セッションID(出口IP)ごとに専用の
+ * ローカル取次プロキシをブラウザ起動時に紐付ける必要があるため、以前のように
+ * 1つのブラウザを使い回してページだけ差し替える方式が使えなくなった。
+ * 候補セッションIDごとに、ブラウザの起動からやり直す。
  */
 async function attemptLogin(
   payload: JobPayload,
@@ -156,6 +158,9 @@ async function attemptLogin(
 
 async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
   await attempt.browser.close().catch(() => {})
+  if (attempt.anonymizedProxyUrl) {
+    await closeAnonymizedProxy(attempt.anonymizedProxyUrl, true).catch(() => {})
+  }
 }
 
 // 2026-08-13追記(方針転換3): 「同じセッションで複数回リトライ」→「駄目なら
