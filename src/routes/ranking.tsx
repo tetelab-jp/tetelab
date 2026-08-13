@@ -168,7 +168,9 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
   return (
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
       <div id="salon-auto-field" data-has-salon={hasSalon ? '1' : '0'}>
-        <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-store text-pink-400"></i>サロン名
+        </label>
         {hasSalon ? (
           <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
             {salon!.salonName}
@@ -180,7 +182,9 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
         )}
       </div>
       <div id="area-auto-field" data-has-area={hasMiddle ? '1' : '0'}>
-        <label class="block text-sm font-medium text-gray-700 mb-1">中エリア</label>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-map text-pink-400"></i>中エリア
+        </label>
         {hasMiddle ? (
           <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
             {salon!.middleAreaName}
@@ -192,7 +196,9 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
         )}
       </div>
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">小エリア</label>
+        <label class="flex items-center gap-1.5 text-sm font-medium text-gray-700 mb-1">
+          <i class="fas fa-location-dot text-pink-400"></i>小エリア
+        </label>
         {hasSmall ? (
           <p class="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm bg-gray-50 text-gray-700">
             {salon!.smallAreaName}
@@ -201,6 +207,39 @@ function SalonAndAreaAutoField({ salon }: { salon: PrimarySalonArea | null }) {
           <p class="text-xs text-gray-400">-</p>
         )}
       </div>
+    </div>
+  )
+}
+
+/** area_label(「中エリア > 小エリア」形式の結合文字列)を、中/小がひと目で
+ *  わかるようラベル付きバッジで表示する。buildAreaLabel()の結合形式に対応。 */
+function splitAreaLabel(label: string | null): { middle: string | null; small: string | null } {
+  if (!label) return { middle: null, small: null }
+  const parts = label.split(' > ')
+  return { middle: parts[0] || null, small: parts[1] || null }
+}
+
+function AreaLabelBadges({ label }: { label: string | null }) {
+  const { middle, small } = splitAreaLabel(label)
+  if (!middle && !small) return <p class="text-sm text-gray-500">-</p>
+  return (
+    <div class="flex flex-col gap-1 mt-0.5">
+      {middle && (
+        <span class="inline-flex items-center gap-1.5 text-sm text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-pink-50 text-pink-600 font-semibold text-[10px] leading-none">
+            中エリア
+          </span>
+          <span class="truncate">{middle}</span>
+        </span>
+      )}
+      {small && (
+        <span class="inline-flex items-center gap-1.5 text-sm text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold text-[10px] leading-none">
+            小エリア
+          </span>
+          <span class="truncate">{small}</span>
+        </span>
+      )}
     </div>
   )
 }
@@ -516,13 +555,26 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
   let runs: { id: number; measuredAt: string }[] = []
   const cellMap = new Map<string, Cell>()
   if (primaryQuery) {
+    // 同日(JST)に複数回計測している場合は最新の1件だけを列として残す。
+    // run_idはDESC(新しい順)で取得しているため、同じ日付が最初に出てきた
+    // ものが最新であり、それ以降の同日分はスキップすればよい。
+    // 表示列数(MEASURE_RUN_COLUMNS)分のユニークな日付を確保するため、
+    // 生の行は余裕を持って多めに取得する。
     const { results: runRows } = await c.env.DB.prepare(
       `SELECT run_id, MIN(measured_at) AS measured_at FROM ranking_results
        WHERE user_id = ? AND query_id = ? GROUP BY run_id ORDER BY run_id DESC LIMIT ?`
     )
-      .bind(user.id, primaryQuery.id, MEASURE_RUN_COLUMNS)
+      .bind(user.id, primaryQuery.id, MEASURE_RUN_COLUMNS * 10)
       .all<{ run_id: number; measured_at: string }>()
-    runs = runRows.map((r) => ({ id: r.run_id, measuredAt: r.measured_at }))
+
+    const seenDays = new Set<string>()
+    for (const r of runRows) {
+      const day = jstYmd(toJstDate(r.measured_at))
+      if (seenDays.has(day)) continue
+      seenDays.add(day)
+      runs.push({ id: r.run_id, measuredAt: r.measured_at })
+      if (runs.length >= MEASURE_RUN_COLUMNS) break
+    }
 
     if (runs.length > 0) {
       const runIds = runs.map((r) => r.id)
@@ -576,7 +628,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
               {primaryQuery ? (
                 <>
                   <p class="font-bold text-gray-900 text-lg truncate">{primaryQuery.salon_name}</p>
-                  <p class="text-sm text-gray-500 truncate">{primaryQuery.area_label || '-'}</p>
+                  <AreaLabelBadges label={primaryQuery.area_label} />
                 </>
               ) : (
                 <p class="font-semibold text-gray-900">対策キーワード設定が未登録です</p>
