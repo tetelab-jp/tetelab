@@ -56,6 +56,14 @@ export type LaunchedBrowser = {
 }
 
 /**
+ * 2026-08-13追記(ユーザー提案の3段階リトライ方針): candidateとして渡された
+ * この値の場合、プロキシを一切使わずNATゲートウェイの固定IPで直接接続する。
+ * automation.tsx側が候補リストの先頭数件をこの値にして渡す(3回連続で
+ * 失敗したら残りの候補=通常のプロキシセッションIDへフォールバックする)。
+ */
+export const DIRECT_SESSION_ID = 'direct'
+
+/**
  * SALONBOARD_PROXY_SERVER(例: "gw.dataimpulse.com"、"http://gw.dataimpulse.com:823"
  * のようにスキーム/ポート付きで設定されていても可)からホスト名だけを取り出す。
  */
@@ -143,7 +151,14 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
 
   let proxySessionId: string | null = null
 
-  if (proxyServer) {
+  if (sessionId === DIRECT_SESSION_ID) {
+    // 2026-08-13追記(ユーザー提案の3段階リトライ方針・診断兼用): プロキシを
+    // 使わずNATゲートウェイの固定IPで直接接続する。doUpload(画像アップロード)
+    // の約35秒タイムアウトがDataImpulseのレジデンシャルプロキシ網に起因する
+    // 可能性を切り分けるため、この経路の実績を継続的に収集する。
+    proxySessionId = DIRECT_SESSION_ID
+    console.log('[launchBrowser] 診断/リトライ方針: プロキシを使わずNATゲートウェイの固定IPで直接起動')
+  } else if (proxyServer) {
     const proxyHost = extractProxyHost(proxyServer)
     // 呼び出し側(index.tsのrunJob())が候補ポート番号(10000〜20000)を
     // 渡してくる。無指定の場合はこの関数側でランダムに1つ選ぶ。
