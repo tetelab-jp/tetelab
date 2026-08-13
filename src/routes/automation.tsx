@@ -145,13 +145,17 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
     <>
       {/* PC表示: テーブル */}
       <div class="hidden md:block overflow-x-auto">
-        <table class="w-full text-sm">
+        {/* 2026-08-13追記: 成功時も投稿ログに全工程の経過を載せるようにしたため、
+            table-fixedで列幅を固定しないと投稿ログ列が際限なく横に伸びてしまい、
+            line-clamp-2(2行省略)が実質効かなくなる(横に長い1〜2行に収まって
+            しまい省略の意味がなくなる)不具合があった。列幅を明示して防ぐ。 */}
+        <table class="w-full text-sm table-fixed">
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
-              <th class="py-2 pl-3">実行日時</th>
-              <th class="py-2">カテゴリ</th>
-              <th class="py-2">内容</th>
-              <th class="py-2">ステータス</th>
+              <th class="py-2 pl-3 w-32">実行日時</th>
+              <th class="py-2 w-20">カテゴリ</th>
+              <th class="py-2 w-40">内容</th>
+              <th class="py-2 w-20">ステータス</th>
               <th class="py-2">投稿ログ</th>
             </tr>
           </thead>
@@ -164,11 +168,11 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
                 <td class="py-2">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.categoryClass}>{r.category}</span>
                 </td>
-                <td class="py-2 text-xs text-gray-700 max-w-xs truncate">{r.content}</td>
+                <td class="py-2 text-xs text-gray-700 truncate">{r.content}</td>
                 <td class="py-2">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
                 </td>
-                <td class="py-2 text-xs text-gray-400 max-w-xs">
+                <td class="py-2 text-xs text-gray-400">
                   <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
                   {r.showToggle && (
                     <button
