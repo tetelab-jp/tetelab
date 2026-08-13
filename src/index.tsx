@@ -274,28 +274,15 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(style_post_schedules拡張列)に失敗しました:', err)
   }
   try {
-    // 2026-08-14追記(ユーザー指定ルール、詳細はmigrations-pg/0015_*.sql参照):
-    // エラーが出たスタイルを「次のスタイルの次」に1回だけ自動で再トライする
-    // ための予約状態。retry_pending_style_id: 再トライ対象のスタイルID、
-    // retry_pending_wait_slots: 再トライまでにあと何回、通常の巡回投稿を
-    // 挟む必要があるか(1=次の巡回を1回挟んでから再トライ)。
-    await bindings.DB.prepare(
-      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_style_id INTEGER`
-    ).run()
-    await bindings.DB.prepare(
-      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_wait_slots INTEGER NOT NULL DEFAULT 0`
-    ).run()
+    // 2026-08-14追記: 「エラーが出たスタイルを次のスタイルの次に1回だけ
+    // 自動で再トライする」ルールはユーザー指示により撤廃した。運用中の
+    // 環境に残っている旧列(retry_pending_style_id/retry_pending_wait_slots/
+    // is_retry)を削除する(詳細はmigrations-pg/0017_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE style_post_schedules DROP COLUMN IF EXISTS retry_pending_style_id`).run()
+    await bindings.DB.prepare(`ALTER TABLE style_post_schedules DROP COLUMN IF EXISTS retry_pending_wait_slots`).run()
+    await bindings.DB.prepare(`ALTER TABLE style_post_jobs DROP COLUMN IF EXISTS is_retry`).run()
   } catch (err) {
-    console.error('起動時マイグレーション(style_post_schedules再トライ列)に失敗しました:', err)
-  }
-  try {
-    // 2026-08-14追記(重大バグ修正、詳細はmigrations-pg/0015_*.sql参照): この
-    // ジョブが「1回だけの自動再トライ」由来かを記録する。再トライ由来のジョブが
-    // 失敗しても、automation.tsx側でさらに新たな再トライを予約しないようにする
-    // ため(そうしないと再トライの失敗がまた再トライを生み、無限ループになる)。
-    await bindings.DB.prepare(`ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS is_retry INTEGER NOT NULL DEFAULT 0`).run()
-  } catch (err) {
-    console.error('起動時マイグレーション(style_post_jobs.is_retry)に失敗しました:', err)
+    console.error('起動時マイグレーション(再トライルール撤廃・旧列削除)に失敗しました:', err)
   }
   try {
     // 2026-08-14追記(重大バグ修正、詳細はmigrations-pg/0015_*.sql参照): 「1つの

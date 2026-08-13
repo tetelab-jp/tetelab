@@ -202,8 +202,7 @@ async function dispatchStylePostJob(
   env: Bindings,
   userId: number,
   styleId: number,
-  runId?: number,
-  isRetry?: boolean
+  runId?: number
 ): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_REGION) {
@@ -217,16 +216,10 @@ async function dispatchStylePostJob(
   }
 
   const jobToken = randomJobToken()
-  // 2026-08-14追記(重大バグ修正): このジョブが「1回だけの自動再トライ」
-  // 由来かをis_retryに記録しておく。再トライ枠のクリアをdispatch完了時点で
-  // 行うと、再トライ自体が失敗した場合に「予約なし」状態に戻ってしまい、
-  // automation.tsx側の結果コールバックがまた再トライを予約してしまう
-  // (無限ループ)。再トライ由来のジョブは、結果コールバック側で
-  // is_retryを見て新たな再トライ予約を行わないようにする。
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id, is_retry) VALUES (?, ?, ?, 'pending', ?, ?)`
+    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id) VALUES (?, ?, ?, 'pending', ?)`
   )
-    .bind(styleId, userId, jobToken, runId ?? null, isRetry ? 1 : 0)
+    .bind(styleId, userId, jobToken, runId ?? null)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -457,8 +450,6 @@ type ScheduleState = {
   burst_remaining: number
   next_cursor_style_id: number | null
   paused_until: string | null
-  retry_pending_style_id: number | null
-  retry_pending_wait_slots: number
 }
 
 /**
@@ -509,10 +500,7 @@ const ELIGIBLE_STYLE_WHERE = `s.user_id = ? AND s.auto_post_enabled_flag = 1 AND
      AND NOT EXISTS (SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running'))`
 
 /**
- * 2026-08-14追記(ユーザー指定ルール): 失敗したスタイルを1回だけ再トライする
- * 対象として、まだ有効(自動投稿ON・入力完了・進行中ジョブなし)かを確認する。
- * OFFにされた・削除された等で無効になっていれば再トライ枠を無駄にせず
- * 通常の巡回選定にフォールバックする。
+ * 指定したスタイルがまだ有効(自動投稿ON・入力完了・進行中ジョブなし)かを確認する。
  */
 async function isStyleEligible(env: Bindings, userId: number, styleId: number): Promise<boolean> {
   const row = await env.DB.prepare(`SELECT s.id FROM styles s WHERE ${ELIGIBLE_STYLE_WHERE} AND s.id = ?`)
@@ -573,7 +561,7 @@ export async function runNextStyleForUser(
   scheduledTimeLabel: string
 ): Promise<RunSummary | null> {
   const schedule = await env.DB.prepare(
-    `SELECT burst_remaining, next_cursor_style_id, paused_until, retry_pending_style_id, retry_pending_wait_slots
+    `SELECT burst_remaining, next_cursor_style_id, paused_until
      FROM style_post_schedules WHERE user_id = ?`
   )
     .bind(userId)
@@ -584,34 +572,7 @@ export async function runNextStyleForUser(
 
   await requireCredentialsConfigured(env, userId)
 
-  // 2026-08-14追記(ユーザー指定ルール): エラーが出たスタイルは、次のスタイルの
-  // 次のタイミングで1回だけ自動的に再トライする(通常のバースト/巡回選定より
-  // 優先する)。3回目の再トライは行わない(1回消費したら通常運転に戻す)。
-  // 例: No.1が失敗→No.2を通常通り投稿→No.1を再トライ→(結果に関わらず)以降は
-  // 通常の巡回に戻る。
-  const isBursting = schedule.burst_remaining > 0
-  let isRetrySlot = false
-  let styleId: number | null = null
-
-  if (!isBursting && schedule.retry_pending_style_id && schedule.retry_pending_wait_slots <= 0) {
-    if (await isStyleEligible(env, userId, schedule.retry_pending_style_id)) {
-      isRetrySlot = true
-      styleId = schedule.retry_pending_style_id
-    } else {
-      // 対象が既に無効(OFF・削除等)になっている場合は再トライ枠を放棄し、
-      // このスロットは通常の巡回選定にフォールバックする。
-      await env.DB.prepare(
-        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, retry_pending_wait_slots = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
-      )
-        .bind(userId)
-        .run()
-      schedule.retry_pending_style_id = null
-    }
-  }
-
-  if (!styleId) {
-    styleId = await selectNextStyleId(env, userId, schedule)
-  }
+  const styleId = await selectNextStyleId(env, userId, schedule)
   if (!styleId) return null
 
   const runInsert = await env.DB.prepare(
@@ -622,8 +583,8 @@ export async function runNextStyleForUser(
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
-  // 2026-08-14追記(重大バグ修正): 以前はこのスケジュール状態(再トライ枠/
-  // バースト残数/巡回カーソル)の更新をdispatch成功時のみ行っていた。
+  // 2026-08-14追記(重大バグ修正): 以前はこのスケジュール状態(バースト残数/
+  // 巡回カーソル)の更新をdispatch成功時のみ行っていた。
   // dispatchStylePostJob自体がECS RunTask権限不足・設定不備等で継続的に
   // 失敗する場合、状態が一切進まないため1分おきの外部Cronから同じ状態で
   // 永久に呼ばれ続け、Fargateタスク起動の試行(とそれに伴うDB書き込み)を
@@ -631,13 +592,7 @@ export async function runNextStyleForUser(
   // 進めるようにする(投稿自体の成否はワーカーの結果コールバックが別途
   // 判定するため、ここでの「進める」は投稿の成功を意味しない)。
   const advanceSchedule = async () => {
-    if (isRetrySlot) {
-      await env.DB.prepare(
-        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, retry_pending_wait_slots = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
-      )
-        .bind(userId)
-        .run()
-    } else if (schedule.burst_remaining > 0) {
+    if (schedule.burst_remaining > 0) {
       await env.DB.prepare(
         `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
       )
@@ -645,9 +600,7 @@ export async function runNextStyleForUser(
         .run()
     } else {
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET next_cursor_style_id = ?,
-           retry_pending_wait_slots = GREATEST(retry_pending_wait_slots - 1, 0), updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`
+        `UPDATE style_post_schedules SET next_cursor_style_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
       )
         .bind(styleId, userId)
         .run()
@@ -655,7 +608,7 @@ export async function runNextStyleForUser(
   }
 
   try {
-    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot)
+    await dispatchStylePostJob(env, userId, styleId, runId)
     await advanceSchedule()
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
