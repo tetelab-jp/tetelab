@@ -5,7 +5,7 @@ import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
 import { processStyleImage } from '../lib/image-process'
-import { INITIAL_BURST_COUNT } from '../lib/style-post-runner'
+import { INITIAL_BURST_COUNT, resetStuckJobsForUser } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
@@ -1361,6 +1361,7 @@ const POST_INTERVAL_MINUTES_LABEL = 60
 style.get('/style/schedule', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
+  const clearedCount = c.req.query('cleared')
 
   const schedule = await c.env.DB.prepare(
     'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ?'
@@ -1390,6 +1391,15 @@ style.get('/style/schedule', async (c) => {
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+
+      {clearedCount !== undefined && (
+        <div class="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>
+          {clearedCount === '0'
+            ? '古い進行中ジョブは見つかりませんでした(2分未満のジョブは対象外です)'
+            : `${clearedCount}件の古い進行中ジョブをリセットしました`}
         </div>
       )}
 
@@ -1461,6 +1471,11 @@ style.get('/style/schedule', async (c) => {
           <i class="fas fa-flask mr-2"></i>手動実行する
         </button>
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+        <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
+          <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
+            「投稿対象のスタイルがありません」等が出続ける場合、古い進行中ジョブをリセットする
+          </button>
+        </form>
       </div>
 
       <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
@@ -1529,6 +1544,15 @@ style.post('/style/schedule/clear-pause', async (c) => {
     .run()
   await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
   return c.redirect('/style/schedule?saved=1')
+})
+
+// 2026-08-14追記(ユーザー指定): 「進行中ジョブがある」と判定され続けて
+// 自動投稿対象・手動実行対象から除外されているスタイルを、ユーザー自身の
+// 判断で今すぐ復旧できるようにする(sweepStaleJobsの15分を待たない)。
+style.post('/style/schedule/reset-stuck-jobs', async (c) => {
+  const user = c.get('user')
+  const clearedCount = await resetStuckJobsForUser(c.env, user.id)
+  return c.redirect(`/style/schedule?cleared=${clearedCount}`)
 })
 
 // ---------- テンプレート管理 ----------

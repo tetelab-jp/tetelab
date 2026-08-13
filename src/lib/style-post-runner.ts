@@ -496,6 +496,55 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
   }
 }
 
+type StaleJobRow = { id: number; style_id: number; user_id: number; ecs_task_arn: string | null }
+
+/**
+ * 1件の停滞ジョブ(pending/running状態のまま結果コールバックが来ない)を
+ * タイムアウト扱いに片付ける。実Fargateタスクの明示停止・ジョブ/スタイルの
+ * ステータス更新・実行ログ記録までをまとめて行う(sweepStaleJobs/
+ * resetStuckJobsForUserの共通処理)。
+ */
+async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
+  // 2026-08-13追記(重大バグ修正): DB上でタイムアウト扱いにするだけでは
+  // 実際のFargateタスクは動き続け、後から(アプリ側が既に諦めた後で)
+  // 登録・反映申請が完了することがあった。この状態でユーザーが「再実行」
+  // すると、既に成功済みの投稿へもう一度別タスクが登録処理を行ってしまう
+  // (実質的な二重投稿)。タイムアウト判定と同時に実タスクへ明示的な停止を
+  // 要求する(失敗してもタイムアウト処理自体は継続する)。
+  if (j.ecs_task_arn && env.ECS_CLUSTER && env.AWS_REGION) {
+    await stopStylePostTask({
+      awsRegion: env.AWS_REGION,
+      cluster: env.ECS_CLUSTER,
+      taskArn: j.ecs_task_arn,
+      reason: 'ジョブがタイムアウトしたため停止'
+    }).catch((err) => {
+      console.error(`ジョブ${j.id}のFargateタスク(${j.ecs_task_arn})停止に失敗しました:`, err)
+    })
+  }
+  await env.DB.prepare(
+    `UPDATE style_post_jobs SET status = 'timeout',
+       result_message = 'タイムアウト(結果コールバックがありませんでした)',
+       completed_at = CURRENT_TIMESTAMP
+     WHERE id = ?`
+  )
+    .bind(j.id)
+    .run()
+  await env.DB.prepare(
+    `UPDATE styles SET salonboard_register_status = 'failed', reflection_request_status = 'failed',
+       last_error = 'Fargateジョブがタイムアウトしました(応答がありませんでした)'
+     WHERE id = ?`
+  )
+    .bind(j.style_id)
+    .run()
+  const styleNo = await getStyleNo(env, j.user_id, j.style_id)
+  await env.DB.prepare(
+    `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
+     VALUES (NULL, ?, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
+  )
+    .bind(j.user_id, j.style_id, styleNo)
+    .run()
+}
+
 /**
  * 一定時間(15分)以上結果コールバックが届かないジョブをタイムアウト扱いにする。
  * cron-trigger-workerの1分間隔の呼び出しの中で、次のジョブ投入前に実行する。
@@ -507,48 +556,34 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
      WHERE status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
-  ).all<{ id: number; style_id: number; user_id: number; ecs_task_arn: string | null }>()
+  ).all<StaleJobRow>()
 
   const staleJobs = results || []
   for (const j of staleJobs) {
-    // 2026-08-13追記(重大バグ修正): DB上でタイムアウト扱いにするだけでは
-    // 実際のFargateタスクは動き続け、後から(アプリ側が既に諦めた後で)
-    // 登録・反映申請が完了することがあった。この状態でユーザーが「再実行」
-    // すると、既に成功済みの投稿へもう一度別タスクが登録処理を行ってしまう
-    // (実質的な二重投稿)。タイムアウト判定と同時に実タスクへ明示的な停止を
-    // 要求する(失敗してもタイムアウト処理自体は継続する)。
-    if (j.ecs_task_arn && env.ECS_CLUSTER && env.AWS_REGION) {
-      await stopStylePostTask({
-        awsRegion: env.AWS_REGION,
-        cluster: env.ECS_CLUSTER,
-        taskArn: j.ecs_task_arn,
-        reason: 'ジョブがタイムアウトしたため停止'
-      }).catch((err) => {
-        console.error(`ジョブ${j.id}のFargateタスク(${j.ecs_task_arn})停止に失敗しました:`, err)
-      })
-    }
-    await env.DB.prepare(
-      `UPDATE style_post_jobs SET status = 'timeout',
-         result_message = 'タイムアウト(10分以内に結果コールバックがありませんでした)',
-         completed_at = CURRENT_TIMESTAMP
-       WHERE id = ?`
-    )
-      .bind(j.id)
-      .run()
-    await env.DB.prepare(
-      `UPDATE styles SET salonboard_register_status = 'failed', reflection_request_status = 'failed',
-         last_error = 'Fargateジョブがタイムアウトしました(10分以内に応答がありませんでした)'
-       WHERE id = ?`
-    )
-      .bind(j.style_id)
-      .run()
-    const styleNo = await getStyleNo(env, j.user_id, j.style_id)
-    await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
-    )
-      .bind(j.user_id, j.style_id, styleNo)
-      .run()
+    await clearStaleJob(env, j)
+  }
+  return staleJobs.length
+}
+
+/**
+ * 2026-08-14追記(ユーザー指定): 「進行中ジョブがある」と判定されて
+ * 自動投稿対象・手動実行対象から除外され続けるスタイルを、ユーザー自身の
+ * 判断で今すぐ復旧できるようにする。sweepStaleJobsの15分より短い2分を
+ * 閾値にする(2分未満のジョブは誤ってまだ本当に進行中の可能性が高いため
+ * 対象外とし、実行中の投稿を誤って中断しないようにする)。このユーザーの
+ * ジョブのみを対象にする。
+ */
+export async function resetStuckJobsForUser(env: Bindings, userId: number): Promise<number> {
+  const { results } = await env.DB.prepare(
+    `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
+     WHERE user_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '2 minutes')`
+  )
+    .bind(userId)
+    .all<StaleJobRow>()
+
+  const staleJobs = results || []
+  for (const j of staleJobs) {
+    await clearStaleJob(env, j)
   }
   return staleJobs.length
 }
