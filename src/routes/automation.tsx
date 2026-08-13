@@ -542,10 +542,18 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status, run_id FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, job_token, status, run_id, is_retry FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string; run_id: number | null }>()
+    .first<{
+      id: number
+      style_id: number
+      user_id: number
+      job_token: string
+      status: string
+      run_id: number | null
+      is_retry: number
+    }>()
 
   if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
@@ -670,7 +678,12 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   // 次のタイミングで1回だけ自動的に再トライする(style-post-runner.tsの
   // runNextStyleForUser参照)。既に別の再トライが予約されている場合は
   // 上書きしない(同時に1件のみ管理し、再トライが再トライを生む連鎖を防ぐ)。
-  if (jobStatus !== 'success') {
+  // 2026-08-14追記(重大バグ修正): このジョブ自体が既に「1回だけの再トライ」
+  // (is_retry=1)だった場合は、たとえこれも失敗してもさらに再トライを
+  // 予約しない(3回目の再トライをしない、というルールを直接ここで保証する。
+  // 再トライ枠のクリア自体はdispatch完了時点で行われるため、それだけでは
+  // このガードが無いと再トライの失敗がまた新たな再トライを予約してしまう)。
+  if (jobStatus !== 'success' && !job.is_retry) {
     await c.env.DB
       .prepare(
         `UPDATE style_post_schedules SET retry_pending_style_id = ?, retry_pending_wait_slots = 1, updated_at = CURRENT_TIMESTAMP

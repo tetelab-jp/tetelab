@@ -1398,7 +1398,7 @@ style.get('/style/schedule', async (c) => {
         <div class="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>
           {clearedCount === '0'
-            ? '古い進行中ジョブは見つかりませんでした(2分未満のジョブは対象外です)'
+            ? '古い進行中ジョブは見つかりませんでした(15分未満のジョブは対象外です)'
             : `${clearedCount}件の古い進行中ジョブをリセットしました`}
         </div>
       )}
@@ -1473,7 +1473,7 @@ style.get('/style/schedule', async (c) => {
         <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
         <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
           <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
-            「投稿対象のスタイルがありません」等が出続ける場合、古い進行中ジョブをリセットする
+            「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
           </button>
         </form>
       </div>

@@ -102,7 +102,13 @@ function randomJobToken(): string {
  * 実際のログイン・登録・反映申請はFargateタスク側で行われ、結果は
  * 後で /api/automation/jobs/:id/result へのコールバックとして届く。
  */
-async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number, runId?: number): Promise<number> {
+async function dispatchStylePostJob(
+  env: Bindings,
+  userId: number,
+  styleId: number,
+  runId?: number,
+  isRetry?: boolean
+): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_REGION) {
     throw new Error('AWS_REGIONが未設定です')
@@ -115,10 +121,16 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
   }
 
   const jobToken = randomJobToken()
+  // 2026-08-14追記(重大バグ修正): このジョブが「1回だけの自動再トライ」
+  // 由来かをis_retryに記録しておく。再トライ枠のクリアをdispatch完了時点で
+  // 行うと、再トライ自体が失敗した場合に「予約なし」状態に戻ってしまい、
+  // automation.tsx側の結果コールバックがまた再トライを予約してしまう
+  // (無限ループ)。再トライ由来のジョブは、結果コールバック側で
+  // is_retryを見て新たな再トライ予約を行わないようにする。
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id) VALUES (?, ?, ?, 'pending', ?)`
+    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id, is_retry) VALUES (?, ?, ?, 'pending', ?, ?)`
   )
-    .bind(styleId, userId, jobToken, runId ?? null)
+    .bind(styleId, userId, jobToken, runId ?? null, isRetry ? 1 : 0)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -478,7 +490,7 @@ export async function runNextStyleForUser(
   const runId = Number(runInsert.meta.last_row_id)
 
   try {
-    await dispatchStylePostJob(env, userId, styleId, runId)
+    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot)
 
     if (isRetrySlot) {
       // 再トライ枠は使い切ったので消費し、通常の巡回カーソル/バーストには
@@ -622,16 +634,24 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
 
 /**
  * 2026-08-14追記(ユーザー指定): 「進行中ジョブがある」と判定されて
- * 自動投稿対象・手動実行対象から除外され続けるスタイルを、ユーザー自身の
- * 判断で今すぐ復旧できるようにする。sweepStaleJobsの15分より短い2分を
- * 閾値にする(2分未満のジョブは誤ってまだ本当に進行中の可能性が高いため
- * 対象外とし、実行中の投稿を誤って中断しないようにする)。このユーザーの
- * ジョブのみを対象にする。
+ * 自動投稿対象・手動実行対象から除外され続けるスタイルを、cron任せの
+ * sweepStaleJobs(1分おきの外部Cronで実行)を待たずに、ユーザー自身の
+ * 判断ですぐに実行できるようにする。
+ *
+ * 2026-08-14追記(重大バグ修正): 当初は2分を閾値にしていたが、通常の
+ * 正常な投稿でもIP切替リトライ(最大10回、1回あたり最大45秒+間隔20秒)で
+ * 10分以上かかることがあり、2分では本当にまだ実行中のジョブを誤って
+ * 「タイムアウト」扱いにしてしまう恐れがあった。その状態で次の投稿が
+ * 走ると、まだ完了していない前のジョブと合わせて同じスタイルが二重に
+ * SALON BOARDへ登録される(二重投稿)リスクがある。sweepStaleJobsと
+ * 同じ15分の閾値に統一し、安全側に倒す(「早く解除したい」という
+ * ユースケースには、閾値を下げるのではなくCronが正常に動いているかの
+ * 確認で対応する)。このユーザーのジョブのみを対象にする。
  */
 export async function resetStuckJobsForUser(env: Bindings, userId: number): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
-     WHERE user_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '2 minutes')`
+     WHERE user_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   )
     .bind(userId)
     .all<StaleJobRow>()

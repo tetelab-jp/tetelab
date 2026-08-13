@@ -12,3 +12,8 @@
 
 ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_style_id INTEGER;
 ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_wait_slots INTEGER NOT NULL DEFAULT 0;
+
+-- このジョブが上記の「1回だけの自動再トライ」由来かを記録する列。
+-- 再トライ由来のジョブが失敗しても、さらに新たな再トライを予約しない
+-- ようにするためのガードに使う(そうしないと無限ループになる)。
+ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS is_retry INTEGER NOT NULL DEFAULT 0;
