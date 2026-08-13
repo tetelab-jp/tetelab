@@ -113,12 +113,46 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
   // わかった。単純なGET(ログイン画面表示等)は問題にならず、doUploadのような
   // POSTだけが失敗する非対称な症状とも整合する。HTTP/2を無効化しHTTP/1.1に
   // 固定することで、プロキシトンネル越しの通信をより単純・安定にする。
+  // 2026-08-13追記(通信量削減): DataImpulseの利用状況(実データ)を分析した
+  // ところ、1日の総通信量(約1.2GB)のうち約3割(約340MB)が、サロンボード本体
+  // (salonboard.com/imgbp.salonboard.com)とは無関係な広告・分析タグや
+  // Chrome自体のバックグラウンド通信(コンポーネント更新・パスワード漏洩
+  // チェック・オートフィル同期等)であることが判明した。これらはスタイル
+  // 投稿という目的には一切不要なため、DNS解決自体を失敗させてブロックする。
+  // Puppeteerのリクエスト傍受(setRequestInterception)は使わない
+  // (Fetch domain傍受が有効になり、画像アップロードの大きいPOSTボディが
+  // 壊れる既知の不具合の再発リスクがあるため)。--host-resolver-rulesは
+  // DNS解決の段階でブロックするだけなので、doUpload等の実際の通信経路には
+  // 影響しない。判断に迷うドメイン(google.com/google.co.jp/accounts.google.com
+  // 等、万一ログイン関連の確認画面等で使われる可能性を否定できないもの)は
+  // 安全側に倒し、あえてブロック対象から外している。
+  const BLOCKED_HOSTS = [
+    'edgedl.me.gvt1.com', // Chrome本体・コンポーネントの自動更新
+    'update.googleapis.com',
+    'www.googletagmanager.com',
+    '*.karte.io', // サロンボードに埋め込まれたマーケティング分析ツール
+    'www.google-analytics.com',
+    'analytics.google.com',
+    'www.googleadservices.com',
+    'android.clients.google.com',
+    'passwordsleakcheck-pa.googleapis.com', // Chromeのパスワード漏洩チェック機能
+    'content-autofill.googleapis.com',
+    'mtalk.google.com',
+    '*.doubleclick.net',
+    '*.fout.jp',
+    '*.openx.net',
+    '*.pubmatic.com',
+    '*.rubiconproject.com',
+    'js.sentry-cdn.com'
+  ]
+
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-http2',
-    '--disable-quic'
+    '--disable-quic',
+    `--host-resolver-rules=${BLOCKED_HOSTS.map((h) => `MAP ${h} 0.0.0.0`).join(',')}`
   ]
 
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
