@@ -229,16 +229,16 @@ function AreaLabelBadges({ label }: { label: string | null }) {
   return (
     <div class="flex flex-col gap-1 mt-0.5">
       {middle && (
-        <span class="inline-flex items-center gap-1.5 text-sm text-gray-600 min-w-0">
-          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-pink-50 text-pink-600 font-semibold text-[10px] leading-none">
+        <span class="inline-flex items-center gap-1.5 text-sm sm:text-base text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-pink-50 text-pink-600 font-semibold text-[10px] sm:text-xs leading-none">
             中エリア
           </span>
           <span class="truncate">{middle}</span>
         </span>
       )}
       {small && (
-        <span class="inline-flex items-center gap-1.5 text-sm text-gray-600 min-w-0">
-          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold text-[10px] leading-none">
+        <span class="inline-flex items-center gap-1.5 text-sm sm:text-base text-gray-600 min-w-0">
+          <span class="flex-shrink-0 px-1.5 py-0.5 rounded bg-gray-100 text-gray-600 font-semibold text-[10px] sm:text-xs leading-none">
             小エリア
           </span>
           <span class="truncate">{small}</span>
