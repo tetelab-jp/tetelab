@@ -783,31 +783,6 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
       seoEnabled={user.seo_enabled !== 0}
     >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <p class="font-semibold mb-4">
-          <i class="fas fa-list-check mr-2 text-pink-500"></i>
-          登録済みの対策キーワード（<span id="keyword-count">{keywords.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
-        </p>
-        <div id="keyword-chips" class="flex flex-wrap gap-2">
-          {keywords.length === 0 && (
-            <p id="keyword-empty" class="text-sm text-gray-400">
-              まだ登録がありません。下の入力欄からキーワードを追加してください。
-            </p>
-          )}
-          {keywords.map((k) => (
-            <span
-              class="keyword-chip inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm"
-              data-id={k.id}
-            >
-              <span>{k.keyword}</span>
-              <button type="button" class="keyword-remove-btn text-pink-400 hover:text-pink-600 leading-none" data-id={k.id}>
-                ×
-              </button>
-            </span>
-          ))}
-        </div>
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-4 text-gray-900">
           <i class="fas fa-list-check mr-2 text-pink-500"></i>対策キーワードを追加する
         </p>
@@ -827,6 +802,32 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
           </button>
         </div>
         <p id="keyword-add-status" class="text-xs text-red-500 mt-2 min-h-[1rem]"></p>
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <p class="font-semibold mb-4">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>
+          登録済みの対策キーワード<br class="sm:hidden" />
+          （<span id="keyword-count">{keywords.length}</span>件/最大{KEYWORD_SLOTS_MAX}件まで）
+        </p>
+        <div id="keyword-chips" class="flex flex-wrap gap-2">
+          {keywords.length === 0 && (
+            <p id="keyword-empty" class="text-sm text-gray-400">
+              まだ登録がありません。上の入力欄からキーワードを追加してください。
+            </p>
+          )}
+          {keywords.map((k) => (
+            <span
+              class="keyword-chip inline-flex items-center gap-1.5 bg-pink-50 text-pink-700 border border-pink-200 rounded-full pl-3 pr-2 py-1 text-sm"
+              data-id={k.id}
+            >
+              <span>{k.keyword}</span>
+              <button type="button" class="keyword-remove-btn text-pink-400 hover:text-pink-600 leading-none" data-id={k.id}>
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
       </div>
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
