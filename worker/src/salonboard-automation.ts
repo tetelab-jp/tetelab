@@ -113,46 +113,12 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
   // わかった。単純なGET(ログイン画面表示等)は問題にならず、doUploadのような
   // POSTだけが失敗する非対称な症状とも整合する。HTTP/2を無効化しHTTP/1.1に
   // 固定することで、プロキシトンネル越しの通信をより単純・安定にする。
-  // 2026-08-13追記(通信量削減): DataImpulseの利用状況(実データ)を分析した
-  // ところ、1日の総通信量(約1.2GB)のうち約3割(約340MB)が、サロンボード本体
-  // (salonboard.com/imgbp.salonboard.com)とは無関係な広告・分析タグや
-  // Chrome自体のバックグラウンド通信(コンポーネント更新・パスワード漏洩
-  // チェック・オートフィル同期等)であることが判明した。これらはスタイル
-  // 投稿という目的には一切不要なため、DNS解決自体を失敗させてブロックする。
-  // Puppeteerのリクエスト傍受(setRequestInterception)は使わない
-  // (Fetch domain傍受が有効になり、画像アップロードの大きいPOSTボディが
-  // 壊れる既知の不具合の再発リスクがあるため)。--host-resolver-rulesは
-  // DNS解決の段階でブロックするだけなので、doUpload等の実際の通信経路には
-  // 影響しない。判断に迷うドメイン(google.com/google.co.jp/accounts.google.com
-  // 等、万一ログイン関連の確認画面等で使われる可能性を否定できないもの)は
-  // 安全側に倒し、あえてブロック対象から外している。
-  const BLOCKED_HOSTS = [
-    'edgedl.me.gvt1.com', // Chrome本体・コンポーネントの自動更新
-    'update.googleapis.com',
-    'www.googletagmanager.com',
-    '*.karte.io', // サロンボードに埋め込まれたマーケティング分析ツール
-    'www.google-analytics.com',
-    'analytics.google.com',
-    'www.googleadservices.com',
-    'android.clients.google.com',
-    'passwordsleakcheck-pa.googleapis.com', // Chromeのパスワード漏洩チェック機能
-    'content-autofill.googleapis.com',
-    'mtalk.google.com',
-    '*.doubleclick.net',
-    '*.fout.jp',
-    '*.openx.net',
-    '*.pubmatic.com',
-    '*.rubiconproject.com',
-    'js.sentry-cdn.com'
-  ]
-
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-http2',
-    '--disable-quic',
-    `--host-resolver-rules=${BLOCKED_HOSTS.map((h) => `MAP ${h} 0.0.0.0`).join(',')}`
+    '--disable-quic'
   ]
 
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
@@ -234,23 +200,6 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
   await page.setViewport({ width: 1920, height: 1080 })
 
   return page
-}
-
-/**
- * 2026-08-13追記(診断用): 「セッションIDを変えても実際の出口IPは変わって
- * いないのでは」という疑問に答えるため、サロンボードへアクセスする前に
- * 外部の「自分のIPを調べる」サービス(ipify.org、軽量・数十バイト)へ一度
- * アクセスし、実際に観測された出口IPをログに残す。診断専用で、失敗しても
- * 本処理には影響させない。
- */
-export async function checkExitIp(page: Page, log: AutomationLogger): Promise<void> {
-  try {
-    await page.goto('https://api.ipify.org/?format=json', { waitUntil: 'domcontentloaded', timeout: 15000 })
-    const text = await page.evaluate(() => document.body.innerText)
-    log(`[診断:出口IP] ${text.trim()}`)
-  } catch (err: any) {
-    log(`[診断:出口IP] 取得失敗(診断機能のみに影響): ${String(err?.message || err)}`)
-  }
 }
 
 /**
@@ -379,213 +328,200 @@ export async function draftRegisterStyle(
   log('写真をアップロード中...')
   await uploadFrontImage(page, input.imageBuffer, input.imageFileName, log)
 
-  // 2026-08-13追記(ユーザー指定ルール): 画像アップロード成功後に
-  // 後続工程(フォーム入力・登録確認等)で失敗した場合、IPを切り替えて
-  // 最初からやり直すと同じ画像を何度も送り直すことになり通信量を浪費する
-  // ため、このエラーには afterUploadSuccess フラグを付けて呼び出し元
-  // (index.ts)へ伝え、以降のリトライを行わずこのスタイルの投稿を
-  // 打ち切れるようにする。
-  try {
+  // ---- スタイリスト選択 ----
+  await page.select('#stylistCheckCd', input.stylistSelectValue)
 
-    // ---- スタイリスト選択 ----
-    await page.select('#stylistCheckCd', input.stylistSelectValue)
+  // ---- スタイリストコメント(最大120文字) ----
+  await page.evaluate((text: string) => {
+    const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
+    if (el) el.value = text
+  }, input.stylistComment.slice(0, 120))
 
-    // ---- スタイリストコメント(最大120文字) ----
-    await page.evaluate((text: string) => {
-      const el = document.getElementById('stylistCommentTxt') as HTMLTextAreaElement | null
-      if (el) el.value = text
-    }, input.stylistComment.slice(0, 120))
+  // ---- スタイル名(最大30文字) ----
+  await page.evaluate((text: string) => {
+    const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
+    if (el) el.value = text
+  }, input.styleName.slice(0, 30))
 
-    // ---- スタイル名(最大30文字) ----
-    await page.evaluate((text: string) => {
-      const el = document.getElementById('styleNameTxt') as HTMLInputElement | null
-      if (el) el.value = text
-    }, input.styleName.slice(0, 30))
+  // ---- カテゴリ(レディース/メンズ) ----
+  const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
+  await page.click(categoryRadioId)
+  await sleep(300)
 
-    // ---- カテゴリ(レディース/メンズ) ----
-    const categoryRadioId = input.categoryCd === 'SG01' ? '#styleCategoryCd01' : '#styleCategoryCd02'
-    await page.click(categoryRadioId)
-    await sleep(300)
+  // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
+  const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
+  const lengthHandle = await page.$(lengthSelectId)
+  if (lengthHandle) {
+    await page.select(lengthSelectId, input.hairLengthValue)
+  } else {
+    log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
+  }
 
-    // ---- ヘアレングス(レディース/メンズでidが異なる<select>) ----
-    const lengthSelectId = input.categoryCd === 'SG01' ? '#ladiesHairLengthCd' : '#mensHairLengthCd'
-    const lengthHandle = await page.$(lengthSelectId)
-    if (lengthHandle) {
-      await page.select(lengthSelectId, input.hairLengthValue)
-    } else {
-      log(`警告: 長さ選択欄(${lengthSelectId})が見つかりませんでした`)
+  // ---- メニュー内容チェックボックス(任意) ----
+  if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
+    for (const mc of input.menuContentsCdList) {
+      const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
+      if (cb) await cb.click()
     }
+  }
 
-    // ---- メニュー内容チェックボックス(任意) ----
-    if (input.menuContentsCdList && input.menuContentsCdList.length > 0) {
-      for (const mc of input.menuContentsCdList) {
-        const cb = await page.$(`input.menuContentsCdList[value="${mc}"]`)
-        if (cb) await cb.click()
+  // ---- メニュー詳細(必須、最大50文字) ----
+  await page.evaluate((text: string) => {
+    const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
+    if (el) el.value = text
+  }, input.menuDetailText.slice(0, 50))
+
+  // ---- クーポン(任意) ----
+  // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
+  // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
+  // モーダルUIを操作せず直接値をセットする。
+  if (input.couponSelectValue) {
+    await page.evaluate((couponId: string) => {
+      const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
+      if (el) el.value = couponId
+    }, input.couponSelectValue)
+  }
+
+  // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
+  // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
+  // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
+  // イベントを発生させる必要がある。
+  if (input.hashtags && input.hashtags.length > 0) {
+    for (const rawTag of input.hashtags.slice(0, 20)) {
+      const tag = rawTag.trim().slice(0, 40)
+      if (!tag) continue
+
+      const hashTagInput = await page.$('#hashTagTxt')
+      if (!hashTagInput) {
+        log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
+        break
       }
-    }
+      await hashTagInput.click({ count: 3 })
+      await page.keyboard.press('Backspace').catch(() => {})
+      await hashTagInput.type(tag, { delay: 20 })
+      await sleep(200)
 
-    // ---- メニュー詳細(必須、最大50文字) ----
-    await page.evaluate((text: string) => {
-      const el = document.getElementById('menuDetailTxt') as HTMLTextAreaElement | null
-      if (el) el.value = text
-    }, input.menuDetailText.slice(0, 50))
-
-    // ---- クーポン(任意) ----
-    // 見た目はモーダル選択UIだが、最終的にPOSTされるのは隠しフィールド
-    // frmStyleEditStyleDto.couponId の値(CP+14桁形式)のみのため、
-    // モーダルUIを操作せず直接値をセットする。
-    if (input.couponSelectValue) {
-      await page.evaluate((couponId: string) => {
-        const el = document.querySelector('input[name="frmStyleEditStyleDto.couponId"]') as HTMLInputElement | null
-        if (el) el.value = couponId
-      }, input.couponSelectValue)
-    }
-
-    // ---- ハッシュタグ(任意、最大20件、1件ずつ入力して追加ボタンを押す) ----
-    // 追加ボタンは入力欄が空だとdisabled表示になる(JSのinputイベントで判定している
-    // ため)、page.evaluateでの直接値セットではなくpage.type()で実際のキー入力
-    // イベントを発生させる必要がある。
-    if (input.hashtags && input.hashtags.length > 0) {
-      for (const rawTag of input.hashtags.slice(0, 20)) {
-        const tag = rawTag.trim().slice(0, 40)
-        if (!tag) continue
-
-        const hashTagInput = await page.$('#hashTagTxt')
-        if (!hashTagInput) {
-          log('警告: ハッシュタグ入力欄(#hashTagTxt)が見つかりませんでした')
-          break
-        }
-        await hashTagInput.click({ count: 3 })
-        await page.keyboard.press('Backspace').catch(() => {})
-        await hashTagInput.type(tag, { delay: 20 })
-        await sleep(200)
-
-        const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
-        if (!addBtn) {
-          log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
-          break
-        }
-        await addBtn.click()
-        await sleep(200)
+      const addBtn = await page.$('.jsc_style_edit-editCommon__tag--addBtn')
+      if (!addBtn) {
+        log('警告: ハッシュタグ追加ボタンが見つかりませんでした')
+        break
       }
+      await addBtn.click()
+      await sleep(200)
     }
+  }
 
-    // ---- 送信前セルフチェック ----
-    const preflight = await page.evaluate(() => {
-      const val = (id: string) =>
-        (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
-        '(要素なし)'
-      const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
-      return {
-        styleRegistFormat:
-          (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
-            ?.value ?? '(未選択)',
-        frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
-        stylistCheckCd: val('stylistCheckCd'),
-        stylistCommentTxt: val('stylistCommentTxt'),
-        styleNameTxt: val('styleNameTxt'),
-        styleCategoryCd01: checked('styleCategoryCd01'),
-        styleCategoryCd02: checked('styleCategoryCd02'),
-        ladiesHairLengthCd: val('ladiesHairLengthCd'),
-        menuDetailTxt: val('menuDetailTxt')
-      }
-    })
-    log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
-
-    // ---- 保存(doRegister) ----
-    log('スタイルを登録中...')
-    const doRegisterHandle = await page.$('[onclick*="doRegister("]')
-    if (!doRegisterHandle) {
-      throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
+  // ---- 送信前セルフチェック ----
+  const preflight = await page.evaluate(() => {
+    const val = (id: string) =>
+      (document.getElementById(id) as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | null)?.value ??
+      '(要素なし)'
+    const checked = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? '(要素なし)'
+    return {
+      styleRegistFormat:
+        (document.querySelector('input[name="frmStyleEditStyleInfoDto.styleRegistFormat"]:checked') as HTMLInputElement | null)
+          ?.value ?? '(未選択)',
+      frontImgId: document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() || '(要素なし/空)',
+      stylistCheckCd: val('stylistCheckCd'),
+      stylistCommentTxt: val('stylistCommentTxt'),
+      styleNameTxt: val('styleNameTxt'),
+      styleCategoryCd01: checked('styleCategoryCd01'),
+      styleCategoryCd02: checked('styleCategoryCd02'),
+      ladiesHairLengthCd: val('ladiesHairLengthCd'),
+      menuDetailTxt: val('menuDetailTxt')
     }
-    await Promise.all([
-      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-      doRegisterHandle.click()
-    ])
+  })
+  log(`送信前セルフチェック: ${JSON.stringify(preflight)}`)
 
-    // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
-    // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
-    //
-    // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
-    // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
-    // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
-    // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
-    // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
-    // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
-    // である「登録が完了しました。」の文言も検知対象に加える。
-    const registeredStyleId = await page
-      .waitForFunction(
-        () => {
-          const el = document.getElementById('styleId') as HTMLInputElement | null
-          if (el && /^L\d{9}$/.test(el.value)) return el.value
-          const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
-          if (urlMatch) return urlMatch[1]
-          if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
-          return false
+  // ---- 保存(doRegister) ----
+  log('スタイルを登録中...')
+  const doRegisterHandle = await page.$('[onclick*="doRegister("]')
+  if (!doRegisterHandle) {
+    throw new Error('登録ボタン([onclick*="doRegister("])が見つかりませんでした')
+  }
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+    doRegisterHandle.click()
+  ])
+
+  // 登録成功の検証: サーバーが実styleId(L+9桁)を発行し、#styleId隠しフィールドに
+  // セットした状態で再描画される。または styleId=(L\d{9}) 形式のURLに遷移する。
+  //
+  // 2026-08-11修正(重大バグ): 実際の手動操作をユーザーに確認したところ、
+  // 登録成功時は「登録が完了しました。」という確認画面(スタイル一覧ページ
+  // ではない)が表示され、一覧ページへはユーザーが別途ボタンを押して手動で
+  // 遷移することが判明した。#styleId隠しフィールドの値のみに頼っていたため、
+  // 実際には登録が成功しているのに(ユーザーがサロンボード側で確認済み)
+  // 失敗と誤判定するケースが実機で確認された。人間の目に見える成功サイン
+  // である「登録が完了しました。」の文言も検知対象に加える。
+  const registeredStyleId = await page
+    .waitForFunction(
+      () => {
+        const el = document.getElementById('styleId') as HTMLInputElement | null
+        if (el && /^L\d{9}$/.test(el.value)) return el.value
+        const urlMatch = window.location.href.match(/styleId=(L\d{9})/)
+        if (urlMatch) return urlMatch[1]
+        if (document.body.innerText.includes('登録が完了しました')) return 'CONFIRMED_BY_TEXT'
+        return false
+      },
+      { timeout: 20000 }
+    )
+    .then((handle) => handle.jsonValue() as Promise<string | false>)
+    .catch(() => false)
+
+  if (!registeredStyleId) {
+    const currentUrl = page.url()
+    // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
+    // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
+    // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
+    // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
+    // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
+    // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
+    // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
+    // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
+    // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
+    // 可能性の傍証)を診断ログに残すのみとする。
+    const isStyleListPage = /styleList/i.test(currentUrl)
+    const diag = await page
+      .evaluate(
+        (styleName: string, isListPage: boolean) => {
+          const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
+          const errorEls = isListPage
+            ? []
+            : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
+                .map((el) => el.textContent?.trim())
+                .filter((t) => t)
+                .slice(0, 3)
+          const nameMatchCount =
+            isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
+          return {
+            styleIdElExists: !!styleIdEl,
+            styleIdElValue: styleIdEl?.value ?? null,
+            errorTexts: errorEls,
+            isStyleListPage: isListPage,
+            nameMatchCount
+          }
         },
-        { timeout: 20000 }
+        input.styleName.slice(0, 30),
+        isStyleListPage
       )
-      .then((handle) => handle.jsonValue() as Promise<string | false>)
-      .catch(() => false)
+      .catch(() => null)
+    const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
+    log(
+      `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
+        `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
+        `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
+    )
+    throw new Error(
+      'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
+        'サーバー側で実際に登録されていない可能性があります。'
+    )
+  }
 
-    if (!registeredStyleId) {
-      const currentUrl = page.url()
-      // 2026-08-11修正(診断用): 登録後に一覧ページ(styleList)へ遷移していた
-      // 実例が確認された。一覧ページには無関係な他のスタイルの状態表示
-      // (「.error」等のクラス名を持つ要素、例:クーポン欠落警告)が多数存在し、
-      // 従来のセレクタはページ全体から無差別に拾っていたため、今回登録した
-      // スタイルとは無関係な誤情報を「エラー表示候補」として報告してしまう
-      // バグがあった(実機で確認: 実際には登録は成功していたのに、無関係な
-      // 別スタイルのクーポン警告を拾って原因のように見せてしまった)。
-      // 一覧ページではこのエラーテキスト収集を行わず、代わりに登録した
-      // スタイル名が一覧に何件表示されているか(=登録成功でリダイレクトされた
-      // 可能性の傍証)を診断ログに残すのみとする。
-      const isStyleListPage = /styleList/i.test(currentUrl)
-      const diag = await page
-        .evaluate(
-          (styleName: string, isListPage: boolean) => {
-            const styleIdEl = document.getElementById('styleId') as HTMLInputElement | null
-            const errorEls = isListPage
-              ? []
-              : Array.from(document.querySelectorAll('.error, .errorMessage, [class*="error"]'))
-                  .map((el) => el.textContent?.trim())
-                  .filter((t) => t)
-                  .slice(0, 3)
-            const nameMatchCount =
-              isListPage && styleName ? document.body.innerText.split(styleName).length - 1 : null
-            return {
-              styleIdElExists: !!styleIdEl,
-              styleIdElValue: styleIdEl?.value ?? null,
-              errorTexts: errorEls,
-              isStyleListPage: isListPage,
-              nameMatchCount
-            }
-          },
-          input.styleName.slice(0, 30),
-          isStyleListPage
-        )
-        .catch(() => null)
-      const errorSummary = diag?.errorTexts && diag.errorTexts.length > 0 ? diag.errorTexts.join(' / ') : 'なし'
-      log(
-        `登録確認失敗時の詳細: url=${currentUrl} 一覧ページ=${diag?.isStyleListPage ?? '不明'} ` +
-          `#styleId存在=${diag?.styleIdElExists ?? '不明'} 値=${diag?.styleIdElValue ?? '(なし)'} ` +
-          `同名一致件数=${diag?.nameMatchCount ?? '(対象外)'} エラー表示候補=${errorSummary}`
-      )
-      throw new Error(
-        'スタイル登録の完了を確認できませんでした(#styleIdにL+9桁のIDがセットされない)。' +
-          'サーバー側で実際に登録されていない可能性があります。'
-      )
-    }
-
-    if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
-      log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
-    } else {
-      log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
-    }
-  } catch (err: any) {
-    const wrapped = new Error(String(err?.message || err))
-    ;(wrapped as any).afterUploadSuccess = true
-    throw wrapped
+  if (registeredStyleId === 'CONFIRMED_BY_TEXT') {
+    log('スタイル登録が完了しました(「登録が完了しました。」の文言で確認、styleIdは未取得)')
+  } else {
+    log(`スタイル登録が完了しました(styleId: ${registeredStyleId})`)
   }
 }
 
@@ -681,36 +617,8 @@ async function uploadFrontImage(
     const uploadStartedAt = Date.now()
     const uploadEvents: string[] = []
     const pushEvent = (msg: string) => uploadEvents.push(`+${Date.now() - uploadStartedAt}ms ${msg}`)
-
-    // 2026-08-13追記(高速失敗化): 従来はdoUploadが失敗した場合でも、
-    // 完了検知のwaitForFunctionが45秒のタイムアウトに達するまで律儀に
-    // 待ち続けていた。実際にはrequestfailed/CDP loadingFailedイベントで
-    // 数秒〜35秒程度で失敗が分かっていることが多いため、そのイベントを
-    // 検知した時点で即座に失敗として切り上げる(Promise.raceで先着判定)。
-    // これにより1回あたりの無駄待ちを減らし、同じ総時間内でより多くの
-    // 候補IPを試せるようにする。
-    let resolveDoUploadFailure: ((reason: string) => void) | null = null
-    const doUploadFailurePromise = new Promise<string>((resolve) => {
-      resolveDoUploadFailure = resolve
-    })
-
-    // 2026-08-13追記4(診断強化): doUpload関連のイベントだけでなく、待機中に
-    // 他の通信(広告/分析ビーコン等)が普通に流れているかも記録する。これにより
-    // 「プロキシ経路全体が詰まっているのか」「doUploadだけが狙い撃ちで
-    // 止められているのか」を次回の障害発生時に切り分けられるようにする。
-    // 件数が多くなりがちなので、詳細は先頭数件のサンプルのみ保持する。
-    let otherRequestCount = 0
-    let otherResponseCount = 0
-    let otherFailureCount = 0
-    const otherResponseSamples: string[] = []
-    const otherFailureSamples: string[] = []
-
     const onRequestFinished = (req: any) => {
-      if (/doUpload/i.test(req.url())) {
-        pushEvent(`request送信: ${req.method()} ${req.url()}`)
-      } else {
-        otherRequestCount++
-      }
+      if (/doUpload/i.test(req.url())) pushEvent(`request送信: ${req.method()} ${req.url()}`)
     }
     const onResponse = async (res: any) => {
       if (/doUpload/i.test(res.url())) {
@@ -719,20 +627,11 @@ async function uploadFrontImage(
           bodySnippet = (await res.text()).slice(0, 300)
         } catch {}
         pushEvent(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
-      } else {
-        otherResponseCount++
-        if (otherResponseSamples.length < 3) otherResponseSamples.push(`status=${res.status()} ${res.url()}`)
       }
     }
     const onRequestFailed = (req: any) => {
       if (/doUpload/i.test(req.url())) {
-        const reason = req.failure?.()?.errorText ?? '不明'
-        pushEvent(`request失敗: ${req.url()} -> ${reason}`)
-        resolveDoUploadFailure?.(reason)
-      } else {
-        otherFailureCount++
-        const reason = req.failure?.()?.errorText ?? '不明'
-        if (otherFailureSamples.length < 3) otherFailureSamples.push(`${req.url()} -> ${reason}`)
+        pushEvent(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
       }
     }
     page.on('request', onRequestFinished)
@@ -756,7 +655,6 @@ async function uploadFrontImage(
           `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
             `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
         )
-        resolveDoUploadFailure?.(params.errorText)
       }
     }
     // 2026-08-13追記(診断用): proxy-chain化・別セッションへの切替・HTTP/2無効化の
@@ -805,56 +703,6 @@ async function uploadFrontImage(
       cdpClient = client as any
     } catch (e: any) {
       uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
-    }
-
-    // 2026-08-14追記(診断強化): これまでの診断はすべてPuppeteer/CDPの
-    // Network domain経由(page.on('request')等・CDP Network.loadingFailed)
-    // だった。実機ログで「(doUploadへのリクエストが観測されませんでした)」
-    // (どのイベントも一切発火しない)ケースが多数を占めることが分かり、これは
-    // 「ネットワーク層で何かが起きた」のではなく「ボタンのクリックハンドラが
-    // そもそもdoUploadへの送信を試みていない」可能性を強く示唆する。
-    // Network domain(ブラウザ側の下層)ではなく、ページ自身のJS実行コンテキスト
-    // (window.fetch/XMLHttpRequest)を直接フックすることで、Service Worker
-    // 経由や特殊な送信経路であっても、SALON BOARD側のJSが実際にdoUpload
-    // 送信を試みたかどうかをより確実に検知できるようにする。あわせて、
-    // 送信ボタンへの実クリックがそのボタン自身のイベントハンドラまで
-    // 届いているか(信頼済みイベントとして受信されているか)も記録する。
-    try {
-      await page.evaluate(() => {
-        const w = window as any
-        w.__doUploadDebug = { fetchCalls: [], xhrCalls: [], buttonClickSeen: null }
-        const origFetch = w.fetch?.bind(w)
-        if (origFetch) {
-          w.fetch = (...args: any[]) => {
-            const input = args[0]
-            const url = typeof input === 'string' ? input : input?.url
-            if (url && /doUpload/i.test(url)) {
-              w.__doUploadDebug.fetchCalls.push({ url, at: Date.now() })
-            }
-            return origFetch(...args)
-          }
-        }
-        const OrigXHR = w.XMLHttpRequest
-        if (OrigXHR) {
-          const origOpen = OrigXHR.prototype.open
-          OrigXHR.prototype.open = function (method: string, url: string, ...rest: any[]) {
-            if (url && /doUpload/i.test(String(url))) {
-              w.__doUploadDebug.xhrCalls.push({ method, url: String(url), at: Date.now() })
-            }
-            return origOpen.call(this, method, url, ...rest)
-          }
-        }
-        const btn = document.querySelector('input.jscImageUploaderModalSubmitButton')
-        btn?.addEventListener(
-          'click',
-          (e: Event) => {
-            w.__doUploadDebug.buttonClickSeen = { isTrusted: (e as MouseEvent).isTrusted, at: Date.now() }
-          },
-          { capture: true }
-        )
-      })
-    } catch (e: any) {
-      uploadEvents.push(`page内フック設置失敗(診断機能のみに影響): ${String(e?.message || e)}`)
     }
 
     try {
@@ -932,18 +780,13 @@ async function uploadFrontImage(
       }
 
       log('アップロード完了の検知を待機中...')
-      await Promise.race([
-        page.waitForFunction(
-          () => {
-            const el = document.getElementById('FRONT_IMG_ID_ID')
-            return !!el && !!el.textContent && el.textContent.trim().length > 0
-          },
-          { timeout: 45000 }
-        ),
-        doUploadFailurePromise.then((reason) => {
-          throw new Error(`doUploadリクエストが失敗しました(${reason})`)
-        })
-      ])
+      await page.waitForFunction(
+        () => {
+          const el = document.getElementById('FRONT_IMG_ID_ID')
+          return !!el && !!el.textContent && el.textContent.trim().length > 0
+        },
+        { timeout: 45000 }
+      )
     } catch (clickOrWaitError: any) {
       const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
       const diag =
@@ -951,26 +794,9 @@ async function uploadFrontImage(
           ? uploadEvents.join(' / ')
           : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
       const navFlag = navigationDuringUpload ? '[診断]アップロード中にページ遷移を検知=あり ' : '[診断]アップロード中にページ遷移を検知=なし '
-      const otherTrafficFlag =
-        `[診断:他の通信] 送信=${otherRequestCount} 応答=${otherResponseCount} 失敗=${otherFailureCount}` +
-        (otherResponseSamples.length > 0 ? ` 応答例=[${otherResponseSamples.join(', ')}]` : '') +
-        (otherFailureSamples.length > 0 ? ` 失敗例=[${otherFailureSamples.join(', ')}]` : '')
-      // 2026-08-14追記(診断強化): window.fetch/XMLHttpRequestフックとボタンの
-      // 実クリック受信状況を読み出す。ここで「送信を試みた形跡が全く無い」
-      // (fetchCalls/xhrCallsが空かつbuttonClickSeenも無い)場合、doUpload失敗は
-      // ネットワーク層ではなくSALON BOARD側JSのクリックハンドラそのものが
-      // 発火していない(=Puppeteerのクリックが意図した要素に届いていない、
-      // または届いても内部処理が始まっていない)ことを強く示す証拠になる。
-      let pageHookFlag = '[診断:page内フック] 取得失敗'
-      try {
-        const hookState = await page.evaluate(() => (window as any).__doUploadDebug ?? null)
-        pageHookFlag = `[診断:page内フック] ${JSON.stringify(hookState)}`
-      } catch (hookErr: any) {
-        pageHookFlag = `[診断:page内フック] 取得失敗: ${String(hookErr?.message || hookErr)}`
-      }
       throw new Error(
         '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-          `45秒待っても検知できませんでした ${navFlag}${otherTrafficFlag} ${pageHookFlag} [診断] ${diag}`
+          `45秒待っても検知できませんでした ${navFlag}[診断] ${diag}`
       )
     } finally {
       page.off('request', onRequestFinished)
