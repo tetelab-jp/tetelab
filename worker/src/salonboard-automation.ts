@@ -617,6 +617,19 @@ async function uploadFrontImage(
     const uploadStartedAt = Date.now()
     const uploadEvents: string[] = []
     const pushEvent = (msg: string) => uploadEvents.push(`+${Date.now() - uploadStartedAt}ms ${msg}`)
+
+    // 2026-08-13追記(高速失敗化): 従来はdoUploadが失敗した場合でも、
+    // 完了検知のwaitForFunctionが45秒のタイムアウトに達するまで律儀に
+    // 待ち続けていた。実際にはrequestfailed/CDP loadingFailedイベントで
+    // 数秒〜35秒程度で失敗が分かっていることが多いため、そのイベントを
+    // 検知した時点で即座に失敗として切り上げる(Promise.raceで先着判定)。
+    // これにより1回あたりの無駄待ちを減らし、同じ総時間内でより多くの
+    // 候補IPを試せるようにする。
+    let resolveDoUploadFailure: ((reason: string) => void) | null = null
+    const doUploadFailurePromise = new Promise<string>((resolve) => {
+      resolveDoUploadFailure = resolve
+    })
+
     const onRequestFinished = (req: any) => {
       if (/doUpload/i.test(req.url())) pushEvent(`request送信: ${req.method()} ${req.url()}`)
     }
@@ -631,7 +644,9 @@ async function uploadFrontImage(
     }
     const onRequestFailed = (req: any) => {
       if (/doUpload/i.test(req.url())) {
-        pushEvent(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
+        const reason = req.failure?.()?.errorText ?? '不明'
+        pushEvent(`request失敗: ${req.url()} -> ${reason}`)
+        resolveDoUploadFailure?.(reason)
       }
     }
     page.on('request', onRequestFinished)
@@ -655,6 +670,7 @@ async function uploadFrontImage(
           `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
             `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
         )
+        resolveDoUploadFailure?.(params.errorText)
       }
     }
     // 2026-08-13追記(診断用): proxy-chain化・別セッションへの切替・HTTP/2無効化の
@@ -780,13 +796,18 @@ async function uploadFrontImage(
       }
 
       log('アップロード完了の検知を待機中...')
-      await page.waitForFunction(
-        () => {
-          const el = document.getElementById('FRONT_IMG_ID_ID')
-          return !!el && !!el.textContent && el.textContent.trim().length > 0
-        },
-        { timeout: 45000 }
-      )
+      await Promise.race([
+        page.waitForFunction(
+          () => {
+            const el = document.getElementById('FRONT_IMG_ID_ID')
+            return !!el && !!el.textContent && el.textContent.trim().length > 0
+          },
+          { timeout: 45000 }
+        ),
+        doUploadFailurePromise.then((reason) => {
+          throw new Error(`doUploadリクエストが失敗しました(${reason})`)
+        })
+      ])
     } catch (clickOrWaitError: any) {
       const clickErrorMsg = String(clickOrWaitError?.message || clickOrWaitError)
       const diag =

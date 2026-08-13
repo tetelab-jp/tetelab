@@ -119,6 +119,10 @@ function base64ToArrayBuffer(base64: string): ArrayBuffer {
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any; topPageUrl: string | null }
 
 /**
@@ -228,12 +232,22 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
   if (!attempt.error) draftError = await tryDraftWithRetries(attempt.page!, styleInput, log, attempt.topPageUrl)
 
   for (let i = 1; i < candidates.length && (attempt.error || draftError); i++) {
-    const reason = attempt.error ? 'ログイン' : `スタイル下書き登録(${MAX_DRAFT_ATTEMPTS_PER_SESSION}回試行済み)`
+    // 2026-08-13追記(診断強化): 以前は「ログインに失敗したため切り替えます」
+    // としか記録しておらず、CAPTCHAだったのか単なる通信エラーだったのか
+    // 後から判別できなかった。attempt.errorの実際のメッセージ(診断情報込み)
+    // をログに含めるようにする。
+    const reason = attempt.error
+      ? `ログイン(${String(attempt.error?.message || attempt.error).slice(0, 300)})`
+      : `スタイル下書き登録(${MAX_DRAFT_ATTEMPTS_PER_SESSION}回試行済み)`
     log(
       `[プロキシ] セッションID(${candidates[i - 1]})での${reason}に失敗したため、` +
         `実績に関わらず次の候補セッションID(${candidates[i]})へ強制的に切り替えて再ログインします...`
     )
     await closeAttempt(attempt)
+    // 2026-08-13追記: 短時間に複数の別IPから同じアカウントへ連続ログインする
+    // こと自体がSALON BOARD/Akamai側に不審な挙動として警戒される可能性を
+    // 考慮し、切り替え前に少し間隔を空ける。
+    await sleep(4000)
     attempt = await attemptLogin(payload, log, candidates[i])
     loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
     draftError = attempt.error ? null : new Error('未試行')
