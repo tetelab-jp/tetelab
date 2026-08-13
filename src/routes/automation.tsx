@@ -234,7 +234,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
   const logRows = (logs || []).map((l) => {
     const category = l.post_id ? 'ブログ' : 'スタイル'
-    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 3000)
+    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 10000)
     return {
       id: l.id,
       dateLabel: formatJstDate(l.created_at),
@@ -510,7 +510,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 
   const { style_id: styleId, user_id: userId } = job
   const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
-  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 3000)
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
   const styleNo = await getStyleNo(c.env, userId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
