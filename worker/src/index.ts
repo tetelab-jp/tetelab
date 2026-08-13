@@ -157,6 +157,45 @@ async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
   }
 }
 
+const MAX_DRAFT_ATTEMPTS_PER_SESSION = 3
+
+/**
+ * 同じセッション(ブラウザ)のまま、下書き登録(画像アップロード含む)を
+ * 最大MAX_DRAFT_ATTEMPTS_PER_SESSION回試す。失敗した場合は再ログインせず、
+ * ログイン直後のトップページへ戻ってからやり直す(draftRegisterStyle()は
+ * doRegisterクリックまでSALON BOARD側に何も保存しないため、この範囲での
+ * やり直しに二重登録のリスクは無い)。全て失敗した場合は最後のエラーを返す。
+ */
+async function tryDraftWithRetries(
+  page: Page,
+  styleInput: StylePostInput,
+  log: (msg: string) => void,
+  topPageUrl: string | null
+): Promise<any> {
+  let draftError: any = null
+  for (let draftAttempt = 1; draftAttempt <= MAX_DRAFT_ATTEMPTS_PER_SESSION; draftAttempt++) {
+    try {
+      await draftRegisterStyle(page, styleInput, log)
+      return null
+    } catch (err: any) {
+      draftError = err
+      if (draftAttempt < MAX_DRAFT_ATTEMPTS_PER_SESSION) {
+        log(
+          `スタイル下書き登録(画像アップロード含む)に失敗したため` +
+            `(試行${draftAttempt}/${MAX_DRAFT_ATTEMPTS_PER_SESSION})、` +
+            `ログインのやり直しはせず、ログイン後のトップページに戻って再試行します...`
+        )
+        if (topPageUrl) {
+          await page.goto(topPageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((e) => {
+            log(`トップページへの遷移に失敗しました(そのまま再試行します): ${String(e?.message || e)}`)
+          })
+        }
+      }
+    }
+  }
+  return draftError
+}
+
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
   // 2026-08-12追記: アプリ側が実績順に並べた候補セッションIDを先頭から
   // 順に試す。候補が無い場合(例: 同時実行回避時)は従来通りpreferredなしで
@@ -164,12 +203,15 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
   //
   // 2026-08-13追記(方針転換): 画像アップロードの失敗(net::ERR_ABORTED)は
   // 別のプロキシセッション(出口IP)に切り替えても同じ症状で再発することが
-  // 実機ログで確認され、特定の候補固有の問題ではないと分かった。にも
-  // 関わらず失敗のたびに別セッションで再ログインする挙動は、ログインを
-  // 不必要に繰り返すだけで(体感的にも望ましくなく)効果が薄いと判断し、
-  // 廃止する。以降、候補セッションの切り替えは「ログイン自体が失敗した
-  // 場合」(ID/パスワード相性・CAPTCHA等、セッションを変える意味がある
-  // ケース)のみに限定する。
+  // 実機ログで確認され、特定の候補固有の問題ではないと分かった。そのため
+  // 失敗1回ごとに別セッションで再ログインする挙動は廃止し、まずは同じ
+  // セッションのままログイン後のトップページに戻って最大
+  // MAX_DRAFT_ATTEMPTS_PER_SESSION回再試行する(tryDraftWithRetries)。
+  //
+  // 2026-08-13追記2: それでも全滅した場合は、実績(連続障害回数)による
+  // 順位付けに関わらず、候補リストの次のセッションID(=必ず別IP)へ強制的に
+  // 切り替えて再ログインする。実績ベースの並び替えだと同じセッションが
+  // また選ばれてしまい得るため、ここでは強制的に「次」を使う。
   const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
   const loginAttempts: LoginAttempt[] = []
 
@@ -182,18 +224,24 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
   let attempt = await attemptLogin(payload, log, candidates[0])
   if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
 
-  for (let i = 1; i < candidates.length && attempt.error; i++) {
+  let draftError: any = attempt.error ? null : new Error('未試行')
+  if (!attempt.error) draftError = await tryDraftWithRetries(attempt.page!, styleInput, log, attempt.topPageUrl)
+
+  for (let i = 1; i < candidates.length && (attempt.error || draftError); i++) {
+    const reason = attempt.error ? 'ログイン' : `スタイル下書き登録(${MAX_DRAFT_ATTEMPTS_PER_SESSION}回試行済み)`
     log(
-      `[プロキシ] セッションID(${candidates[i - 1]})でのログインに失敗したため、` +
-        `次の候補セッションID(${candidates[i]})で再試行します...`
+      `[プロキシ] セッションID(${candidates[i - 1]})での${reason}に失敗したため、` +
+        `実績に関わらず次の候補セッションID(${candidates[i]})へ強制的に切り替えて再ログインします...`
     )
     await closeAttempt(attempt)
     attempt = await attemptLogin(payload, log, candidates[i])
     loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+    draftError = attempt.error ? null : new Error('未試行')
+    if (!attempt.error) draftError = await tryDraftWithRetries(attempt.page!, styleInput, log, attempt.topPageUrl)
   }
 
   try {
-    const { page, proxySessionId, error: loginError, topPageUrl } = attempt
+    const { page, proxySessionId, error: loginError } = attempt
 
     if (loginError) {
       return {
@@ -203,36 +251,6 @@ async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<
         blocked: false,
         proxySessionId: null,
         loginAttempts
-      }
-    }
-
-    // 2026-08-13追記: ログイン成功後は同じブラウザ・同じセッションのまま
-    // 完結させる。下書き登録(画像アップロード含む)が失敗しても、再ログイン
-    // やセッション切り替えは行わず、ログイン後のトップページへ戻って
-    // 同じセッションのまま最初からやり直す。draftRegisterStyle()は
-    // doRegisterクリックまでSALON BOARD側に何も保存しない(新規スタイル
-    // 作成フォームを開くだけのクライアント側操作)ため、この範囲での
-    // やり直しに二重登録のリスクは無い。
-    const MAX_DRAFT_ATTEMPTS = 3
-    let draftError: any = null
-    for (let draftAttempt = 1; draftAttempt <= MAX_DRAFT_ATTEMPTS; draftAttempt++) {
-      try {
-        await draftRegisterStyle(page!, styleInput, log)
-        draftError = null
-        break
-      } catch (err: any) {
-        draftError = err
-        if (draftAttempt < MAX_DRAFT_ATTEMPTS) {
-          log(
-            `スタイル下書き登録(画像アップロード含む)に失敗したため(試行${draftAttempt}/${MAX_DRAFT_ATTEMPTS})、` +
-              `ログインのやり直しはせず、ログイン後のトップページに戻って再試行します...`
-          )
-          if (topPageUrl) {
-            await page!.goto(topPageUrl, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch((e) => {
-              log(`トップページへの遷移に失敗しました(そのまま再試行します): ${String(e?.message || e)}`)
-            })
-          }
-        }
       }
     }
 
