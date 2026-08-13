@@ -103,7 +103,26 @@ export type LaunchedBrowser = {
 export async function launchBrowser(sessionId?: string | null): Promise<LaunchedBrowser> {
   // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
   // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
-  const args = ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  //
+  // 2026-08-13追記(重大な手がかり): proxy-chain導入後もnet::ERR_ABORTED
+  // (canceled=true)による画像アップロード失敗が再発し、しかも候補セッションID
+  // (=出口IP)を切り替えても両方とも同じ症状で失敗することを実機ログで確認した。
+  // 特定のIPだけの一時的な問題ではなく、経路(トンネル)自体に起因する可能性が
+  // 高いと判断した。調査の結果、Chromeが salonboard.com とHTTP/2で通信しようと
+  // した際、proxy-chainのローカル取次サーバー(Node製・単純なTCPトンネル)が
+  // HTTP/2のストリーム多重化を正しく素通しできず、特に大きめのPOST(画像の
+  // multipartアップロード)のストリームだけが途中で終端される、という既知の
+  // 障害パターン(HTTPプロキシ経由でのHTTP/2アップロード断)に一致することが
+  // わかった。単純なGET(ログイン画面表示等)は問題にならず、doUploadのような
+  // POSTだけが失敗する非対称な症状とも整合する。HTTP/2を無効化しHTTP/1.1に
+  // 固定することで、プロキシトンネル越しの通信をより単純・安定にする。
+  const args = [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-http2',
+    '--disable-quic'
+  ]
 
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
