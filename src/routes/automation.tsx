@@ -306,13 +306,22 @@ automation.get('/style/test-run', requireAuth, async (c) => {
                       {formatJstDate(t.last_executed_at)}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    class="retry-btn flex-shrink-0 text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
-                    data-style-id={t.id}
-                  >
-                    <i class="fas fa-rotate-right mr-1"></i>再実行
-                  </button>
+                  <div class="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      type="button"
+                      class="retry-btn text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
+                      data-style-id={t.id}
+                    >
+                      <i class="fas fa-rotate-right mr-1"></i>再実行
+                    </button>
+                    <button
+                      type="button"
+                      class="delete-retry-target-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5"
+                      data-style-id={t.id}
+                    >
+                      <i class="fas fa-trash mr-1"></i>削除
+                    </button>
+                  </div>
                 </li>
               )
             })}
