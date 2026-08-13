@@ -631,11 +631,29 @@ async function uploadFrontImage(
         )
       }
     }
+    // 2026-08-13追記(診断用): proxy-chain化・別セッションへの切替・HTTP/2無効化の
+    // いずれを行ってもnet::ERR_ABORTED(canceled=true)が同一症状で再発したため、
+    // 経路(プロキシ/プロトコル)側の問題という仮説を疑い直す必要が生じた。
+    // canceled=trueはCDP上「読み込み元(ブラウザ/ページ側)によるキャンセル」を
+    // 意味する値であり、doUpload実行中にページ遷移(ナビゲーション)が走れば
+    // Chromeは自動的に未完了のリクエストを全キャンセルする。この可能性を
+    // 直接確認するため、Page domainのフレーム遷移イベントも合わせて記録する。
+    let navigationDuringUpload = false
+    const onCdpFrameNavigated = (params: any) => {
+      navigationDuringUpload = true
+      uploadEvents.push(`[診断] ページ遷移を検知: url=${params.frame?.url ?? '不明'}`)
+    }
+    const onCdpFrameStartedLoading = () => {
+      uploadEvents.push('[診断] フレームの再読み込み開始を検知(frameStartedLoading)')
+    }
     try {
       const client = await page.target().createCDPSession()
       await client.send('Network.enable')
+      await client.send('Page.enable')
       client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
       client.on('Network.loadingFailed', onCdpLoadingFailed)
+      client.on('Page.frameNavigated', onCdpFrameNavigated)
+      client.on('Page.frameStartedLoading', onCdpFrameStartedLoading)
       cdpClient = client as any
     } catch (e: any) {
       uploadEvents.push(`CDPセッション作成失敗(診断機能のみに影響): ${String(e?.message || e)}`)
@@ -700,7 +718,14 @@ async function uploadFrontImage(
             loadingLikeClasses: loadingLike,
             submitButtonStillInDom: !!submitButton,
             submitButtonDisabled: submitButton ? submitButton.disabled : null,
-            completionSpanText: completionSpan ? completionSpan.textContent : null
+            completionSpanText: completionSpan ? completionSpan.textContent : null,
+            // 2026-08-13追記(診断用): headless:falseだがXvfb上の仮想ディスプレイに
+            // 実ユーザー操作が無いため、salonboard側のJSがdocument.hidden/
+            // hasFocus()を見て非アクティブタブ扱いのXHRを中断している可能性を
+            // 確認するために記録する。
+            visibilityState: document.visibilityState,
+            hidden: document.hidden,
+            hasFocus: document.hasFocus()
           }
         })
         log(`[診断:DOM状態] クリック約0.5秒後: ${JSON.stringify(domSnapshot)}`)
@@ -722,9 +747,10 @@ async function uploadFrontImage(
         uploadEvents.length > 0
           ? uploadEvents.join(' / ')
           : `(doUploadへのリクエストが観測されませんでした) [例外内容] ${clickErrorMsg}`
+      const navFlag = navigationDuringUpload ? '[診断]アップロード中にページ遷移を検知=あり ' : '[診断]アップロード中にページ遷移を検知=なし '
       throw new Error(
         '画像アップロードに失敗しました(ファイル選択方式): アップロード完了(#FRONT_IMG_ID_IDへの値セット)を' +
-          `45秒待っても検知できませんでした [診断] ${diag}`
+          `45秒待っても検知できませんでした ${navFlag}[診断] ${diag}`
       )
     } finally {
       page.off('request', onRequestFinished)
@@ -733,6 +759,8 @@ async function uploadFrontImage(
       if (cdpClient) {
         cdpClient.off('Network.requestWillBeSent', onCdpRequestWillBeSent)
         cdpClient.off('Network.loadingFailed', onCdpLoadingFailed)
+        cdpClient.off('Page.frameNavigated', onCdpFrameNavigated)
+        cdpClient.off('Page.frameStartedLoading', onCdpFrameStartedLoading)
         await cdpClient.detach().catch(() => {})
       }
     }
