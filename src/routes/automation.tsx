@@ -93,7 +93,9 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // アップロード成功後に後続工程で失敗した場合はIP切り替えを行わず
 // 即座に打ち切るため、実際に5回すべて使い切るのはログイン失敗が
 // 連続するケースなど一部に限られる。候補生成数も合わせて5にする。
-const PROXY_CANDIDATE_COUNT = 5
+// 2026-08-13追記2(ユーザー指定): 3〜4回目の試行で成功する実例が確認できた
+// ため5→10に引き上げ。候補生成数も合わせる。
+const PROXY_CANDIDATE_COUNT = 10
 
 function randomSessionId(): string {
   return Math.random().toString(36).slice(2, 10)

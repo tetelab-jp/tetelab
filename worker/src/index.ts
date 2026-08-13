@@ -180,7 +180,12 @@ async function closeAttempt(attempt: LoginAttemptResult): Promise<void> {
 // (draftRegisterStyleがdraftError.afterUploadSuccess=trueを付けて
 // この状態を通知する)。打ち切られたスタイルは翌日以降の定期実行・
 // 手動実行で改めて対象になる。
-const MAX_ATTEMPTS_PER_STYLE = 5
+//
+// 2026-08-13追記2(ユーザー指定): 実機ログで3〜4回目の試行で成功する
+// パターンが確認できたため、上限をさらに5→10に引き上げる。アップロード
+// 成功後の打ち切りルールは変更なし(通信量浪費防止のため)。試行回数増加に
+// 伴い、style-post-runner.tsのsweepStaleJobsタイムアウトも10分→15分に延長済み。
+const MAX_ATTEMPTS_PER_STYLE = 10
 
 async function runJob(payload: JobPayload, log: (msg: string) => void): Promise<Omit<JobResult, 'logs'>> {
   const candidates = (payload.proxySessionCandidates || []).slice(0, MAX_ATTEMPTS_PER_STYLE)

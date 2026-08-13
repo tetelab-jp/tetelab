@@ -28,7 +28,7 @@ const DAILY_POST_LIMIT = 100
 // あることが実運用で判明した。そのため2件目以降は、前のジョブが完了する
 // (またはこの上限時間が経過する)まで待ってから順に投入する。
 const JOB_WAIT_POLL_INTERVAL_MS = 8000
-const JOB_WAIT_MAX_MS = 8 * 60 * 1000 // sweepStaleJobsの10分タイムアウトより少し短く設定
+const JOB_WAIT_MAX_MS = 13 * 60 * 1000 // sweepStaleJobsの15分タイムアウトより少し短く設定
 
 export type RunSummary = {
   runId: number
@@ -435,13 +435,16 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
 }
 
 /**
- * 一定時間(10分)以上結果コールバックが届かないジョブをタイムアウト扱いにする。
+ * 一定時間(15分)以上結果コールバックが届かないジョブをタイムアウト扱いにする。
  * cron-trigger-workerの1分間隔の呼び出しの中で、次のジョブ投入前に実行する。
+ * 2026-08-13追記: IP切替リトライを最大10回に増やしたため、1回あたり最悪
+ * 約45秒(アップロードタイムアウト)+試行間20秒の待機で、10回だと理論上
+ * 約11分かかりうる。旧来の10分では途中で打ち切られる恐れがあるため15分に延長。
  */
 export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
     `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
-     WHERE status IN ('pending', 'running') AND created_at < (now() - interval '10 minutes')`
+     WHERE status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   ).all<{ id: number; style_id: number; user_id: number; ecs_task_arn: string | null }>()
 
   const staleJobs = results || []
