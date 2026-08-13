@@ -154,11 +154,11 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
         <table class="w-full text-sm table-fixed">
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
-              <th class="py-2 pl-3 w-32">実行日時</th>
-              <th class="py-2 w-20">カテゴリ</th>
-              <th class="py-2 w-40">内容</th>
-              <th class="py-2 w-20">ステータス</th>
-              <th class="py-2">投稿ログ</th>
+              <th class="py-2 pl-3 w-[15%]">実行日時</th>
+              <th class="py-2 w-[10%]">カテゴリ</th>
+              <th class="py-2 w-[17%]">内容</th>
+              <th class="py-2 w-[8%]">ステータス</th>
+              <th class="py-2 w-1/2">投稿ログ</th>
             </tr>
           </thead>
           <tbody>
