@@ -5,6 +5,7 @@ import { signJwt, verifyJwt } from '../lib/jwt'
 import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth } from '../lib/admin-auth-middleware'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import { AdminPageLayout } from '../components/admin-layout'
+import sharp from 'sharp'
 import type { Bindings, AdminUser } from '../types'
 
 const admin = new Hono<{ Bindings: Bindings; Variables: { admin: AdminUser } }>()
@@ -883,6 +884,130 @@ admin.get('/admin/status/upload-failure-ratio', requireAdminAuth, async (c) => {
       </div>
     </AdminPageLayout>,
     { title: 'アップロード失敗段階の内訳' }
+  )
+})
+
+// 2026-08-13追記(一時的な調査用): S3に実際に保存されている画像そのものの
+// サイズ・寸法を直接確認するための診断ページ。ブラウザ表示やサロンボード側の
+// 表示用サムネイル生成に左右されず、「実際にアップロード時点でどう保存
+// されたか」を切り分けるために使う。imageIdはstyle_images.idで、
+// /style/image/:id と同じ値(URL末尾の数字)を指定する。
+admin.get('/admin/status/style-image-check', requireAdminAuth, async (c) => {
+  const adminUser = c.get('admin')
+  const imageIdRaw = c.req.query('imageId') || ''
+  const imageId = Number(imageIdRaw)
+
+  let result: {
+    imageId: number
+    r2Key: string
+    styleId: number
+    styleTitle: string | null
+    salonName: string | null
+    sourceType: string | null
+    compressedAt: string | null
+    contentType: string | null
+    byteLength: number
+    width: number | null
+    height: number | null
+  } | null = null
+  let errorMessage: string | null = null
+
+  if (imageIdRaw && Number.isFinite(imageId)) {
+    const row = await c.env.DB.prepare(
+      `SELECT si.id, si.r2_key, si.style_id, si.compressed_at, s.title AS style_title, s.source_type, u.salon_name
+       FROM style_images si
+       JOIN styles s ON s.id = si.style_id
+       JOIN users u ON u.id = s.user_id
+       WHERE si.id = ?`
+    )
+      .bind(imageId)
+      .first<{
+        id: number
+        r2_key: string
+        style_id: number
+        compressed_at: string | null
+        style_title: string | null
+        source_type: string | null
+        salon_name: string | null
+      }>()
+
+    if (!row) {
+      errorMessage = `style_images.id=${imageId} が見つかりませんでした`
+    } else {
+      const object = await c.env.STYLE_IMAGES.get(row.r2_key)
+      if (!object) {
+        errorMessage = `S3上にオブジェクトが見つかりませんでした(r2_key=${row.r2_key})`
+      } else {
+        const buffer = Buffer.from(await object.arrayBuffer())
+        const meta = await sharp(buffer).metadata()
+        result = {
+          imageId: row.id,
+          r2Key: row.r2_key,
+          styleId: row.style_id,
+          styleTitle: row.style_title,
+          salonName: row.salon_name,
+          sourceType: row.source_type,
+          compressedAt: row.compressed_at,
+          contentType: object.httpMetadata?.contentType ?? null,
+          byteLength: buffer.byteLength,
+          width: meta.width ?? null,
+          height: meta.height ?? null
+        }
+      }
+    }
+  }
+
+  return c.render(
+    <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="保存画像の実サイズ確認(一時調査用)">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4 max-w-xl">
+        <form method="get" action="/admin/status/style-image-check" class="flex gap-2">
+          <input
+            type="number"
+            name="imageId"
+            value={imageIdRaw}
+            placeholder="style_images.id (例: /style/image/10 の10)"
+            class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+          />
+          <button type="submit" class="px-4 py-2 rounded-lg bg-pink-500 hover:bg-pink-600 text-white text-sm font-medium">
+            確認
+          </button>
+        </form>
+
+        {errorMessage && <p class="text-sm text-red-600">{errorMessage}</p>}
+
+        {result && (
+          <div class="space-y-2 text-sm">
+            <p>
+              <span class="text-gray-400">サロン:</span> {result.salonName || '(未設定)'}
+            </p>
+            <p>
+              <span class="text-gray-400">スタイル:</span> No.{result.styleId} {result.styleTitle || '(無題)'}
+            </p>
+            <p>
+              <span class="text-gray-400">S3キー:</span> <code class="text-xs">{result.r2Key}</code>
+            </p>
+            <p>
+              <span class="text-gray-400">Content-Type:</span> {result.contentType || '(不明)'}
+            </p>
+            <p>
+              <span class="text-gray-400">取り込み元:</span>{' '}
+              {result.sourceType === 'imported_from_salon_board' ? 'サロンボードから取り込み' : result.sourceType || '(不明/手動作成)'}
+            </p>
+            <p>
+              <span class="text-gray-400">圧縮処理日時(compressed_at):</span> {result.compressedAt || '(未処理/NULL)'}
+            </p>
+            <div class="rounded-lg border border-pink-100 bg-pink-50 p-4 mt-2">
+              <p class="text-2xl font-bold text-pink-600">
+                {result.width} × {result.height} px / {(result.byteLength / 1024).toFixed(1)} KB
+              </p>
+              <p class="text-xs text-pink-400 mt-1">S3に実際に保存されているファイルの実測値です</p>
+            </div>
+            <img src={`/style/image/${result.imageId}`} class="max-w-xs rounded-lg border border-gray-200 mt-2" />
+          </div>
+        )}
+      </div>
+    </AdminPageLayout>,
+    { title: '保存画像の実サイズ確認' }
   )
 })
 
