@@ -323,6 +323,8 @@ type ScheduleState = {
   burst_remaining: number
   next_cursor_style_id: number | null
   paused_until: string | null
+  retry_pending_style_id: number | null
+  retry_pending_wait_slots: number
 }
 
 /**
@@ -358,9 +360,24 @@ async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, sc
  * 通常運転時はnext_cursor_style_idより登録順で後ろの最初の1件を選び、
  * 無ければ(カーソル未設定、または最後まで巡回し終えた場合)先頭に戻る。
  */
+const ELIGIBLE_STYLE_WHERE = `s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+     AND NOT EXISTS (SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running'))`
+
+/**
+ * 2026-08-14追記(ユーザー指定ルール): 失敗したスタイルを1回だけ再トライする
+ * 対象として、まだ有効(自動投稿ON・入力完了・進行中ジョブなし)かを確認する。
+ * OFFにされた・削除された等で無効になっていれば再トライ枠を無駄にせず
+ * 通常の巡回選定にフォールバックする。
+ */
+async function isStyleEligible(env: Bindings, userId: number, styleId: number): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT s.id FROM styles s WHERE ${ELIGIBLE_STYLE_WHERE} AND s.id = ?`)
+    .bind(userId, styleId)
+    .first<{ id: number }>()
+  return !!row
+}
+
 async function selectNextStyleId(env: Bindings, userId: number, schedule: ScheduleState): Promise<number | null> {
-  const baseWhere = `s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND NOT EXISTS (SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running'))`
+  const baseWhere = ELIGIBLE_STYLE_WHERE
 
   if (schedule.burst_remaining > 0) {
     const offset = INITIAL_BURST_COUNT - schedule.burst_remaining
@@ -411,7 +428,8 @@ export async function runNextStyleForUser(
   scheduledTimeLabel: string
 ): Promise<RunSummary | null> {
   const schedule = await env.DB.prepare(
-    `SELECT burst_remaining, next_cursor_style_id, paused_until FROM style_post_schedules WHERE user_id = ?`
+    `SELECT burst_remaining, next_cursor_style_id, paused_until, retry_pending_style_id, retry_pending_wait_slots
+     FROM style_post_schedules WHERE user_id = ?`
   )
     .bind(userId)
     .first<ScheduleState>()
@@ -421,7 +439,34 @@ export async function runNextStyleForUser(
 
   await requireCredentialsConfigured(env, userId)
 
-  const styleId = await selectNextStyleId(env, userId, schedule)
+  // 2026-08-14追記(ユーザー指定ルール): エラーが出たスタイルは、次のスタイルの
+  // 次のタイミングで1回だけ自動的に再トライする(通常のバースト/巡回選定より
+  // 優先する)。3回目の再トライは行わない(1回消費したら通常運転に戻す)。
+  // 例: No.1が失敗→No.2を通常通り投稿→No.1を再トライ→(結果に関わらず)以降は
+  // 通常の巡回に戻る。
+  const isBursting = schedule.burst_remaining > 0
+  let isRetrySlot = false
+  let styleId: number | null = null
+
+  if (!isBursting && schedule.retry_pending_style_id && schedule.retry_pending_wait_slots <= 0) {
+    if (await isStyleEligible(env, userId, schedule.retry_pending_style_id)) {
+      isRetrySlot = true
+      styleId = schedule.retry_pending_style_id
+    } else {
+      // 対象が既に無効(OFF・削除等)になっている場合は再トライ枠を放棄し、
+      // このスロットは通常の巡回選定にフォールバックする。
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, retry_pending_wait_slots = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(userId)
+        .run()
+      schedule.retry_pending_style_id = null
+    }
+  }
+
+  if (!styleId) {
+    styleId = await selectNextStyleId(env, userId, schedule)
+  }
   if (!styleId) return null
 
   const runInsert = await env.DB.prepare(
@@ -435,7 +480,15 @@ export async function runNextStyleForUser(
   try {
     await dispatchStylePostJob(env, userId, styleId, runId)
 
-    if (schedule.burst_remaining > 0) {
+    if (isRetrySlot) {
+      // 再トライ枠は使い切ったので消費し、通常の巡回カーソル/バーストには
+      // 影響させない(再トライは巡回順序から外れた割り込みのため)。
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, retry_pending_wait_slots = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(userId)
+        .run()
+    } else if (schedule.burst_remaining > 0) {
       await env.DB.prepare(
         `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
       )
@@ -443,7 +496,9 @@ export async function runNextStyleForUser(
         .run()
     } else {
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET next_cursor_style_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET next_cursor_style_id = ?,
+           retry_pending_wait_slots = GREATEST(retry_pending_wait_slots - 1, 0), updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`
       )
         .bind(styleId, userId)
         .run()

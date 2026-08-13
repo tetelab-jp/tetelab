@@ -274,6 +274,21 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(style_post_schedules拡張列)に失敗しました:', err)
   }
   try {
+    // 2026-08-14追記(ユーザー指定ルール、詳細はmigrations-pg/0015_*.sql参照):
+    // エラーが出たスタイルを「次のスタイルの次」に1回だけ自動で再トライする
+    // ための予約状態。retry_pending_style_id: 再トライ対象のスタイルID、
+    // retry_pending_wait_slots: 再トライまでにあと何回、通常の巡回投稿を
+    // 挟む必要があるか(1=次の巡回を1回挟んでから再トライ)。
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_style_id INTEGER`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_wait_slots INTEGER NOT NULL DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_post_schedules再トライ列)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

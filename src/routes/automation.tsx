@@ -666,6 +666,21 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 
   await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
 
+  // 2026-08-14追記(ユーザー指定ルール): エラーが出たスタイルは、次のスタイルの
+  // 次のタイミングで1回だけ自動的に再トライする(style-post-runner.tsの
+  // runNextStyleForUser参照)。既に別の再トライが予約されている場合は
+  // 上書きしない(同時に1件のみ管理し、再トライが再トライを生む連鎖を防ぐ)。
+  if (jobStatus !== 'success') {
+    await c.env.DB
+      .prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = ?, retry_pending_wait_slots = 1, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ? AND retry_pending_style_id IS NULL`
+      )
+      .bind(styleId, userId)
+      .run()
+      .catch(() => {})
+  }
+
   await c.env.DB.prepare(
     `UPDATE style_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
   )
