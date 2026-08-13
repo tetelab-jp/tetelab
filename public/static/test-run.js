@@ -62,3 +62,25 @@ document.querySelectorAll('.retry-btn').forEach(function (btn) {
     }
   })
 })
+
+document.querySelectorAll('.delete-retry-target-btn').forEach(function (btn) {
+  btn.addEventListener('click', async function () {
+    if (!confirm('このスタイルを削除しますか？(登録画像も削除されます)')) return
+    var styleId = btn.getAttribute('data-style-id')
+    btn.disabled = true
+    try {
+      var res = await fetch('/style/library/delete/' + styleId, { method: 'POST' })
+      var data = await res.json()
+      if (!data.success) {
+        alert('削除に失敗しました: ' + (data.error || '不明なエラー'))
+        btn.disabled = false
+        return
+      }
+    } catch (e) {
+      alert('通信エラーが発生しました')
+      btn.disabled = false
+      return
+    }
+    location.reload()
+  })
+})
