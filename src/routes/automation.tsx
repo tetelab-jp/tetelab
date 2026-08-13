@@ -109,8 +109,17 @@ const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }
 // ため5→10に引き上げ。候補生成数も合わせる。
 const PROXY_CANDIDATE_COUNT = 10
 
+// 2026-08-13追記(IPホワイトリスト認証方式へ全面変更): DataImpulseへの接続を
+// ID/パスワード認証からIPホワイトリスト認証(worker側のFargateタスクを
+// NATゲートウェイ経由の固定IPにし、そのIPをDataImpulse側で許可する方式。
+// infra/nat-gateway.tf参照)に切り替えたことに伴い、セッション(同一出口IP
+// の維持単位)の指定方法もユーザー名へのパラメータ埋め込みから、接続先の
+// ポート番号(10000〜20000の範囲、1ポート=1セッション、既定で約30分間
+// 同じ出口IPを維持)に変わった。そのため候補セッションIDは、この範囲の
+// ポート番号として生成する(worker/src/salonboard-automation.tsのlaunchBrowser
+// 参照)。
 function randomSessionId(): string {
-  return Math.random().toString(36).slice(2, 10)
+  return String(10000 + Math.floor(Math.random() * 10000))
 }
 
 // ---------- 手動実行・履歴画面 ----------

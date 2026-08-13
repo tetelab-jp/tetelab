@@ -16,9 +16,7 @@
 import type { Browser, ElementHandle, Page } from 'puppeteer'
 import puppeteerExtra from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain'
 export type { Browser, Page }
-export { closeAnonymizedProxy }
 
 // 2026-08-10追記: navigator.webdriver等の手動パッチだけではSALON BOARDの
 // Akamai系ボット対策を回避できないことが実機検証(プロキシでIPを変えても
@@ -51,24 +49,19 @@ export type StylePostResult = {
   message: string
 }
 
-/**
- * SALONBOARD_PROXY_SERVER(例: "http://host:port"、スキーム省略も可)に
- * ユーザー名/パスワードを埋め込んだ完全なURLを組み立てる。
- */
-function buildAuthenticatedProxyUrl(serverValue: string, username: string, password: string): string {
-  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(serverValue) ? serverValue : `http://${serverValue}`
-  const url = new URL(withScheme)
-  url.username = encodeURIComponent(username)
-  url.password = encodeURIComponent(password)
-  return url.toString()
-}
-
 export type LaunchedBrowser = {
   browser: Browser
-  // ログイン成功実績の記録に使う、実際に使ったプロキシセッションID
+  // ログイン成功実績の記録に使う、実際に使ったプロキシセッション(ポート番号)
   proxySessionId: string | null
-  // finally節でcloseAnonymizedProxy()に渡し、後片付けするために保持する
-  anonymizedProxyUrl: string | null
+}
+
+/**
+ * SALONBOARD_PROXY_SERVER(例: "gw.dataimpulse.com"、"http://gw.dataimpulse.com:823"
+ * のようにスキーム/ポート付きで設定されていても可)からホスト名だけを取り出す。
+ */
+function extractProxyHost(serverValue: string): string {
+  const withoutScheme = serverValue.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '')
+  return withoutScheme.split(':')[0].split('/')[0]
 }
 
 /**
@@ -76,43 +69,34 @@ export type LaunchedBrowser = {
  * ジョブ1件につきタスク1つを使い捨てる運用のため、同時起動数の
  * リトライ制御(Cloudflare Browser Rendering版にあった429対応)は不要。
  *
- * 2026-08-13追記(page.authenticate方式からproxy-chain方式へ全面変更):
- * 従来はブラウザに直接プロキシの認証情報を渡す page.authenticate() を
- * 使っていたが、これは内部でCDPのFetch domain傍受を強制的に有効化する。
- * 傍受モードは大きめのPOSTボディ(doUploadの画像アップロード等)を継続
- * (continue)する際に本文を取りこぼし、接続がリセットされる
- * (net::ERR_EMPTY_RESPONSE / net::ERR_ABORTED)ことが実機で繰り返し
- * 確認された。画像圧縮(300KB以下への正規化)後もこの症状が再発したため、
- * 圧縮は対症療法に過ぎず、傍受モード自体を発生させない方式に変更する。
+ * 2026-08-13追記(IPホワイトリスト認証方式へ全面変更):
+ * これまではID/パスワードを使った認証(page.authenticate()、後にproxy-chain
+ * による中継)を使っていたが、page.authenticate()はCDPのFetch domain傍受を
+ * 強制的に有効化し大きいPOSTボディを壊す不具合があり、その回避策の
+ * proxy-chain中継も同じコンテナ内で繰り返し起動する過程で経路が不安定になる
+ * (10回中10回とも異なる出口IPで同じ症状が再発する)ことが実機調査で分かった。
  *
- * proxy-chain(npm)のanonymizeProxy()は、認証情報込みの上流プロキシURLを
- * 渡すと、同じコンテナ内に認証不要のローカル取次サーバー(127.0.0.1:port)を
- * 立ち上げて返す。ブラウザにはこのローカルアドレスだけを渡すため、
- * page.authenticate()を呼ぶ必要が無くなり(=Fetch domain傍受も発生しない)、
- * 大きなPOSTボディも素直に流れることを期待する。
+ * 根本対策として、AWS側にNATゲートウェイを追加しworkerタスクの送信元IPを
+ * 固定化し(infra/nat-gateway.tf参照)、その固定IPをDataImpulse側の
+ * 「ホワイトリストIP」に登録した。この方式ではID/パスワードを一切送らずに
+ * プロキシへ直接接続でき(page.authenticate()もproxy-chainの中継も不要)、
+ * これまでの不具合の原因を経路ごと取り除ける。
  *
- * セッションID(出口IP固定用)は、以前はブラウザ起動後にnewAutomationPage()
- * 側で決めていたが、proxy-chain方式ではローカル取次サーバーのアドレスが
- * ブラウザ起動時の--proxy-serverに必要なため、この関数の引数として先に
- * 受け取る必要がある(呼び出し側=index.tsのrunJob()で候補セッションIDを
- * 決めてから渡す)。
+ * 国指定(日本国内IP)はDataImpulseダッシュボードの「デフォルトターゲティング」
+ * 設定(Japan)がホワイトリスト接続にもそのまま適用されるため、コード側で
+ * 指定する必要はない。セッション固定(同一出口IPの維持)はユーザー名への
+ * パラメータ埋め込みではなく、接続先の**ポート番号**(10000〜20000の範囲、
+ * 1ポート=1セッション)で行う方式に変わったため、候補セッションIDは
+ * この範囲のポート番号として扱う(automation.tsxのrandomSessionId()参照)。
  */
 export async function launchBrowser(sessionId?: string | null): Promise<LaunchedBrowser> {
   // --disable-dev-shm-usage: Fargateコンテナは/dev/shmが小さく、既定のままだと
   // Chromeがクラッシュすることがあるため無効化する(Docker上のPuppeteerでの定石)。
   //
-  // 2026-08-13追記(重大な手がかり): proxy-chain導入後もnet::ERR_ABORTED
-  // (canceled=true)による画像アップロード失敗が再発し、しかも候補セッションID
-  // (=出口IP)を切り替えても両方とも同じ症状で失敗することを実機ログで確認した。
-  // 特定のIPだけの一時的な問題ではなく、経路(トンネル)自体に起因する可能性が
-  // 高いと判断した。調査の結果、Chromeが salonboard.com とHTTP/2で通信しようと
-  // した際、proxy-chainのローカル取次サーバー(Node製・単純なTCPトンネル)が
-  // HTTP/2のストリーム多重化を正しく素通しできず、特に大きめのPOST(画像の
-  // multipartアップロード)のストリームだけが途中で終端される、という既知の
-  // 障害パターン(HTTPプロキシ経由でのHTTP/2アップロード断)に一致することが
-  // わかった。単純なGET(ログイン画面表示等)は問題にならず、doUploadのような
-  // POSTだけが失敗する非対称な症状とも整合する。HTTP/2を無効化しHTTP/1.1に
-  // 固定することで、プロキシトンネル越しの通信をより単純・安定にする。
+  // HTTP/2無効化はproxy-chainのローカル中継サーバー(単純なTCPトンネル)が
+  // ストリーム多重化を正しく素通しできない問題への対策として導入したもの。
+  // プロキシへ直接接続する現方式ではこの問題自体が起こらないはずだが、
+  // 他の変更点と切り分けるため、当面はそのまま残しHTTP/1.1に固定しておく。
   // 2026-08-13追記(通信量削減): DataImpulseの利用状況(実データ)を分析した
   // ところ、1日の総通信量(約1.2GB)のうち約3割(約340MB)が、サロンボード本体
   // (salonboard.com/imgbp.salonboard.com)とは無関係な広告・分析タグや
@@ -156,33 +140,19 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
   ]
 
   const proxyServer = process.env.SALONBOARD_PROXY_SERVER
-  const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
-  const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
 
   let proxySessionId: string | null = null
-  let anonymizedProxyUrl: string | null = null
 
-  if (proxyServer && proxyUsername && proxyPassword) {
-    proxySessionId = sessionId || Math.random().toString(36).slice(2, 10)
-    // 2026-08-13追記(Bright Data→DataImpulseへ契約変更): セッションID
-    // (同一出口IPを維持する単位)の指定方法がプロバイダごとに異なる。
-    // Bright Dataは`-session-<ID>`というユーザー名サフィックスだったが、
-    // DataImpulseは`__cr.<国>;sessid.<ID>`という書式(二重アンダースコアで
-    // パラメータ開始、`;`区切りで複数指定)。`cr.jp`で日本国内IPを明示し、
-    // `sessttl.30`でセッション維持時間を明示指定する(ダッシュボード側の
-    // ローテーション間隔設定に頼ると、設定切替時にリセットされる事例が
-    // 実際にあったため、コード側でも保険として明示しておく)。
-    // 参考: https://docs.dataimpulse.com/proxies/parameters/session-id
-    const sessionUsername = `${proxyUsername}__cr.jp;sessid.${proxySessionId};sessttl.30`
-    const upstreamUrl = buildAuthenticatedProxyUrl(proxyServer, sessionUsername, proxyPassword)
-    anonymizedProxyUrl = await anonymizeProxy(upstreamUrl)
-    args.push(`--proxy-server=${anonymizedProxyUrl}`)
+  if (proxyServer) {
+    const proxyHost = extractProxyHost(proxyServer)
+    // 呼び出し側(index.tsのrunJob())が候補ポート番号(10000〜20000)を
+    // 渡してくる。無指定の場合はこの関数側でランダムに1つ選ぶ。
+    proxySessionId = sessionId || String(10000 + Math.floor(Math.random() * 10000))
+    args.push(`--proxy-server=http://${proxyHost}:${proxySessionId}`)
     console.log(
-      `[launchBrowser] プロキシ経由で起動(proxy-chain中継): セッションID=${proxySessionId}` +
+      `[launchBrowser] プロキシ経由で起動(IPホワイトリスト認証・直接接続): ポート=${proxySessionId}` +
         `${sessionId ? '(固定・前回成功実績あり)' : '(新規発行)'}`
     )
-  } else if (proxyServer) {
-    console.log('[launchBrowser] SALONBOARD_PROXY_USERNAME/PASSWORDが未設定のため直接アクセスで起動')
   } else {
     console.log('[launchBrowser] プロキシ未設定、直接アクセスで起動')
   }
@@ -195,7 +165,7 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
     args
   })
 
-  return { browser, proxySessionId, anonymizedProxyUrl }
+  return { browser, proxySessionId }
 }
 
 /**
@@ -207,7 +177,7 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
  * headlessで動かす都合上、典型的なheadless検知ポイント(navigator.webdriver・
  * User-Agent・viewport等)を可能な範囲でごまかす。
  *
- * プロキシ認証(proxy-chainのローカル取次サーバーへの接続)は認証不要のため、
+ * プロキシ認証はIPホワイトリスト方式(認証情報を一切送らない)のため、
  * ここではpage.authenticate()を呼ばない(launchBrowser()参照)。
  */
 export async function newAutomationPage(browser: Browser, log?: AutomationLogger): Promise<Page> {
