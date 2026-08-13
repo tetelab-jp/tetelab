@@ -590,9 +590,18 @@ async function uploadFrontImage(
     // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
     // 記録する。プロキシ経由での大きめのPOST(画像バイナリ)がハング/切断されて
     // いるのか、サーバー側がエラーを返しているのかを切り分けるため。
+    //
+    // 2026-08-13追記3: Puppeteerの高レベルAPI(page.on('request')等)と生の
+    // CDPイベントとでは配送経路の内部処理が異なり、実際の発生順序とログへの
+    // 追記順序が一致しない場合があることがわかった(ページ遷移検知がリクエスト
+    // 送信より先に記録されたが、本当に先に起きたのかは配列の並びだけからは
+    // 断定できない)。各イベントに発生時刻(アップロード試行開始からの経過ms)を
+    // 付けて、真の時系列を後から復元できるようにする。
+    const uploadStartedAt = Date.now()
     const uploadEvents: string[] = []
+    const pushEvent = (msg: string) => uploadEvents.push(`+${Date.now() - uploadStartedAt}ms ${msg}`)
     const onRequestFinished = (req: any) => {
-      if (/doUpload/i.test(req.url())) uploadEvents.push(`request送信: ${req.method()} ${req.url()}`)
+      if (/doUpload/i.test(req.url())) pushEvent(`request送信: ${req.method()} ${req.url()}`)
     }
     const onResponse = async (res: any) => {
       if (/doUpload/i.test(res.url())) {
@@ -600,12 +609,12 @@ async function uploadFrontImage(
         try {
           bodySnippet = (await res.text()).slice(0, 300)
         } catch {}
-        uploadEvents.push(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
+        pushEvent(`response受信: status=${res.status()} url=${res.url()} body="${bodySnippet}"`)
       }
     }
     const onRequestFailed = (req: any) => {
       if (/doUpload/i.test(req.url())) {
-        uploadEvents.push(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
+        pushEvent(`request失敗: ${req.url()} -> ${req.failure?.()?.errorText ?? '不明'}`)
       }
     }
     page.on('request', onRequestFinished)
@@ -625,7 +634,7 @@ async function uploadFrontImage(
     const onCdpLoadingFailed = (params: any) => {
       const url = cdpRequestUrls.get(params.requestId) ?? ''
       if (/doUpload/i.test(url)) {
-        uploadEvents.push(
+        pushEvent(
           `CDP loadingFailed: errorText=${params.errorText} canceled=${params.canceled} ` +
             `blockedReason=${params.blockedReason ?? 'なし'} type=${params.type}`
         )
@@ -638,18 +647,38 @@ async function uploadFrontImage(
     // 意味する値であり、doUpload実行中にページ遷移(ナビゲーション)が走れば
     // Chromeは自動的に未完了のリクエストを全キャンセルする。この可能性を
     // 直接確認するため、Page domainのフレーム遷移イベントも合わせて記録する。
+    //
+    // 2026-08-13追記2: 実機ログでabout:blankへの遷移が実際に検知された
+    // (frameStartedLoadingも2回発火)。ただしメインフレームなのか、無関係な
+    // 別iframe(広告/解析等)のリロードなのかで意味が全く異なる
+    // (別iframeのナビゲーションはそのiframe自身が発行したリクエストしか
+    // キャンセルしない)。両者を区別するため、メインフレームIDを事前に
+    // 取得しておき、遷移したフレームがメインかどうか・parentIdの有無を記録する。
     let navigationDuringUpload = false
+    let mainFrameId: string | null = null
     const onCdpFrameNavigated = (params: any) => {
       navigationDuringUpload = true
-      uploadEvents.push(`[診断] ページ遷移を検知: url=${params.frame?.url ?? '不明'}`)
+      const frameId = params.frame?.id ?? '不明'
+      const parentId = params.frame?.parentId ?? null
+      const isMainFrame = mainFrameId ? frameId === mainFrameId : parentId === null
+      pushEvent(
+        `[診断] ページ遷移を検知: url=${params.frame?.url ?? '不明'} frameId=${frameId} ` +
+          `parentId=${parentId ?? 'なし(トップレベル)'} メインフレーム判定=${isMainFrame ? 'はい' : 'いいえ(サブフレーム)'}`
+      )
     }
-    const onCdpFrameStartedLoading = () => {
-      uploadEvents.push('[診断] フレームの再読み込み開始を検知(frameStartedLoading)')
+    const onCdpFrameStartedLoading = (params: any) => {
+      const frameId = params.frameId ?? '不明'
+      const isMainFrame = mainFrameId ? frameId === mainFrameId : '不明'
+      pushEvent(`[診断] フレームの再読み込み開始を検知(frameStartedLoading) frameId=${frameId} メインフレーム判定=${isMainFrame}`)
     }
     try {
       const client = await page.target().createCDPSession()
       await client.send('Network.enable')
       await client.send('Page.enable')
+      try {
+        const frameTree: any = await client.send('Page.getFrameTree')
+        mainFrameId = frameTree?.frameTree?.frame?.id ?? null
+      } catch {}
       client.on('Network.requestWillBeSent', onCdpRequestWillBeSent)
       client.on('Network.loadingFailed', onCdpLoadingFailed)
       client.on('Page.frameNavigated', onCdpFrameNavigated)
