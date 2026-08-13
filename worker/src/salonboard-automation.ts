@@ -130,7 +130,16 @@ export async function launchBrowser(sessionId?: string | null): Promise<Launched
 
   if (proxyServer && proxyUsername && proxyPassword) {
     proxySessionId = sessionId || Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${proxySessionId}`
+    // 2026-08-13追記(Bright Data→DataImpulseへ契約変更): セッションID
+    // (同一出口IPを維持する単位)の指定方法がプロバイダごとに異なる。
+    // Bright Dataは`-session-<ID>`というユーザー名サフィックスだったが、
+    // DataImpulseは`__cr.<国>;sessid.<ID>`という書式(二重アンダースコアで
+    // パラメータ開始、`;`区切りで複数指定)。`cr.jp`で日本国内IPを明示し、
+    // `sessttl.30`でセッション維持時間を明示指定する(ダッシュボード側の
+    // ローテーション間隔設定に頼ると、設定切替時にリセットされる事例が
+    // 実際にあったため、コード側でも保険として明示しておく)。
+    // 参考: https://docs.dataimpulse.com/proxies/parameters/session-id
+    const sessionUsername = `${proxyUsername}__cr.jp;sessid.${proxySessionId};sessttl.30`
     const upstreamUrl = buildAuthenticatedProxyUrl(proxyServer, sessionUsername, proxyPassword)
     anonymizedProxyUrl = await anonymizeProxy(upstreamUrl)
     args.push(`--proxy-server=${anonymizedProxyUrl}`)
