@@ -16,9 +16,6 @@
 import type { Browser, ElementHandle, Page } from 'puppeteer'
 import puppeteerExtra from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
-import { writeFile, unlink } from 'node:fs/promises'
-import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { anonymizeProxy, closeAnonymizedProxy } from 'proxy-chain'
 export type { Browser, Page }
 export { closeAnonymizedProxy }
@@ -282,7 +279,11 @@ export async function loginToSalonBoard(
  * 1件のスタイル画像を「登録(下書き保存)」する。
  * 反映申請は含まない(別途 submitReflectApplication を呼ぶ必要がある)。
  */
-export async function draftRegisterStyle(page: Page, input: StylePostInput, log: AutomationLogger): Promise<void> {
+export async function draftRegisterStyle(
+  page: Page,
+  input: StylePostInput,
+  log: AutomationLogger
+): Promise<void> {
   log('スタイル一覧ページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/CNB/draft/styleList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
 
@@ -560,31 +561,38 @@ async function uploadFrontImage(
     throw new Error('画像アップロードに失敗しました(ファイル選択方式): #formFile が見つかりませんでした')
   }
 
-  // 画像を一時ファイルに書き出し、実ファイルとしてuploadFile()に渡す
-  // (CDPのDOM.setFileInputFilesは実ファイルパスが必須のため)。
-  //
-  // 2026-08-11修正(重大バグ): 従来はuploadFile()呼び出し直後のfinallyで
-  // 一時ファイルを削除していたが、実際のdoUpload通信は後続の「登録する」
-  // ボタンをクリックした時点で発生する。そのため通信が走る時点では参照先の
-  // 一時ファイルが既に削除済みになっており、毎回net::ERR_FILE_NOT_FOUNDで
-  // 失敗していた(実機ログで確認)。削除はアップロード完了検知まで含めた
-  // 一連の処理全体が終わった後に行うよう修正する。
-  const tmpPath = join(tmpdir(), `salonboard-upload-${Date.now()}-${fileName.replace(/[^\w.\-]/g, '_')}`)
-  await writeFile(tmpPath, Buffer.from(imageBuffer))
   log(`アップロード画像サイズ: ${(imageBuffer.byteLength / 1024).toFixed(1)}KB`)
-  try {
-    // 2026-08-13追記(方針転換): 従来はnet::ERR_ABORTED/ERR_EMPTY_RESPONSE等の
-    // 失敗時、同じブラウザ・同じプロキシセッション(出口IP)のまま「モーダルを
-    // 開き直してファイル再選択」を最大3回繰り返していたが、実機ログで
-    // 3回とも同じエラーで失敗する事例が確認された。これは同一IPに固有の
-    // 一時的な問題である可能性が高く、同じIPのまま何度粘っても回復しない
-    // ため、画面内リトライは廃止し1回だけ試行する。失敗時は例外をそのまま
-    // 呼び出し元(index.tsのrunJob)へ伝播させ、ブラウザContextを閉じて
-    // 別のプロキシセッションID(=別の出口IP)で最初から(ログインからやり直し)
-    // 再試行する(runJob側で候補セッション数の予算内で実施)。
-    log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
-    await fileInput.uploadFile(tmpPath)
-    await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+  {
+    // 2026-08-13追記(方針転換①): 従来はuploadFile()(内部的にCDPの
+    // DOM.setFileInputFilesを使用)で実ファイルパスを渡していたが、これは
+    // Chromiumの内部実装上、実ファイルからのストリーム読み込みという
+    // uploadFile()特有の経路を通る。プロキシ/HTTP2無効化等の経路側の対策を
+    // 尽くしてもnet::ERR_ABORTEDが再発したことから、この経路自体に問題が
+    // ある可能性を疑い、ページ内JavaScriptでFile/DataTransferオブジェクトを
+    // 直接組み立てて<input>の.filesにセットする方式に変更する(実ファイルを
+    // 一切介さない)。これによりuploadFile()/CDPのDOM.setFileInputFilesを
+    // 完全に迂回できる。
+    const base64Image = Buffer.from(imageBuffer).toString('base64')
+    await fileInput.evaluate(
+      (el, args) => {
+        const input = el as HTMLInputElement
+        const binary = atob(args.base64)
+        const bytes = new Uint8Array(binary.length)
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+        const file = new File([bytes], args.fileName, { type: 'image/jpeg' })
+        const dataTransfer = new DataTransfer()
+        dataTransfer.items.add(file)
+        input.files = dataTransfer.files
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+      },
+      { base64: base64Image, fileName }
+    )
+  }
+  log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
+  await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+
+  {
 
     // 2026-08-11追記(診断用): アップロード完了検知が45秒タイムアウトする障害が
     // 発生したため、実際にdoUploadリクエストが送信されたか・どう終わったかを
@@ -793,8 +801,6 @@ async function uploadFrontImage(
         await cdpClient.detach().catch(() => {})
       }
     }
-  } finally {
-    await unlink(tmpPath).catch(() => {})
   }
 
   const imageId = await page.evaluate(() => document.getElementById('FRONT_IMG_ID_ID')?.textContent?.trim() ?? '')
