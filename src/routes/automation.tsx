@@ -59,43 +59,25 @@ function arrayBufferToBase64(buf: ArrayBuffer): string {
 
 const automation = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 
-// 2026-08-12追記: Bright Dataのプロキシ契約を確認したところ、実際には
-// 少数(5個)の専用固定IPのプールであることが判明した(一般家庭回線を
-// 都度借りるローテーション型ではない)。そのため「新しいセッションID=
-// 未知のIP」ではなく、常にこの5つの中のどれかを使うことになる。
-// このプール内の各セッションIDごとに連続障害回数を記録し(DB:
-// proxy_session_pool_stats)、その時点で最も調子の良い(連続障害回数が
-// 最小の)ものを優先的に選ぶ。台数が変わった場合はこの配列を更新する。
-// 2026-08-12追記(重大バグ修正): セッションIDにハイフン(-)を含めると、
-// Bright Data側のユーザー名解析(brd-customer-...-session-<ID>という
-// 形式でIDを読み取る仕組み)がID内のハイフンを別パラメータの区切りと
-// 誤認識し、HTTP 407(プロキシ認証エラー)で全滅する不具合があった。
-// そのため英数字のみのIDに変更する。
-const PROXY_SESSION_POOL = ['salonmotionpool1', 'salonmotionpool2', 'salonmotionpool3', 'salonmotionpool4', 'salonmotionpool5']
+// 2026-08-12追記: 当時のBright Data契約が少数(5個)の専用固定IPのプールだった
+// ため、「新しいセッションID=未知のIP」ではなく常にこの5つの中のどれかを
+// 使うことになっていた。そのためプール内の各セッションIDごとに連続障害回数を
+// 記録し(DB: proxy_session_pool_stats)、その時点で最も調子の良いものを
+// 優先的に選ぶ仕組みにしていた。
+//
+// 2026-08-13追記(方針転換): プロキシ契約をDataImpulse(日本国内だけで
+// 2,300IPの大きなレジデンシャルプール)へ変更した。実機ログで「1件目の
+// 投稿は成功、直後の2件目は同じ症状(net::ERR_ABORTED)で失敗」という
+// パターンが確認され、固定プール運用時代の「調子の良いIPを使い回す」
+// 選び方そのものが、直前に使ったIPをSALON BOARD/Akamai側に警戒される
+// 原因になっている可能性が浮上した。プールが十分大きいDataImpulseでは
+// IPを使い回す利点がそもそも無いため、実績追跡(proxy_session_pool_stats)は
+// 廃止し、ジョブ(投稿1回)ごとに毎回ランダムな新しいセッションIDを
+// 生成するだけのシンプルな方式に変更する。
+const PROXY_CANDIDATE_COUNT = 5
 
-async function markProxySessionSuccess(env: Bindings, userId: number, sessionId: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-     VALUES (?, ?, 0, 'success', CURRENT_TIMESTAMP)
-     ON CONFLICT (user_id, session_id) DO UPDATE SET
-       consecutive_fail_count = 0, last_result = 'success', last_used_at = CURRENT_TIMESTAMP`
-  )
-    .bind(userId, sessionId)
-    .run()
-    .catch(() => {})
-}
-
-async function markProxySessionFailure(env: Bindings, userId: number, sessionId: string, reason: string): Promise<void> {
-  await env.DB.prepare(
-    `INSERT INTO proxy_session_pool_stats (user_id, session_id, consecutive_fail_count, last_result, last_used_at)
-     VALUES (?, ?, 1, ?, CURRENT_TIMESTAMP)
-     ON CONFLICT (user_id, session_id) DO UPDATE SET
-       consecutive_fail_count = proxy_session_pool_stats.consecutive_fail_count + 1,
-       last_result = ?, last_used_at = CURRENT_TIMESTAMP`
-  )
-    .bind(userId, sessionId, reason, reason)
-    .run()
-    .catch(() => {})
+function randomSessionId(): string {
+  return Math.random().toString(36).slice(2, 10)
 }
 
 // ---------- 手動実行・履歴画面 ----------
@@ -464,39 +446,16 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .run()
 
-  // 手動実行で複数スタイルを同時投入すると、複数のFargateタスクが同じ
-  // 「直近成功実績のあるプロキシセッションID(出口IP固定)」を同時に使い回し、
-  // 特に画像アップロードのリクエストがnet::ERR_EMPTY_RESPONSEで失敗する事例を
-  // 確認した(プロキシ側が同一セッションへの同時並行リクエストを捌けていない
-  // 可能性が高い)。同じユーザーで他に実行中のジョブがある場合は、セッション
-  // 使い回しを行わず、ワーカー側に新規セッションを選ばせて競合を避ける。
-  const concurrentRunningRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM style_post_jobs WHERE user_id = ? AND status = 'running' AND id != ?`
-  )
-    .bind(job.user_id, jobId)
-    .first<{ cnt: number }>()
-  const hasConcurrentJob = (concurrentRunningRow?.cnt ?? 0) > 0
-
-  // プール内の各セッションIDを連続障害回数の昇順(=調子の良い順)に並べ、
-  // ワーカー側に候補リストとして渡す。ワーカーは先頭から順にログインを
-  // 試し、失敗した候補もその成否をアプリ側へ報告するため、途中で失敗した
-  // 候補の実績も取りこぼさず記録できる(記録が無いものは0回として扱う。
-  // 同点の場合は配列の元の並び順を優先し、健全な間はできるだけ同じ
-  // セッションを使い続ける)。
-  const poolStats = await c.env.DB.prepare(
-    `SELECT session_id, consecutive_fail_count FROM proxy_session_pool_stats WHERE user_id = ?`
-  )
-    .bind(job.user_id)
-    .all<{ session_id: string; consecutive_fail_count: number }>()
-  const failCounts = new Map((poolStats.results || []).map((r) => [r.session_id, r.consecutive_fail_count]))
-  const proxySessionCandidates = [...PROXY_SESSION_POOL].sort(
-    (a, b) => (failCounts.get(a) ?? 0) - (failCounts.get(b) ?? 0)
-  )
+  // ジョブ(投稿1回)ごとに毎回ランダムな新しいセッションIDを生成する。
+  // 固定プール運用時代と違い実績追跡は行わない(理由は上のコメント参照)。
+  // 複数ジョブが同時実行されても、それぞれ別のランダムIDになるため
+  // セッションの取り合いは起きない。
+  const proxySessionCandidates = Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
 
   return c.json({
     loginId,
     password,
-    proxySessionCandidates: hasConcurrentJob ? undefined : proxySessionCandidates,
+    proxySessionCandidates,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -562,32 +521,6 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(userId)
       .run()
       .catch(() => {})
-  }
-
-  // 2026-08-12追記: プロキシは少数(5個)の専用固定IPプールのため、
-  // 使われたセッションID(=プールの1メンバー)ごとに連続障害回数を記録する。
-  // ワーカーはログイン候補を先頭から順に試すため、途中で失敗した候補
-  // (最終的に使われなかったもの)もloginAttemptsに含まれる。これを
-  // 先に処理しないと、ログインで失敗したセッションの実績が記録されず
-  // 何度も選ばれ続けてしまう。その後、最終的に使われたセッション
-  // (body.proxySessionId)について、ジョブ全体の成否を反映する。
-  // プール外のセッションID(同時実行回避時などのフォールバック)は対象外。
-  for (const attempt of body.loginAttempts || []) {
-    if (!PROXY_SESSION_POOL.includes(attempt.sessionId)) continue
-    if (attempt.success) {
-      await markProxySessionSuccess(c.env, userId, attempt.sessionId)
-    } else {
-      await markProxySessionFailure(c.env, userId, attempt.sessionId, 'login_failed')
-    }
-  }
-
-  const networkErrorSignal = !body.success && /net::ERR_/.test((body.logs || []).join(' '))
-  if (body.proxySessionId && PROXY_SESSION_POOL.includes(body.proxySessionId)) {
-    if (body.success) {
-      await markProxySessionSuccess(c.env, userId, body.proxySessionId)
-    } else if (networkErrorSignal) {
-      await markProxySessionFailure(c.env, userId, body.proxySessionId, 'network_error')
-    }
   }
 
   let jobStatus: string
