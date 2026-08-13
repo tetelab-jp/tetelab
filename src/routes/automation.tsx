@@ -132,6 +132,8 @@ type ExecutionLogRow = {
   category: string
   categoryClass: string
   content: any
+  contentLabel: any
+  contentName: any
   statusLabel: string
   statusClass: string
   borderClass: string
@@ -204,8 +206,9 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
               <span class={'text-xs px-2 py-0.5 rounded font-semibold flex-shrink-0 ' + r.categoryClass}>
                 {r.category}
               </span>
-              <span class="text-sm text-gray-700 min-w-0 truncate">{r.content}</span>
+              {r.contentLabel}
             </div>
+            <div class="text-sm text-gray-700 mt-0.5 truncate">{r.contentName}</div>
             {r.errorText !== '-' && (
               <div class="mt-1.5">
                 <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
@@ -257,6 +260,20 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const logRows = (logs || []).map((l) => {
     const category = l.post_id ? 'ブログ' : 'スタイル'
     const errorText = (l.message || '').slice(0, 10000)
+    const contentLabel = l.execution_type && (
+      <span class="text-xs font-semibold text-gray-400">
+        [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
+      </span>
+    )
+    const contentName = l.style_id ? (
+      <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
+        No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
+      </a>
+    ) : l.post_id ? (
+      l.post_title || `投稿${l.post_id}`
+    ) : (
+      '-'
+    )
     return {
       id: l.id,
       dateLabel: formatJstDate(l.created_at),
@@ -264,22 +281,12 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       categoryClass: category === 'ブログ' ? 'bg-purple-50 text-purple-600' : 'bg-blue-50 text-blue-600',
       content: (
         <>
-          {l.execution_type && (
-            <span class="text-xs font-semibold text-gray-400 mr-1">
-              [{EXECUTION_TYPE_LABEL[l.execution_type] || l.execution_type}]
-            </span>
-          )}
-          {l.style_id ? (
-            <a href={`/style/${l.style_id}/edit`} class="hover:text-pink-600 hover:underline">
-              No.{l.style_no ?? l.style_id} {l.style_title || '(無題)'}
-            </a>
-          ) : l.post_id ? (
-            l.post_title || `投稿${l.post_id}`
-          ) : (
-            '-'
-          )}
+          {contentLabel && <span class="mr-1">{contentLabel}</span>}
+          {contentName}
         </>
       ),
+      contentLabel,
+      contentName,
       statusLabel: LOG_RESULT_LABEL[l.status] || l.status,
       statusClass: LOG_RESULT_COLOR[l.status] || 'bg-gray-100 text-gray-500',
       borderClass: LOG_RESULT_BORDER[l.status] || 'border-gray-300',
