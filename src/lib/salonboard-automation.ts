@@ -127,16 +127,21 @@ export async function newAutomationPage(browser: Browser, log?: AutomationLogger
   // 2026-08-11追記: Bright Data(ISPプロキシ、複数IPのプール)を導入したが、
   // ユーザー名をそのまま使うと毎回同じ1つの出口IPに固定されてしまい、
   // salonboard.com/Akamai側にそのIPをブロックされると即座に全滅する
-  // (実際に発生した障害)。Bright Dataは`ユーザー名-session-<任意の文字列>`という
-  // 形式に対応しており、session値を変えるたびにプール内の別IPが割り当てられる
-  // (ドキュメント: https://docs.brightdata.com/proxy-networks/isp/introduction)。
-  // ここでブラウザ起動のたびにランダムなsession値を付与することで、
-  // 明示的なIP管理なしにプール内のIPを自動的にローテーションさせる。
+  // (実際に発生した障害)。ユーザー名にセッション値を付与し、ブラウザ起動の
+  // たびにランダムなセッション値を割り当てることで、明示的なIP管理なしに
+  // プール内のIPを自動的にローテーションさせる。
+  //
+  // 2026-08-13追記(Bright Data→DataImpulseへ契約変更): セッション値の
+  // 指定方法がプロバイダごとに異なる。Bright Dataは`-session-<ID>`という
+  // ユーザー名サフィックスだったが、DataImpulseは`__cr.<国>;sessid.<ID>`
+  // という書式(二重アンダースコアでパラメータ開始、`;`区切りで複数指定)。
+  // `cr.jp`で日本国内IPを明示し、`sessttl.30`でセッション維持時間(30分)も
+  // 明示指定する。参考: https://docs.dataimpulse.com/proxies/parameters/session-id
   const proxyUsername = process.env.SALONBOARD_PROXY_USERNAME
   const proxyPassword = process.env.SALONBOARD_PROXY_PASSWORD
   if (proxyUsername && proxyPassword) {
     const sessionId = Math.random().toString(36).slice(2, 10)
-    const sessionUsername = `${proxyUsername}-session-${sessionId}`
+    const sessionUsername = `${proxyUsername}__cr.jp;sessid.${sessionId};sessttl.30`
     await page.authenticate({ username: sessionUsername, password: proxyPassword })
     log?.(`[プロキシ] セッションID=${sessionId} で出口IPをローテーション`)
   }
