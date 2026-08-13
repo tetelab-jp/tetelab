@@ -308,37 +308,40 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
       <span class="inline-flex flex-col items-center">
         <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>100位圏外</span>
         {prev && prev.rank != null && (
-          <span class={`block ${deltaCls} leading-tight text-red-500 mt-0.5 whitespace-nowrap`}>▼前回{prev.rank}位</span>
+          <span class={`block ${deltaCls} leading-tight text-black mt-0.5 whitespace-nowrap`}>▼前回{prev.rank}位</span>
         )}
       </span>
     )
   }
 
-  let badge: unknown = null
+  // 2026-08-13追記(ユーザー指定): 前回比は順位の下に別行で表示せず、
+  // 順位の隣に括弧書きで表示する。マイナス(下降)の場合も赤ではなく
+  // 黒色にする(上昇=緑、変化なし=グレーは維持)。
+  let deltaText: string | null = null
+  let deltaColorCls = 'text-gray-600'
   if (prev) {
     if (prev.rank == null) {
-      badge = (
-        <span class={`block ${deltaCls} leading-tight font-semibold text-green-600 mt-0.5 whitespace-nowrap`}>
-          ▲前回100位圏外
-        </span>
-      )
+      deltaText = '▲前回100位圏外'
+      deltaColorCls = 'text-green-600'
     } else {
       const diff = prev.rank - current.rank
-      badge =
-        diff > 0 ? (
-          <span class={`block ${deltaCls} leading-tight font-semibold text-green-600 mt-0.5`}>▲{diff}</span>
-        ) : diff < 0 ? (
-          <span class={`block ${deltaCls} leading-tight font-semibold text-red-500 mt-0.5`}>▼{-diff}</span>
-        ) : (
-          <span class={`block ${deltaCls} leading-tight font-medium text-gray-600 mt-0.5`}>±0</span>
-        )
+      if (diff > 0) {
+        deltaText = `▲${diff}`
+        deltaColorCls = 'text-green-600'
+      } else if (diff < 0) {
+        deltaText = `▼${-diff}`
+        deltaColorCls = 'text-black'
+      } else {
+        deltaText = '±0'
+        deltaColorCls = 'text-gray-600'
+      }
     }
   }
 
   return (
-    <span class="inline-flex flex-col items-center">
+    <span class="inline-flex items-baseline gap-1 whitespace-nowrap">
       <span class={badgeCls}>{current.rank}</span>
-      {badge}
+      {deltaText && <span class={`${deltaCls} font-semibold ${deltaColorCls}`}>({deltaText})</span>}
     </span>
   )
 }
@@ -360,11 +363,11 @@ function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; si
   )
 }
 
-/** 計測日を「8/12」のような短い表記にする */
+/** 計測日を「2026/8/12」のような短い表記にする(年も含める) */
 function shortDate(sqliteTimestamp: string): string {
   const ymd = formatJstDateTime(sqliteTimestamp).slice(0, 10)
-  const [, m, d] = ymd.split('-')
-  return `${Number(m)}/${Number(d)}`
+  const [y, m, d] = ymd.split('-')
+  return `${y}/${Number(m)}/${Number(d)}`
 }
 
 const MEASURE_RUN_COLUMNS = 12
