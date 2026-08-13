@@ -46,7 +46,19 @@ async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, 
 
   const wasFailing = prevCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
   const isFailing = nextCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
-  if (wasFailing === isFailing) return // 状態遷移が無ければ通知しない
+
+  // 2026-08-13追記(ユーザー指定ルール): 5件連続で投稿が失敗した場合、
+  // 自動投稿を5時間停止する(style-post-runner.tsのshouldPostNow参照)。
+  // アラート通知と同じしきい値・同じ「状態遷移の瞬間」で発動する。
+  if (!wasFailing && isFailing) {
+    await env.DB
+      .prepare(`UPDATE style_post_schedules SET paused_until = now() + interval '5 hours', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  if (wasFailing === isFailing) return // 通知の状態遷移が無ければアラートは送らない
 
   const salonLabel = before.salon_name || before.email
   const subject = isFailing

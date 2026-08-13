@@ -257,6 +257,23 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(style_images.compressed_at)に失敗しました:', err)
   }
   try {
+    // 自動投稿ルールの全面刷新(ユーザー指定、詳細はmigrations-pg/0014_*.sql参照):
+    // ・burst_remaining: OFF→ON直後、動作確認のため先頭3件を連続投稿する
+    //   「初回バースト」の残り件数
+    // ・next_cursor_style_id: 通常運転(60分おきに1件)で、登録順に巡回する
+    //   ための「最後にこの次から投稿した」位置
+    // ・paused_until: 5件連続失敗時、自動投稿を一時停止する解除予定時刻
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS burst_remaining INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS next_cursor_style_id INTEGER`
+    ).run()
+    await bindings.DB.prepare(`ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS paused_until TIMESTAMP`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_post_schedules拡張列)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

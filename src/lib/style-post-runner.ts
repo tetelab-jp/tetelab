@@ -288,94 +288,135 @@ export async function runStyleAutomationForUser(
   }
 }
 
-// 「7:00〜24:00の間に均等に分散して投稿する」ための時間窓(JST・分)。
-const DAILY_WINDOW_START_MINUTES = 7 * 60 // 07:00
-const DAILY_WINDOW_END_MINUTES = 24 * 60 // 24:00(=翌0:00)
+// ============================================
+// 自動投稿ルール(2026-08-13、ユーザー指定で全面刷新):
+// ・深夜2:00〜7:00は投稿しない
+// ・自動投稿をOFF→ONにした瞬間、動作確認のため登録順(sort_order)の
+//   先頭3件を間隔を空けず連続投稿する(「初回バースト」)。ON→OFF→ONで
+//   再度ONにした場合も先頭3件から再度バーストする(style.tsxの
+//   POST /style/scheduleでburst_remaining=3にリセットする)。
+// ・初回バーストが終わったら、60分おきに1件、登録順に巡回して投稿する
+//   (最後まで行ったら先頭に戻って繰り返す。日付をまたいでも継続。
+//   最大100件を登録していても1日で一巡せず数日かけて回る想定)
+// ・5件連続で投稿が失敗した場合、5時間は投稿を停止する
+//   (users.consecutive_failure_countが5に達した瞬間、
+//   style_post_schedules.paused_untilをセットする。automation.tsx参照)
+// ============================================
+
+export const INITIAL_BURST_COUNT = 3
+const BLACKOUT_START_MINUTES = 2 * 60 // 02:00
+const BLACKOUT_END_MINUTES = 7 * 60 // 07:00
+const POST_INTERVAL_MINUTES = 60
 
 function jstMinutesOfDay(nowLabel: string): number {
   const [hh, mm] = nowLabel.split(':').map(Number)
   return hh * 60 + mm
 }
 
+type ScheduleState = {
+  burst_remaining: number
+  next_cursor_style_id: number | null
+  paused_until: string | null
+}
+
 /**
- * 「7:00〜24:00の間に均等に分散して投稿する」ための判定。
- * 残り時間と残り対象件数から理想の投稿間隔を毎回動的に算出し、
- * 本日最後に投稿(ジョブ投入)した時刻からその間隔以上経過していれば
- * 次の1件を投入してよいと判定する。
+ * 深夜2:00〜7:00は投稿しない。5件連続失敗による一時停止中も投稿しない。
+ * 初回バースト中(burst_remaining > 0)は間隔を空けず常に投稿してよい。
+ * それ以外(通常運転)は前回のジョブ投入から60分以上経過していること。
  */
-async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: string): Promise<boolean> {
+async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, schedule: ScheduleState): Promise<boolean> {
   const nowMinutes = jstMinutesOfDay(nowLabel)
-  if (nowMinutes < DAILY_WINDOW_START_MINUTES || nowMinutes >= DAILY_WINDOW_END_MINUTES) return false
+  if (nowMinutes >= BLACKOUT_START_MINUTES && nowMinutes < BLACKOUT_END_MINUTES) return false
 
-  const countRow = await env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM (
-       SELECT s.id FROM styles s
-       WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-         AND NOT EXISTS (
-           SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
-         )
-       ORDER BY s.sort_order ASC, s.id ASC
-       LIMIT ${DAILY_POST_LIMIT}
-     )`
-  )
-    .bind(userId)
-    .first<{ cnt: number }>()
+  if (schedule.paused_until) {
+    const pausedUntilMs = new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime()
+    if (pausedUntilMs > Date.now()) return false
+  }
 
-  const remainingCount = countRow?.cnt ?? 0
-  if (remainingCount === 0) return false
+  if (schedule.burst_remaining > 0) return true
 
-  const remainingMinutes = DAILY_WINDOW_END_MINUTES - nowMinutes
-  if (remainingMinutes <= 0) return false
-
-  const idealIntervalMinutes = remainingMinutes / remainingCount
-
-  // last_executed_at はUTCのnaive timestampとして保存されているため、
-  // 一度UTCのtimestamptzへ変換してからAsia/Tokyoのnaive timestampへ
-  // 変換し、日付部分だけを比較する(SQLiteの date(col, '+9 hours') と同義)。
-  const lastRow = await env.DB.prepare(
-    `SELECT MAX(last_executed_at) as last_at FROM styles
-     WHERE user_id = ? AND last_executed_at IS NOT NULL
-       AND (last_executed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Tokyo')::date
-         = (now() AT TIME ZONE 'Asia/Tokyo')::date`
-  )
+  const lastRow = await env.DB.prepare(`SELECT MAX(created_at) as last_at FROM style_post_jobs WHERE user_id = ?`)
     .bind(userId)
     .first<{ last_at: string | null }>()
 
   if (!lastRow?.last_at) return true
-
   const lastAtMs = new Date(lastRow.last_at.replace(' ', 'T') + 'Z').getTime()
-  const minutesSinceLastPost = (Date.now() - lastAtMs) / 60000
-
-  return minutesSinceLastPost >= idealIntervalMinutes
+  const minutesSinceLast = (Date.now() - lastAtMs) / 60000
+  return minutesSinceLast >= POST_INTERVAL_MINUTES
 }
 
 /**
- * 「7:00〜24:00の間に均等に分散して投稿する」方式で、1回の呼び出しにつき
- * 最大1件のスタイルのみジョブ投入する。外部Cronから1分間隔で呼ばれる想定。
+ * 次に投稿すべき1件を選ぶ。
+ * 初回バースト中は登録順(sort_order)の先頭から、消化済み件数ぶんOFFSETした
+ * 位置の1件(=先頭3件を順に1件ずつ)を選ぶ。
+ * 通常運転時はnext_cursor_style_idより登録順で後ろの最初の1件を選び、
+ * 無ければ(カーソル未設定、または最後まで巡回し終えた場合)先頭に戻る。
+ */
+async function selectNextStyleId(env: Bindings, userId: number, schedule: ScheduleState): Promise<number | null> {
+  const baseWhere = `s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+       AND NOT EXISTS (SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running'))`
+
+  if (schedule.burst_remaining > 0) {
+    const offset = INITIAL_BURST_COUNT - schedule.burst_remaining
+    const row = await env.DB.prepare(
+      `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1 OFFSET ${offset}`
+    )
+      .bind(userId)
+      .first<{ id: number }>()
+    if (row) return row.id
+    // 対象スタイルがバースト件数(3件)に満たない場合は先頭に戻ってでも1件選ぶ
+    const fallback = await env.DB.prepare(
+      `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1`
+    )
+      .bind(userId)
+      .first<{ id: number }>()
+    return fallback?.id ?? null
+  }
+
+  if (schedule.next_cursor_style_id) {
+    const nextRow = await env.DB.prepare(
+      `SELECT s.id FROM styles s
+       WHERE ${baseWhere}
+         AND (s.sort_order, s.id) > (SELECT sort_order, id FROM styles WHERE id = ?)
+       ORDER BY s.sort_order ASC, s.id ASC
+       LIMIT 1`
+    )
+      .bind(userId, schedule.next_cursor_style_id)
+      .first<{ id: number }>()
+    if (nextRow) return nextRow.id
+  }
+
+  const firstRow = await env.DB.prepare(
+    `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1`
+  )
+    .bind(userId)
+    .first<{ id: number }>()
+  return firstRow?.id ?? null
+}
+
+/**
+ * 深夜2:00〜7:00を除く時間帯に、60分おきに1件を登録順で巡回投稿する方式
+ * (OFF→ON直後は先頭3件を連続投稿する初回バースト)。
+ * 外部Cronから1分間隔で呼ばれる想定。
  */
 export async function runNextStyleForUser(
   env: Bindings,
   userId: number,
   scheduledTimeLabel: string
 ): Promise<RunSummary | null> {
-  const shouldPost = await shouldPostNextStyle(env, userId, scheduledTimeLabel)
-  if (!shouldPost) return null
+  const schedule = await env.DB.prepare(
+    `SELECT burst_remaining, next_cursor_style_id, paused_until FROM style_post_schedules WHERE user_id = ?`
+  )
+    .bind(userId)
+    .first<ScheduleState>()
+
+  if (!schedule) return null
+  if (!(await shouldPostNow(env, userId, scheduledTimeLabel, schedule))) return null
 
   await requireCredentialsConfigured(env, userId)
 
-  const row = await env.DB.prepare(
-    `SELECT s.id FROM styles s
-     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
-       AND NOT EXISTS (
-         SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
-       )
-     ORDER BY s.sort_order ASC, s.id ASC
-     LIMIT 1`
-  )
-    .bind(userId)
-    .first<{ id: number }>()
-
-  if (!row) return null
+  const styleId = await selectNextStyleId(env, userId, schedule)
+  if (!styleId) return null
 
   const runInsert = await env.DB.prepare(
     `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
@@ -386,7 +427,22 @@ export async function runNextStyleForUser(
   const runId = Number(runInsert.meta.last_row_id)
 
   try {
-    await dispatchStylePostJob(env, userId, row.id, runId)
+    await dispatchStylePostJob(env, userId, styleId, runId)
+
+    if (schedule.burst_remaining > 0) {
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(userId)
+        .run()
+    } else {
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET next_cursor_style_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(styleId, userId)
+        .run()
+    }
+
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)

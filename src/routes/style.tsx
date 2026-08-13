@@ -5,6 +5,7 @@ import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
 import { processStyleImage } from '../lib/image-process'
+import { INITIAL_BURST_COUNT } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
@@ -1350,21 +1351,26 @@ style.post('/style/library/delete/:id', async (c) => {
 
 // ---------- 自動投稿・手動投稿 ----------
 
-// 自動投稿の時間窓(JST)。src/lib/style-post-runner.tsのDAILY_WINDOW_START/END_MINUTESと一致させること。
-const DAILY_WINDOW_START_LABEL = '7:00'
-const DAILY_WINDOW_END_LABEL = '24:00'
-// SalonMotion側の運用上の1日あたり自動投稿上限。src/lib/style-post-runner.tsのDAILY_POST_LIMITと一致させること。
-const DAILY_POST_LIMIT_LABEL = 100
+// 自動投稿を停止する時間帯(JST)。src/lib/style-post-runner.tsの
+// BLACKOUT_START/END_MINUTESと一致させること。
+const BLACKOUT_START_LABEL = '2:00'
+const BLACKOUT_END_LABEL = '7:00'
+// 通常運転時の投稿間隔(分)。src/lib/style-post-runner.tsのPOST_INTERVAL_MINUTESと一致させること。
+const POST_INTERVAL_MINUTES_LABEL = 60
 
 style.get('/style/schedule', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
 
-  const schedule = await c.env.DB.prepare('SELECT enabled FROM style_post_schedules WHERE user_id = ?')
+  const schedule = await c.env.DB.prepare(
+    'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ?'
+  )
     .bind(user.id)
-    .first<{ enabled: number }>()
+    .first<{ enabled: number; burst_remaining: number; paused_until: string | null }>()
 
   const enabled = schedule?.enabled === 1
+  const isPaused = !!schedule?.paused_until && new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime() > Date.now()
+  const isBursting = enabled && (schedule?.burst_remaining ?? 0) > 0
 
   const selectedRow = await c.env.DB.prepare(
     "SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1 AND internal_save_status = 'ready'"
@@ -1405,16 +1411,34 @@ style.get('/style/schedule', async (c) => {
             <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
           </span>
           <span class="text-sm font-medium text-gray-700">
-            自動投稿を有効にする（{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}に分散、最大{DAILY_POST_LIMIT_LABEL}件/日）
+            自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
           </span>
         </label>
       </form>
 
+      {isPaused && (
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700">
+          <i class="fas fa-triangle-exclamation mr-2"></i>
+          5件連続で投稿が失敗したため、自動投稿を一時停止しています。5時間経過後に自動的に再開します。
+        </div>
+      )}
+
+      {!isPaused && isBursting && (
+        <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+          <i class="fas fa-bolt mr-2"></i>
+          自動投稿を有効にした直後の動作確認として、登録順の先頭3件を間隔を空けず連続投稿しています
+          （残り{schedule?.burst_remaining}件）。完了後は通常運転（{POST_INTERVAL_MINUTES_LABEL}分おきに1件）に移ります。
+        </div>
+      )}
+
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿を有効にすると、<b>{DAILY_WINDOW_START_LABEL}〜{DAILY_WINDOW_END_LABEL}</b>の間に、自動投稿対象（入力完了済み）の
-        スタイルを登録順に、時間帯全体へ均等に分散させながら「登録＋反映申請」まで自動実行します
-        （1日最大<b>{DAILY_POST_LIMIT_LABEL}件</b>まで。短時間に集中投稿しないよう、対象件数に応じて投稿間隔を自動調整します）。
+        自動投稿を有効にすると、まず動作確認として登録順の先頭3件を連続投稿し、その後は
+        <b>深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯</b>に、自動投稿対象（入力完了済み）の
+        スタイルを登録順に、{POST_INTERVAL_MINUTES_LABEL}分おきに1件ずつ巡回しながら「登録＋反映申請」まで自動実行します
+        （最後まで行ったら先頭に戻り、日付をまたいでも継続します）。
+        また、5件連続で投稿に失敗した場合は5時間自動的に停止します。
+        いったんOFFにしてから再度ONにすると、先頭3件からの動作確認をやり直します。
         現在<b>{selectedCount}件</b>が対象です。
       </div>
 
@@ -1451,19 +1475,34 @@ style.post('/style/schedule', async (c) => {
 
   const enabled = body.enabled === 'on' || body.enabled === 'true'
 
-  const existing = await c.env.DB.prepare('SELECT id FROM style_post_schedules WHERE user_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id, enabled FROM style_post_schedules WHERE user_id = ?')
     .bind(user.id)
-    .first<{ id: number }>()
+    .first<{ id: number; enabled: number }>()
+
+  // 2026-08-13追記(ユーザー指定ルール): OFF→ONに切り替えた瞬間(既存レコードが
+  // 無い=初回ONの場合も含む)、動作確認のため登録順の先頭3件を連続投稿する
+  // 「初回バースト」をリセットする。ON→OFF→ONで再度ONにした場合も同様。
+  const turningOn = enabled && existing?.enabled !== 1
 
   if (existing) {
-    await c.env.DB.prepare(
-      `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
-    )
-      .bind(enabled ? 1 : 0, user.id)
-      .run()
+    if (turningOn) {
+      await c.env.DB.prepare(
+        `UPDATE style_post_schedules
+         SET enabled = 1, burst_remaining = ?, next_cursor_style_id = NULL, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ?`
+      )
+        .bind(INITIAL_BURST_COUNT, user.id)
+        .run()
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(enabled ? 1 : 0, user.id)
+        .run()
+    }
   } else {
-    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled) VALUES (?, ?)`)
-      .bind(user.id, enabled ? 1 : 0)
+    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled, burst_remaining) VALUES (?, ?, ?)`)
+      .bind(user.id, enabled ? 1 : 0, enabled ? INITIAL_BURST_COUNT : 0)
       .run()
   }
 
