@@ -16,9 +16,105 @@
 
 import type { Bindings } from '../types'
 import { runStylePostTask, stopStylePostTask } from './aws-ecs'
+import { publishAlert } from './sns-alert'
 
 // SalonMotion側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
+
+// 管理者サイト(/admin/status)の連続失敗検知しきい値。users.consecutive_failure_countが
+// この値をまたいだ(超えた/下回った)瞬間だけ通知する(実行の度に毎回送ると
+// スパムになるため、状態遷移のときのみ)。
+// 2026-08-14追記: 元はautomation.tsxに定義されていたが、sweepStaleJobs/
+// resetStuckJobsForUser(タイムアウト経由の失敗)からも同じ判定を使う必要が
+// あるため、こちらへ移設した(automation.tsx側はここからimportする)。
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+
+export async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, success: boolean): Promise<void> {
+  // 2026-08-13追記(重大バグ修正): SELECT→計算→UPDATEの非アトミックな
+  // read-modify-writeだと、同一ユーザーの複数ジョブ結果コールバックが
+  // 並行到達した場合にlost updateが起き、連続失敗カウントがずれて
+  // アラート判定が不正確になる恐れがあった。CTE+FOR UPDATEで行ロックを
+  // 取りつつ、旧値の取得と更新を単一のアトミックな文にまとめる。
+  const before = await env.DB.prepare(
+    `WITH old AS (
+       SELECT consecutive_failure_count AS prev_count, email, salon_name
+       FROM users WHERE id = ? FOR UPDATE
+     )
+     UPDATE users u
+     SET consecutive_failure_count = CASE WHEN ? THEN 0 ELSE old.prev_count + 1 END
+     FROM old
+     WHERE u.id = ?
+     RETURNING old.prev_count AS prev_count, u.consecutive_failure_count AS next_count, old.email AS email, old.salon_name AS salon_name`
+  )
+    .bind(userId, success, userId)
+    .first<{ prev_count: number; next_count: number; email: string; salon_name: string | null }>()
+  if (!before) return
+
+  const prevCount = before.prev_count
+  const nextCount = before.next_count
+
+  const wasFailing = prevCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+  const isFailing = nextCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+
+  // 2026-08-13追記(ユーザー指定ルール): 5件連続で投稿が失敗した場合、
+  // 自動投稿を5時間停止する(shouldPostNow参照)。
+  // アラート通知と同じしきい値・同じ「状態遷移の瞬間」で発動する。
+  if (!wasFailing && isFailing) {
+    await env.DB
+      .prepare(`UPDATE style_post_schedules SET paused_until = now() + interval '5 hours', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  if (wasFailing === isFailing) return // 通知の状態遷移が無ければアラートは送らない
+
+  const salonLabel = before.salon_name || before.email
+  const subject = isFailing
+    ? `[SalonMotion] ${salonLabel} のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しています`
+    : `[SalonMotion] ${salonLabel} のスタイル自動投稿が復旧しました`
+  const message = isFailing
+    ? `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しました。管理者サイト(/admin/status)で状況を確認してください。`
+    : `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が成功し、連続失敗の状態から復旧しました。`
+
+  await publishAlert(env, subject, message).catch((err) => {
+    console.error('アラート通知の送信に失敗しました:', err)
+  })
+}
+
+/**
+ * 2026-08-14追記(重大バグ修正): このrunに属する全ジョブが完了(pending/running
+ * 以外)になった時点でrun全体のステータスを確定させる。元はautomation.tsxの
+ * 結果コールバック内だけに実装されていたが、sweepStaleJobs/
+ * resetStuckJobsForUser(タイムアウト経由の完了)を通った場合はこの確定処理が
+ * 一切行われず、該当runが永久に'processing'のまま実行履歴に表示され続ける
+ * 不具合があったため、共通関数として切り出した。
+ */
+export async function finalizeRunIfComplete(env: Bindings, runId: number): Promise<void> {
+  const { results: pendingJobs } = await env.DB.prepare(
+    `SELECT id FROM style_post_jobs WHERE run_id = ? AND status IN ('pending', 'running')`
+  )
+    .bind(runId)
+    .all<{ id: number }>()
+
+  if (pendingJobs && pendingJobs.length > 0) return
+
+  const { results: finishedJobs } = await env.DB.prepare(`SELECT status FROM style_post_jobs WHERE run_id = ?`)
+    .bind(runId)
+    .all<{ status: string }>()
+
+  const statuses = (finishedJobs || []).map((j) => j.status)
+  if (statuses.length === 0) return
+  const runStatus = statuses.every((s) => s === 'success')
+    ? 'done'
+    : statuses.every((s) => s !== 'success')
+    ? 'failed'
+    : 'partial_failure'
+
+  await env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(runStatus, runId)
+    .run()
+}
 
 // 手動実行で複数スタイルを同時に投入すると、同一サロンボードアカウントへ
 // 複数のFargateタスク(=複数の出口IP)が同時にログインする状態になり、
@@ -205,6 +301,14 @@ async function waitForJobTerminal(env: Bindings, jobId: number): Promise<void> {
 /**
  * 2件目以降のスタイルを、前のジョブが完了してから順に投入する。
  * HTTPレスポンスをすぐ返せるよう、呼び出し側ではawaitせずバックグラウンドで進める。
+ *
+ * 2026-08-14追記(重大バグ修正): この一覧(remaining)は実行開始時点の
+ * スナップショットで、数分〜数時間かけて順に消化する間に古くなる。
+ * 途中でOFFにされた・削除された等は無視して盲目的にdispatchStylePostJobを
+ * 呼んでいたため、(1)その間に外部Cron(runNextStyleForUser)が同じスタイルを
+ * 選んで投入し二重投稿になる、(2)無効化されたスタイルにも投稿してしまう、
+ * という問題があった。投入直前に毎回isStyleEligibleで再確認し、既に無効
+ * (OFF・削除・他ジョブが進行中等)ならスキップする。
  */
 async function dispatchRemainingStylesSequentially(
   env: Bindings,
@@ -217,6 +321,10 @@ async function dispatchRemainingStylesSequentially(
   for (const t of remaining) {
     if (prevJobId !== null) {
       await waitForJobTerminal(env, prevJobId)
+    }
+    if (!(await isStyleEligible(env, userId, t.id))) {
+      prevJobId = null
+      continue
     }
     try {
       prevJobId = await dispatchStylePostJob(env, userId, t.id, runId)
@@ -240,6 +348,20 @@ export async function runStyleAutomationForUser(
   scheduledTimeLabel: string
 ): Promise<RunSummary> {
   await requireCredentialsConfigured(env, userId)
+
+  // 2026-08-14追記(重大バグ修正): 既にこのユーザーの投稿が進行中(pending/
+  // running)の場合は新たな一括投入を開始しない。ボタンの連打や、外部Cronの
+  // 巡回投稿(runNextStyleForUser)が進行中の状態で手動実行(テスト実行)を
+  // 押した場合に、対象一覧が重複したまま2系統の投入ループが並行して走り、
+  // 同一スタイルへの二重投稿を招く恐れがあったため。
+  const alreadyInFlight = await env.DB.prepare(
+    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1`
+  )
+    .bind(userId)
+    .first<{ x: number }>()
+  if (alreadyInFlight) {
+    throw new Error('既に投稿処理が進行中です。完了してからもう一度お試しください')
+  }
 
   const { results } = await env.DB.prepare(
     `SELECT s.id FROM styles s
@@ -341,7 +463,11 @@ type ScheduleState = {
 
 /**
  * 深夜2:00〜7:00は投稿しない。5件連続失敗による一時停止中も投稿しない。
- * 初回バースト中(burst_remaining > 0)は間隔を空けず常に投稿してよい。
+ * 自分(このユーザー)の進行中ジョブが既にあれば、バースト中であっても
+ * 次を投入しない(2026-08-14追記の重大バグ修正: 元はバースト中この
+ * チェックが無く、1分おきの外部Cronが前のジョブの完了を待たずに次々と
+ * 投入してしまい、同一アカウントへ複数IPが同時ログインする状態や、
+ * 候補一覧から進行中スタイルが除外されることによる巡回スキップを招いていた)。
  * それ以外(通常運転)は前回のジョブ投入から60分以上経過していること。
  */
 async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, schedule: ScheduleState): Promise<boolean> {
@@ -352,6 +478,13 @@ async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, sc
     const pausedUntilMs = new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime()
     if (pausedUntilMs > Date.now()) return false
   }
+
+  const inFlight = await env.DB.prepare(
+    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1`
+  )
+    .bind(userId)
+    .first<{ x: number }>()
+  if (inFlight) return false
 
   if (schedule.burst_remaining > 0) return true
 
@@ -489,12 +622,16 @@ export async function runNextStyleForUser(
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
-  try {
-    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot)
-
+  // 2026-08-14追記(重大バグ修正): 以前はこのスケジュール状態(再トライ枠/
+  // バースト残数/巡回カーソル)の更新をdispatch成功時のみ行っていた。
+  // dispatchStylePostJob自体がECS RunTask権限不足・設定不備等で継続的に
+  // 失敗する場合、状態が一切進まないため1分おきの外部Cronから同じ状態で
+  // 永久に呼ばれ続け、Fargateタスク起動の試行(とそれに伴うDB書き込み)を
+  // 無制限に繰り返してしまう。dispatchの成否に関わらず必ず状態を1コマ
+  // 進めるようにする(投稿自体の成否はワーカーの結果コールバックが別途
+  // 判定するため、ここでの「進める」は投稿の成功を意味しない)。
+  const advanceSchedule = async () => {
     if (isRetrySlot) {
-      // 再トライ枠は使い切ったので消費し、通常の巡回カーソル/バーストには
-      // 影響させない(再トライは巡回順序から外れた割り込みのため)。
       await env.DB.prepare(
         `UPDATE style_post_schedules SET retry_pending_style_id = NULL, retry_pending_wait_slots = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
       )
@@ -515,10 +652,20 @@ export async function runNextStyleForUser(
         .bind(styleId, userId)
         .run()
     }
+  }
 
+  try {
+    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot)
+    await advanceSchedule()
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
+    await advanceSchedule()
+    // dispatchStylePostJob自体の失敗(ワーカーのPuppeteer実行結果ではなく、
+    // ECS RunTask呼び出し自体の失敗)も、投稿できなかったという事実は同じ
+    // なので、5連続失敗による一時停止・SNSアラートの対象に含める
+    // (含めないと、この種の失敗だけ安全弁が機能しないまま延々と繰り返される)。
+    await updateConsecutiveFailureAndNotify(env, userId, false)
     await env.DB.prepare(
       `UPDATE style_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
@@ -563,13 +710,21 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
   }
 }
 
-type StaleJobRow = { id: number; style_id: number; user_id: number; ecs_task_arn: string | null }
+type StaleJobRow = { id: number; style_id: number; user_id: number; ecs_task_arn: string | null; run_id: number | null }
 
 /**
  * 1件の停滞ジョブ(pending/running状態のまま結果コールバックが来ない)を
  * タイムアウト扱いに片付ける。実Fargateタスクの明示停止・ジョブ/スタイルの
  * ステータス更新・実行ログ記録までをまとめて行う(sweepStaleJobs/
  * resetStuckJobsForUserの共通処理)。
+ *
+ * 2026-08-14追記(重大バグ修正): このパスは元々updateConsecutiveFailureAndNotify
+ * (5連続失敗での一時停止・SNSアラート)も、run(style_post_runs)の確定処理も
+ * 一切呼んでいなかった。APP_BASE_URL誤設定等で結果コールバックが永久に
+ * 届かない状況(実際に今回発生した)では、投稿は全て失敗しているのに
+ * 連続失敗カウントが増えず、5時間停止・アラートという安全弁が機能しない
+ * ままFargateタスクを起動し続けてしまう。通常の結果コールバック
+ * (automation.tsx)と同じ後処理をここでも行う。
  */
 async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
   // 2026-08-13追記(重大バグ修正): DB上でタイムアウト扱いにするだけでは
@@ -610,6 +765,11 @@ async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
   )
     .bind(j.user_id, j.style_id, styleNo)
     .run()
+
+  await updateConsecutiveFailureAndNotify(env, j.user_id, false)
+  if (j.run_id) {
+    await finalizeRunIfComplete(env, j.run_id)
+  }
 }
 
 /**
@@ -621,7 +781,7 @@ async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
  */
 export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
+    `SELECT id, style_id, user_id, ecs_task_arn, run_id FROM style_post_jobs
      WHERE status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   ).all<StaleJobRow>()
 
@@ -650,7 +810,7 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
  */
 export async function resetStuckJobsForUser(env: Bindings, userId: number): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
+    `SELECT id, style_id, user_id, ecs_task_arn, run_id FROM style_post_jobs
      WHERE user_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   )
     .bind(userId)

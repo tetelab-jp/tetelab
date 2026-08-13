@@ -17,3 +17,10 @@ ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_wait_slo
 -- 再トライ由来のジョブが失敗しても、さらに新たな再トライを予約しない
 -- ようにするためのガードに使う(そうしないと無限ループになる)。
 ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS is_retry INTEGER NOT NULL DEFAULT 0;
+
+-- コードレビューで検出(2026-08-14): 「1スタイルにつき進行中ジョブは
+-- 同時に1件まで」という制約がアプリ側のチェックのみに依存しており、
+-- 手動実行・自動巡回・再実行ボタンがほぼ同時に走った場合にすり抜けて
+-- 二重投稿になりうる不具合があった。DB側にも制約を持たせる。
+CREATE UNIQUE INDEX IF NOT EXISTS idx_style_post_jobs_one_in_flight_per_style
+  ON style_post_jobs (style_id) WHERE status IN ('pending', 'running');

@@ -8,70 +8,13 @@ import {
   currentJstTimeLabel,
   getStyleRowForJob,
   getStyleNo,
-  sweepStaleJobs
+  sweepStaleJobs,
+  updateConsecutiveFailureAndNotify,
+  finalizeRunIfComplete
 } from '../lib/style-post-runner'
 import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
-import { publishAlert } from '../lib/sns-alert'
 import type { Bindings, AppUser } from '../types'
-
-// 管理者サイト(/admin/status)の連続失敗検知しきい値。users.consecutive_failure_countが
-// この値をまたいだ(超えた/下回った)瞬間だけ通知する(実行の度に毎回送ると
-// スパムになるため、状態遷移のときのみ)。
-const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
-
-async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, success: boolean): Promise<void> {
-  // 2026-08-13追記(重大バグ修正): SELECT→計算→UPDATEの非アトミックな
-  // read-modify-writeだと、同一ユーザーの複数ジョブ結果コールバックが
-  // 並行到達した場合にlost updateが起き、連続失敗カウントがずれて
-  // アラート判定が不正確になる恐れがあった。CTE+FOR UPDATEで行ロックを
-  // 取りつつ、旧値の取得と更新を単一のアトミックな文にまとめる。
-  const before = await env.DB.prepare(
-    `WITH old AS (
-       SELECT consecutive_failure_count AS prev_count, email, salon_name
-       FROM users WHERE id = ? FOR UPDATE
-     )
-     UPDATE users u
-     SET consecutive_failure_count = CASE WHEN ? THEN 0 ELSE old.prev_count + 1 END
-     FROM old
-     WHERE u.id = ?
-     RETURNING old.prev_count AS prev_count, u.consecutive_failure_count AS next_count, old.email AS email, old.salon_name AS salon_name`
-  )
-    .bind(userId, success, userId)
-    .first<{ prev_count: number; next_count: number; email: string; salon_name: string | null }>()
-  if (!before) return
-
-  const prevCount = before.prev_count
-  const nextCount = before.next_count
-
-  const wasFailing = prevCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
-  const isFailing = nextCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
-
-  // 2026-08-13追記(ユーザー指定ルール): 5件連続で投稿が失敗した場合、
-  // 自動投稿を5時間停止する(style-post-runner.tsのshouldPostNow参照)。
-  // アラート通知と同じしきい値・同じ「状態遷移の瞬間」で発動する。
-  if (!wasFailing && isFailing) {
-    await env.DB
-      .prepare(`UPDATE style_post_schedules SET paused_until = now() + interval '5 hours', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`)
-      .bind(userId)
-      .run()
-      .catch(() => {})
-  }
-
-  if (wasFailing === isFailing) return // 通知の状態遷移が無ければアラートは送らない
-
-  const salonLabel = before.salon_name || before.email
-  const subject = isFailing
-    ? `[SalonMotion] ${salonLabel} のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しています`
-    : `[SalonMotion] ${salonLabel} のスタイル自動投稿が復旧しました`
-  const message = isFailing
-    ? `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が${CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回連続で失敗しました。管理者サイト(/admin/status)で状況を確認してください。`
-    : `サロン「${salonLabel}」(${before.email})のスタイル自動投稿が成功し、連続失敗の状態から復旧しました。`
-
-  await publishAlert(env, subject, message).catch((err) => {
-    console.error('アラート通知の送信に失敗しました:', err)
-  })
-}
 
 function arrayBufferToBase64(buf: ArrayBuffer): string {
   const bytes = new Uint8Array(buf)
@@ -703,32 +646,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   // 2026-08-11追記(不具合修正): 実行履歴(style_post_runs)一覧のステータスが
   // 各ジョブの結果を集計せず常に'processing'のまま表示され続けていた。
   // このジョブが属するrunに紐づく全ジョブが完了(pending/running以外)に
-  // なった時点で、run全体のステータスを確定させる。
+  // なった時点で、run全体のステータスを確定させる(共通関数化、
+  // sweepStaleJobs/resetStuckJobsForUser側からも同じ処理を呼ぶ)。
   if (job.run_id) {
-    const { results: pendingJobs } = await c.env.DB.prepare(
-      `SELECT id FROM style_post_jobs WHERE run_id = ? AND status IN ('pending', 'running')`
-    )
-      .bind(job.run_id)
-      .all<{ id: number }>()
-
-    if (!pendingJobs || pendingJobs.length === 0) {
-      const { results: finishedJobs } = await c.env.DB.prepare(
-        `SELECT status FROM style_post_jobs WHERE run_id = ?`
-      )
-        .bind(job.run_id)
-        .all<{ status: string }>()
-
-      const statuses = (finishedJobs || []).map((j) => j.status)
-      const runStatus = statuses.every((s) => s === 'success')
-        ? 'done'
-        : statuses.every((s) => s !== 'success')
-        ? 'failed'
-        : 'partial_failure'
-
-      await c.env.DB.prepare(`UPDATE style_post_runs SET status = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-        .bind(runStatus, job.run_id)
-        .run()
-    }
+    await finalizeRunIfComplete(c.env, job.run_id)
   }
 
   return c.json({ ok: true })

@@ -298,6 +298,21 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(style_post_jobs.is_retry)に失敗しました:', err)
   }
   try {
+    // 2026-08-14追記(重大バグ修正、詳細はmigrations-pg/0015_*.sql参照): 「1つの
+    // スタイルに進行中(pending/running)ジョブは同時に1件まで」という制約は
+    // これまでアプリ側のSELECT→INSERTという非アトミックなチェックのみに
+    // 依存しており、DB側の裏付けが無かった。手動実行・自動巡回・再実行
+    // ボタンが同じスタイルへほぼ同時にジョブを投入した場合、この制約を
+    // すり抜けて二重投稿になりうる。部分ユニークインデックスでDB側にも
+    // 制約を持たせ、最終防衛線とする。
+    await bindings.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_style_post_jobs_one_in_flight_per_style
+       ON style_post_jobs (style_id) WHERE status IN ('pending', 'running')`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(style_post_jobs一意インデックス)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
