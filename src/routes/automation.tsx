@@ -130,8 +130,16 @@ function randomSessionId(): string {
 // 固定IPが3回とも投稿を完了できなかった場合は、5時間はこの経路を試さず
 // 通常のプロキシ候補のみを使う(worker/src/salonboard-automation.tsの
 // DIRECT_SESSION_IDと文字列を一致させる必要がある)。
+//
+// 2026-08-13追記(ユーザー指定・一時的な単独検証): 「3回失敗したらプロキシに
+// 逃げる」動作だと固定IPだけの結果が薄まってしまうため、この検証期間中は
+// プロキシへのフォールバックを完全に無効化(DIRECT_ONLY_TEST_MODE)し、
+// 固定IPをDIRECT_ATTEMPT_COUNT回だけ試して、全滅した場合はそのまま失敗させる
+// (失敗しても良いとユーザー了承済み)。結果を見てから通常運用
+// (3回失敗でプロキシにフォールバック)に戻すか判断する。
+const DIRECT_ONLY_TEST_MODE = true
 const DIRECT_SESSION_ID = 'direct'
-const DIRECT_ATTEMPT_COUNT = 3
+const DIRECT_ATTEMPT_COUNT = 5
 const DIRECT_IP_COOLDOWN_HOURS = 5
 
 // ---------- 手動実行・履歴画面 ----------
@@ -525,15 +533,23 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   const directCooldownActive =
     !!cred.direct_ip_cooldown_until &&
     new Date(cred.direct_ip_cooldown_until.replace(' ', 'T') + 'Z').getTime() > Date.now()
-  const proxyFallbackCount = directCooldownActive ? PROXY_CANDIDATE_COUNT : PROXY_CANDIDATE_COUNT - DIRECT_ATTEMPT_COUNT
-  const proxyFallbackCandidates = cred.last_successful_proxy_session_id
-    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: proxyFallbackCount - 1 }, () => randomSessionId())]
-    : Array.from({ length: proxyFallbackCount }, () => randomSessionId())
+  const proxyFallbackCount = DIRECT_ONLY_TEST_MODE
+    ? 0
+    : Math.max(0, directCooldownActive ? PROXY_CANDIDATE_COUNT : PROXY_CANDIDATE_COUNT - DIRECT_ATTEMPT_COUNT)
+  const proxyFallbackCandidates =
+    proxyFallbackCount === 0
+      ? []
+      : cred.last_successful_proxy_session_id
+        ? [cred.last_successful_proxy_session_id, ...Array.from({ length: proxyFallbackCount - 1 }, () => randomSessionId())]
+        : Array.from({ length: proxyFallbackCount }, () => randomSessionId())
   // 2026-08-13追記(ユーザー提案の3段階リトライ方針): クールダウン中でなければ
   // 先頭DIRECT_ATTEMPT_COUNT件をNATゲートウェイの固定IP直接接続にする。
-  const proxySessionCandidates = directCooldownActive
-    ? proxyFallbackCandidates
-    : [...Array.from({ length: DIRECT_ATTEMPT_COUNT }, () => DIRECT_SESSION_ID), ...proxyFallbackCandidates]
+  // DIRECT_ONLY_TEST_MODE中は、以前のテストで付いたクールダウンが残っていても
+  // 無視し、常に固定IPのみの候補にする。
+  const proxySessionCandidates =
+    directCooldownActive && !DIRECT_ONLY_TEST_MODE
+      ? proxyFallbackCandidates
+      : [...Array.from({ length: DIRECT_ATTEMPT_COUNT }, () => DIRECT_SESSION_ID), ...proxyFallbackCandidates]
 
   return c.json({
     loginId,
