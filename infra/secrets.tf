@@ -90,8 +90,6 @@ data "aws_iam_policy_document" "task_execution_secrets" {
       aws_secretsmanager_secret.jwt_secret.arn,
       aws_secretsmanager_secret.encryption_key.arn,
       aws_secretsmanager_secret.cron_secret.arn,
-      aws_secretsmanager_secret.aws_access_key_id.arn,
-      aws_secretsmanager_secret.aws_secret_access_key.arn,
       aws_secretsmanager_secret.admin_jwt_secret.arn,
       aws_secretsmanager_secret.admin_initial_password.arn
     ]
