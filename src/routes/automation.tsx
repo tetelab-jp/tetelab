@@ -152,7 +152,7 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
               <th class="py-2">カテゴリ</th>
               <th class="py-2">内容</th>
               <th class="py-2">ステータス</th>
-              <th class="py-2">エラー</th>
+              <th class="py-2">投稿ログ</th>
             </tr>
           </thead>
           <tbody>
@@ -250,7 +250,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
   const logRows = (logs || []).map((l) => {
     const category = l.post_id ? 'ブログ' : 'スタイル'
-    const errorText = l.status === 'success' ? '' : (l.message || '').slice(0, 10000)
+    const errorText = (l.message || '').slice(0, 10000)
     return {
       id: l.id,
       dateLabel: formatJstDate(l.created_at),
@@ -525,8 +525,12 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   if (!body) return c.json({ error: 'invalid body' }, 400)
 
   const { style_id: styleId, user_id: userId } = job
-  const diagnostics = body.logs && body.logs.length > 0 ? ` / 診断ログ: ${body.logs.join(' | ')}` : ''
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 投稿ログ: ${body.logs.join(' | ')}` : ''
   const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
+  // 2026-08-13追記(ユーザー指定): 成功時も、完了までの経過(ログイン〜各工程の
+  // ログ)を「投稿ログ」として残す(従来は固定文言のみで経過が分からなかった)。
+  const registerSuccessMessage = ('スタイル登録成功' + diagnostics).slice(0, 10000)
+  const reflectSuccessMessage = ('反映申請成功' + diagnostics).slice(0, 10000)
   const styleNo = await getStyleNo(c.env, userId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
@@ -552,15 +556,15 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', '反映申請成功')`
+       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, reflectSuccessMessage)
       .run()
     jobStatus = 'success'
   } else if (body.step === 'reflect') {
@@ -574,9 +578,9 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', 'スタイル登録成功')`
+       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo)
+      .bind(userId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
       `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
