@@ -15,7 +15,7 @@
 // ============================================
 
 import type { Bindings } from '../types'
-import { runStylePostTask } from './aws-ecs'
+import { runStylePostTask, stopStylePostTask } from './aws-ecs'
 
 // SalonMotion側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
@@ -104,8 +104,8 @@ function randomJobToken(): string {
  */
 async function dispatchStylePostJob(env: Bindings, userId: number, styleId: number, runId?: number): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
-  if (!env.AWS_ACCESS_KEY_ID || !env.AWS_SECRET_ACCESS_KEY || !env.AWS_REGION) {
-    throw new Error('AWSの認証情報(AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY/AWS_REGION)が未設定です')
+  if (!env.AWS_REGION) {
+    throw new Error('AWS_REGIONが未設定です')
   }
   if (!env.ECS_CLUSTER || !env.ECS_TASK_DEFINITION || !env.ECS_CONTAINER_NAME) {
     throw new Error('ECSクラスタ/タスク定義/コンテナ名が未設定です')
@@ -124,8 +124,6 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
 
   try {
     const { taskArn } = await runStylePostTask({
-      awsAccessKeyId: env.AWS_ACCESS_KEY_ID,
-      awsSecretAccessKey: env.AWS_SECRET_ACCESS_KEY,
       awsRegion: env.AWS_REGION,
       cluster: env.ECS_CLUSTER,
       taskDefinition: env.ECS_TASK_DEFINITION,
@@ -163,6 +161,23 @@ async function dispatchStylePostJob(env: Bindings, userId: number, styleId: numb
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 2026-08-13追記(重大バグ修正): このスタイルに対して既に進行中
+ * (pending/running)のジョブが無いかを確認する。last_executed_atは
+ * ジョブ完了時にしか更新されないため、これが無いと「投入してから
+ * 結果コールバックが届くまでの数分間」に同じスタイルへ何度も
+ * cron/手動実行から重複してジョブを投入してしまい、実質的な
+ * 二重投稿(SALON BOARDへの重複登録)を招く恐れがあった。
+ */
+async function hasInFlightJob(env: Bindings, styleId: number): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 as x FROM style_post_jobs WHERE style_id = ? AND status IN ('pending', 'running') LIMIT 1`
+  )
+    .bind(styleId)
+    .first<{ x: number }>()
+  return !!row
 }
 
 /** 指定ジョブが完了(pending/running以外の状態)になるまで待つ。複数スタイルの手動実行を1件ずつ順に処理するために使う。 */
@@ -217,6 +232,9 @@ export async function runStyleAutomationForUser(
   const { results } = await env.DB.prepare(
     `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+       AND NOT EXISTS (
+         SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
+       )
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT ${DAILY_POST_LIMIT}`
   )
@@ -225,7 +243,7 @@ export async function runStyleAutomationForUser(
 
   const targets = results || []
   if (targets.length === 0) {
-    throw new Error('投稿対象（自動投稿ON・入力完了済み）のスタイルがありません')
+    throw new Error('投稿対象（自動投稿ON・入力完了済み・進行中ジョブなし）のスタイルがありません')
   }
 
   const runInsert = await env.DB.prepare(
@@ -293,6 +311,9 @@ async function shouldPostNextStyle(env: Bindings, userId: number, nowLabel: stri
     `SELECT COUNT(*) as cnt FROM (
        SELECT s.id FROM styles s
        WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+         AND NOT EXISTS (
+           SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
+         )
        ORDER BY s.sort_order ASC, s.id ASC
        LIMIT ${DAILY_POST_LIMIT}
      )`
@@ -345,6 +366,9 @@ export async function runNextStyleForUser(
   const row = await env.DB.prepare(
     `SELECT s.id FROM styles s
      WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+       AND NOT EXISTS (
+         SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
+       )
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT 1`
   )
@@ -398,6 +422,9 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
     .first<{ id: number }>()
 
   if (!row) throw new Error('対象のスタイルが見つからないか、入力が未完了(ready状態でない)です')
+  if (await hasInFlightJob(env, styleId)) {
+    throw new Error('このスタイルは既に処理中のジョブがあります。完了を待ってから再実行してください')
+  }
 
   try {
     await dispatchStylePostJob(env, userId, styleId)
@@ -413,12 +440,28 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
  */
 export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT id, style_id, user_id FROM style_post_jobs
+    `SELECT id, style_id, user_id, ecs_task_arn FROM style_post_jobs
      WHERE status IN ('pending', 'running') AND created_at < (now() - interval '10 minutes')`
-  ).all<{ id: number; style_id: number; user_id: number }>()
+  ).all<{ id: number; style_id: number; user_id: number; ecs_task_arn: string | null }>()
 
   const staleJobs = results || []
   for (const j of staleJobs) {
+    // 2026-08-13追記(重大バグ修正): DB上でタイムアウト扱いにするだけでは
+    // 実際のFargateタスクは動き続け、後から(アプリ側が既に諦めた後で)
+    // 登録・反映申請が完了することがあった。この状態でユーザーが「再実行」
+    // すると、既に成功済みの投稿へもう一度別タスクが登録処理を行ってしまう
+    // (実質的な二重投稿)。タイムアウト判定と同時に実タスクへ明示的な停止を
+    // 要求する(失敗してもタイムアウト処理自体は継続する)。
+    if (j.ecs_task_arn && env.ECS_CLUSTER && env.AWS_REGION) {
+      await stopStylePostTask({
+        awsRegion: env.AWS_REGION,
+        cluster: env.ECS_CLUSTER,
+        taskArn: j.ecs_task_arn,
+        reason: 'ジョブがタイムアウトしたため停止'
+      }).catch((err) => {
+        console.error(`ジョブ${j.id}のFargateタスク(${j.ecs_task_arn})停止に失敗しました:`, err)
+      })
+    }
     await env.DB.prepare(
       `UPDATE style_post_jobs SET status = 'timeout',
          result_message = 'タイムアウト(10分以内に結果コールバックがありませんでした)',

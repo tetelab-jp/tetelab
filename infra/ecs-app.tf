@@ -162,6 +162,16 @@ resource "aws_ecs_service" "app" {
     container_port   = 3000
   }
 
+  # 2026-08-13追記(監査指摘の是正): デプロイサーキットブレーカーが未設定
+  # だったため、壊れたイメージをデプロイしても自動ロールバックされず、
+  # ヘルスチェックに失敗し続けるタスク定義がACTIVEのまま残って手動介入が
+  # 必須になっていた。ロールアウトが安定しない場合は自動的に直前の
+  # 正常なタスク定義へロールバックする。
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   depends_on = [aws_lb_listener.https]
 
   lifecycle {

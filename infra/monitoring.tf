@@ -53,6 +53,34 @@ resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
   ok_actions    = [aws_sns_topic.alerts.arn]
 }
 
+# 2026-08-13追記(監査指摘の是正): 「起動タスクが1件も無い(desired_count=1が
+# 0件になっている)」状態は、UnHealthyHostCountが0のまま(=登録済みホストが
+# ゼロで「異常」判定すらされない)推移し、かつこの場合ALBはターゲット起因
+# ではなくELB自身が503を返す(HTTPCode_ELB_5XX_Count、既存のalb_5xxは
+# HTTPCode_Target_5XX_Countのみを見ている)ため、既存の2つのアラームの
+# どちらにも掛からず、完全なサービス断が誰にも通知されないまま放置され
+# うる。HealthyHostCount(Minimum)が1未満になったら必ず検知する。
+resource "aws_cloudwatch_metric_alarm" "alb_healthy_hosts_low" {
+  alarm_name          = "${var.project_name}-alb-healthy-hosts-low"
+  comparison_operator = "LessThanThreshold"
+  evaluation_periods  = 2
+  metric_name         = "HealthyHostCount"
+  namespace           = "AWS/ApplicationELB"
+  period              = 60
+  statistic           = "Minimum"
+  threshold           = 1
+  # メトリクス自体が全く報告されない(タスクがターゲットグループに一切
+  # 登録されない状態)もサービス断の一種のため、欠測時も異常として扱う。
+  treat_missing_data = "breaching"
+  alarm_description  = "appタスクが1台も正常稼働していません(サービス全断の可能性)"
+  dimensions = {
+    TargetGroup  = aws_lb_target_group.app.arn_suffix
+    LoadBalancer = aws_lb.app.arn_suffix
+  }
+  alarm_actions = [aws_sns_topic.alerts.arn]
+  ok_actions    = [aws_sns_topic.alerts.arn]
+}
+
 # ---------- ECS app サービス: 高負荷 ----------
 # 「起動タスク数がdesired_countを下回っている」状態はContainer Insightsを
 # 有効化しないとメトリクスが取得できない(追加コストが発生する)ため、
@@ -154,14 +182,17 @@ resource "aws_cloudwatch_metric_alarm" "rds_connections_high" {
 
 # ---------- SALON BOARD投稿ワーカー: タスク異常終了の通知 ----------
 # ECS RunTaskで都度起動される投稿ワーカー(worker task definition)が
-# 異常終了(非ゼロ終了コード)した場合に通知する。正常完了(exitCode=0)
-# では発火しないよう、EventBridgeのイベントパターン側でexitCode!=0を
-# 直接絞り込むことはできないため、Lambdaを介さずSNSへ直接流し、
-# メール本文で内容を確認する簡易構成とする。
+# 異常終了(非ゼロ終了コード)した場合に通知する。Lambdaを介さずSNSへ
+# 直接流し、メール本文で内容を確認する簡易構成とする。
 
 resource "aws_cloudwatch_event_rule" "worker_task_stopped" {
-  name        = "${var.project_name}-worker-task-stopped"
-  description = "投稿ワーカータスクが停止した際に発火する(正常/異常問わず全件)"
+  name = "${var.project_name}-worker-task-stopped"
+  # 2026-08-13追記(監査指摘の是正): 元は正常終了(exitCode=0)も含む全件で
+  # 発火しており、通常運用でも1日に何十件も通知が届いていた。これでは
+  # アラート疲れで本当の異常(連続失敗)を見落とすリスクがある。
+  # containers[].exitCodeが0以外の要素を含む場合のみ(=実際に失敗した
+  # 場合のみ)発火するよう絞り込む。
+  description = "投稿ワーカータスクが異常終了(exitCode!=0)した際に発火する"
   event_pattern = jsonencode({
     source      = ["aws.ecs"]
     detail-type = ["ECS Task State Change"]
@@ -172,6 +203,9 @@ resource "aws_cloudwatch_event_rule" "worker_task_stopped" {
       # 前方一致で誤って拾わないようにする(family名のみの前方一致だと
       # "salonboard-worker" が "salonboard-worker-app:1" にもマッチしてしまうため)
       taskDefinitionArn = [{ prefix = "${aws_ecs_task_definition.worker.arn_without_revision}:" }]
+      containers = {
+        exitCode = [{ "anything-but" = 0 }]
+      }
     }
   })
 }

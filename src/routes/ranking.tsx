@@ -4,6 +4,7 @@ import { PageLayout } from '../components/layout'
 import { formatJstDateTime } from '../lib/date-format'
 import { measureRank } from '../lib/ranking-scraper'
 import { getPrimarySalonArea, buildAreaLabel, type PrimarySalonArea } from '../lib/ranking-areas'
+import { timingSafeEqual } from '../lib/crypto'
 import type { Bindings, AppUser } from '../types'
 
 const ranking = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -722,6 +723,19 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
     return c.json({ success: false, error: 'キーワードが登録されていません' }, 400)
   }
 
+  // 2026-08-13追記(重大バグ修正): 連打・複数タブからの同時POSTに対する
+  // 重複防止が無く、同じユーザーの計測runが並行して複数実行され得た
+  // (結果の重複・HPBへの過剰アクセスにつながる)。既に実行中のrunが
+  // あれば新規開始を拒否する。
+  const runningRun = await c.env.DB.prepare(
+    `SELECT id FROM ranking_runs WHERE user_id = ? AND status = 'running' LIMIT 1`
+  )
+    .bind(user.id)
+    .first<{ id: number }>()
+  if (runningRun) {
+    return c.json({ success: false, error: '既に計測が実行中です。完了までお待ちください' }, 409)
+  }
+
   const run = await c.env.DB.prepare(
     `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'manual', 'running')`
   )
@@ -1116,7 +1130,7 @@ ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
 ranking.post('/api/cron/run-ranking', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
   const expected = c.env.CRON_SECRET
-  if (!expected || authHeader !== `Bearer ${expected}`) {
+  if (!expected || !timingSafeEqual(authHeader, `Bearer ${expected}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
 

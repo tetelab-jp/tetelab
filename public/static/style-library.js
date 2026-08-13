@@ -128,7 +128,12 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!confirm('この画像を削除しますか？')) return
 
       try {
-        await fetch(`/style/library/delete/${imageId}`, { method: 'POST' })
+        const res = await fetch(`/style/library/delete/${imageId}`, { method: 'POST' })
+        const data = await res.json().catch(() => null)
+        if (!res.ok || !data || !data.success) {
+          alert('削除に失敗しました。')
+          return
+        }
         const card = document.querySelector(`[data-image-id="${imageId}"]`)
         if (card) card.remove()
         location.reload()

@@ -161,6 +161,13 @@ const bindings: Bindings = {
          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
        )`
     ).run()
+    // 2026-08-13追記(監査指摘の是正): 管理者ログインが破られると、なりすまし
+    // 機能(admin.tsx)経由で全サロンを乗っ取れてしまうため、サロン側同様
+    // ブルートフォース対策を追加する。
+    await bindings.DB.prepare(
+      `ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(`ALTER TABLE admin_users ADD COLUMN IF NOT EXISTS login_locked_until TIMESTAMP`).run()
   } catch (err) {
     console.error('起動時マイグレーション(admin_users/admin_audit_logs)に失敗しました:', err)
   }
@@ -172,6 +179,12 @@ const bindings: Bindings = {
     await bindings.DB.prepare(
       `ALTER TABLE users ADD COLUMN IF NOT EXISTS consecutive_failure_count INTEGER NOT NULL DEFAULT 0`
     ).run()
+    // 2026-08-13追記(監査指摘の是正): /login・/adminにブルートフォース対策
+    // (レート制限・アカウントロック)が一切無かったため追加する。
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_login_count INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS login_locked_until TIMESTAMP`).run()
     // 2026-08-12追記: 新規登録時、スタイル/ブログの自動投稿機能は管理者サイト
     // (/admin/tool)で有効化するまで使わせない運用に変更したため、列自体の既定値も
     // OFFへ変更する(新規登録時のINSERT文でも明示的に0を指定済みだが、念のため
@@ -182,15 +195,32 @@ const bindings: Bindings = {
     // 同様に管理者サイト(/admin/tool)で有効化するまで使わせない運用のためDEFAULT 0。
     // ただし、この列を追加する時点で既にフリーワード対策機能は全サロンへ提供済み
     // (docs/freeword-seo-handoff.md参照)だったため、列追加(=既存行が一律DEFAULT値で
-    // 埋まる)によって既存サロン全員が意図せずOFFになってしまう。そのため列追加後、
-    // 「1件も有効なサロンがいない」(=まだこの補正が行われていない状態)を検知した
-    // 場合に限り、既存行を一括で有効化する一度限りの補正を行う(管理者が意図的に
-    // OFFにしたサロンが1件でも出てくれば、この条件は二度と成立しなくなる)。
+    // 埋まる)によって既存サロン全員が意図せずOFFになってしまう。そのため列追加直後
+    // (一度限り)だけ、既存行を一括で有効化する補正を行う。
+    //
+    // 2026-08-13追記(重大バグ修正): 当初は「1件も有効なサロンがいない」ことを
+    // 条件にしていたが、これだと将来管理者が全サロンを意図的にOFFにした場合、
+    // 次回デプロイ・再起動のたびにこの条件が再び成立し、全サロンのSEO機能が
+    // 意図せず再ONになってしまう。実施済みかどうかを専用フラグテーブルで
+    // 記録し、二度と再実行されないようにする。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS schema_migration_flags (
+         flag_key TEXT PRIMARY KEY,
+         applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    ).run()
     await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS seo_enabled INTEGER NOT NULL DEFAULT 0`).run()
-    const anySeoEnabledRow = await bindings.DB.prepare('SELECT 1 FROM users WHERE seo_enabled = 1 LIMIT 1').first()
-    const totalUsersRow = await bindings.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>()
-    if (!anySeoEnabledRow && (totalUsersRow?.cnt ?? 0) > 0) {
-      await bindings.DB.prepare('UPDATE users SET seo_enabled = 1').run()
+    const seoBackfillDone = await bindings.DB.prepare(
+      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'seo_enabled_backfill'`
+    ).first()
+    if (!seoBackfillDone) {
+      const totalUsersRow = await bindings.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>()
+      if ((totalUsersRow?.cnt ?? 0) > 0) {
+        await bindings.DB.prepare('UPDATE users SET seo_enabled = 1').run()
+      }
+      await bindings.DB.prepare(
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('seo_enabled_backfill') ON CONFLICT (flag_key) DO NOTHING`
+      ).run()
     }
   } catch (err) {
     console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
@@ -269,8 +299,8 @@ app.use(renderer)
 // トップページ: ログイン状態に応じてリダイレクト
 app.get('/', async (c) => {
   const token = getCookie(c, SESSION_COOKIE_NAME)
-  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
-  if (token && (await verifyJwt(token, secret))) {
+  const secret = c.env.JWT_SECRET
+  if (token && secret && (await verifyJwt(token, secret))) {
     return c.redirect('/dashboard')
   }
   return c.redirect('/login')

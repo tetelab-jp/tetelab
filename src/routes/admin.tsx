@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie'
-import { hashPassword, verifyPassword } from '../lib/crypto'
+import { hashPassword, verifyPasswordConstantTime } from '../lib/crypto'
 import { signJwt, verifyJwt } from '../lib/jwt'
 import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth } from '../lib/admin-auth-middleware'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
@@ -54,7 +54,8 @@ async function setAdminSession(c: any, adminId: number, email: string) {
 // なりすましログイン用: サロン側auth.tsxのsetSession()と同じ組み立て方で、
 // 対象サロンの通常セッションCookie(session)をそのまま発行する(パスワードは一切扱わない)。
 async function impersonateSalonSession(c: any, userId: number, email: string) {
-  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
+  const secret = c.env.JWT_SECRET
+  if (!secret) throw new Error('JWT_SECRETが未設定です')
   const exp = Math.floor(Date.now() / 1000) + IMPERSONATE_SESSION_TTL_SECONDS
   const token = await signJwt({ sub: userId, email, exp }, secret)
   const isHttps = c.req.header('x-forwarded-proto') === 'https' || c.req.url.startsWith('https://')
@@ -114,22 +115,62 @@ admin.get('/admin', async (c) => {
   )
 })
 
+// 2026-08-13追記(監査指摘の是正): 管理者ログインが破られるとなりすまし
+// 機能経由で全サロンを乗っ取れてしまうため、ブルートフォース対策を追加する。
+const ADMIN_MAX_FAILED_LOGIN_ATTEMPTS = 10
+const ADMIN_LOGIN_LOCKOUT_MINUTES = 15
+
 admin.post('/admin', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '').trim().toLowerCase()
   const password = String(body.password || '')
+  const wrongCredsError = () =>
+    c.redirect('/admin?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
 
-  const adminRow = await c.env.DB.prepare('SELECT id, email, password_hash FROM admin_users WHERE email = ?')
+  const adminRow = await c.env.DB.prepare(
+    'SELECT id, email, password_hash, failed_login_count, login_locked_until FROM admin_users WHERE email = ?'
+  )
     .bind(email)
-    .first<{ id: number; email: string; password_hash: string }>()
+    .first<{
+      id: number
+      email: string
+      password_hash: string
+      failed_login_count: number
+      login_locked_until: string | null
+    }>()
 
-  if (!adminRow) {
-    return c.redirect('/admin?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  if (adminRow?.login_locked_until) {
+    const lockedUntilMs = new Date(adminRow.login_locked_until.replace(' ', 'T') + 'Z').getTime()
+    if (lockedUntilMs > Date.now()) {
+      return c.redirect(
+        '/admin?error=' +
+          encodeURIComponent('ログイン試行が続けて失敗したため、しばらく時間をおいてから再度お試しください')
+      )
+    }
   }
 
-  const valid = await verifyPassword(password, adminRow.password_hash)
-  if (!valid) {
-    return c.redirect('/admin?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
+  const valid = await verifyPasswordConstantTime(password, adminRow?.password_hash ?? null)
+
+  if (!adminRow || !valid) {
+    if (adminRow) {
+      await c.env.DB.prepare(
+        `UPDATE admin_users SET failed_login_count = failed_login_count + 1,
+           login_locked_until = CASE
+             WHEN failed_login_count + 1 >= ? THEN now() + (? || ' minutes')::interval
+             ELSE login_locked_until
+           END
+         WHERE id = ?`
+      )
+        .bind(ADMIN_MAX_FAILED_LOGIN_ATTEMPTS, ADMIN_LOGIN_LOCKOUT_MINUTES, adminRow.id)
+        .run()
+    }
+    return wrongCredsError()
+  }
+
+  if (adminRow.failed_login_count > 0 || adminRow.login_locked_until) {
+    await c.env.DB.prepare('UPDATE admin_users SET failed_login_count = 0, login_locked_until = NULL WHERE id = ?')
+      .bind(adminRow.id)
+      .run()
   }
 
   await setAdminSession(c, adminRow.id, adminRow.email)

@@ -5,7 +5,15 @@
 // Node.jsの`crypto`モジュールは使用不可のため、すべてWeb Crypto APIで実装
 // ============================================
 
-const PBKDF2_ITERATIONS = 100_000
+// 2026-08-13追記(監査指摘の是正): 100,000回は現行のOWASP推奨(PBKDF2-HMAC-SHA256で
+// 60万回程度)より低いため引き上げる。ただし反復回数を単純に定数変更すると、
+// 既存ユーザーのハッシュ("salt:hash"形式、100,000回で計算済み)がverifyPassword側の
+// 新しい反復回数と一致せず、既存ユーザー全員がログインできなくなってしまう。
+// そのため反復回数自体をハッシュ文字列に埋め込み("iterations:salt:hash")、
+// 検証時は保存済みの反復回数を使う後方互換方式にする(新規ハッシュのみ新しい
+// 回数を使う。旧形式=反復回数省略時は100,000回として扱う)。
+const PBKDF2_ITERATIONS = 600_000
+const PBKDF2_ITERATIONS_LEGACY = 100_000
 const ENC = new TextEncoder()
 const DEC = new TextDecoder()
 
@@ -31,7 +39,7 @@ function base64ToBuf(base64: string): Uint8Array<ArrayBuffer> {
 
 /**
  * パスワードをPBKDF2でハッシュ化する。
- * 戻り値形式: "base64(salt):base64(hash)"
+ * 戻り値形式: "iterations:base64(salt):base64(hash)"
  */
 export async function hashPassword(password: string): Promise<string> {
   const salt = crypto.getRandomValues(new Uint8Array(16))
@@ -52,14 +60,26 @@ export async function hashPassword(password: string): Promise<string> {
     keyMaterial,
     256
   )
-  return `${bufToBase64(salt)}:${bufToBase64(derivedBits)}`
+  return `${PBKDF2_ITERATIONS}:${bufToBase64(salt)}:${bufToBase64(derivedBits)}`
 }
 
 /**
  * パスワードが保存済みハッシュと一致するか検証する。
+ * 新形式("iterations:salt:hash")・旧形式("salt:hash"、反変回数省略=100,000回
+ * 扱い)の両方を受け付ける。
  */
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  const [saltB64, hashB64] = stored.split(':')
+  const parts = stored.split(':')
+  let iterations: number
+  let saltB64: string | undefined
+  let hashB64: string | undefined
+  if (parts.length === 3) {
+    iterations = Number(parts[0]) || PBKDF2_ITERATIONS_LEGACY
+    ;[, saltB64, hashB64] = parts
+  } else {
+    iterations = PBKDF2_ITERATIONS_LEGACY
+    ;[saltB64, hashB64] = parts
+  }
   if (!saltB64 || !hashB64) return false
   const salt = base64ToBuf(saltB64)
   const keyMaterial = await crypto.subtle.importKey(
@@ -73,7 +93,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
     {
       name: 'PBKDF2',
       salt,
-      iterations: PBKDF2_ITERATIONS,
+      iterations,
       hash: 'SHA-256'
     },
     keyMaterial,
@@ -84,7 +104,25 @@ export async function verifyPassword(password: string, stored: string): Promise<
   return timingSafeEqual(derivedB64, hashB64)
 }
 
-function timingSafeEqual(a: string, b: string): boolean {
+// 2026-08-13追記(監査指摘の是正): 未登録メールの場合はDB検索がヒットせず
+// PBKDF2検証自体をスキップして早期returnしていたため、登録済みメール
+// (PBKDF2検証まで進む分レスポンスが遅い)との応答時間差でメールアドレスの
+// 登録有無が推測できてしまっていた(ユーザー列挙)。呼び出し側で
+// stored=nullの場合もこの関数を経由してダミーハッシュに対する検証を
+// 走らせることで、両ケースの処理時間を揃える。
+const DUMMY_PASSWORD_HASH = `${PBKDF2_ITERATIONS}:${btoa('0'.repeat(16))}:${btoa('0'.repeat(32))}`
+
+/** storedがnull(該当ユーザー無し)でも同じ計算コストを払う版のverifyPassword。 */
+export async function verifyPasswordConstantTime(password: string, stored: string | null): Promise<boolean> {
+  if (stored === null) {
+    await verifyPassword(password, DUMMY_PASSWORD_HASH)
+    return false
+  }
+  return verifyPassword(password, stored)
+}
+
+/** Bearerトークン等の比較にも使う定数時間文字列比較。 */
+export function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
   let result = 0
   for (let i = 0; i < a.length; i++) {

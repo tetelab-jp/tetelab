@@ -10,7 +10,7 @@ import {
   getStyleNo,
   sweepStaleJobs
 } from '../lib/style-post-runner'
-import { decryptSecret } from '../lib/crypto'
+import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
 import { publishAlert } from '../lib/sns-alert'
 import type { Bindings, AppUser } from '../types'
@@ -21,14 +21,28 @@ import type { Bindings, AppUser } from '../types'
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
 
 async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, success: boolean): Promise<void> {
-  const before = await env.DB.prepare('SELECT consecutive_failure_count, email, salon_name FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ consecutive_failure_count: number; email: string; salon_name: string | null }>()
+  // 2026-08-13追記(重大バグ修正): SELECT→計算→UPDATEの非アトミックな
+  // read-modify-writeだと、同一ユーザーの複数ジョブ結果コールバックが
+  // 並行到達した場合にlost updateが起き、連続失敗カウントがずれて
+  // アラート判定が不正確になる恐れがあった。CTE+FOR UPDATEで行ロックを
+  // 取りつつ、旧値の取得と更新を単一のアトミックな文にまとめる。
+  const before = await env.DB.prepare(
+    `WITH old AS (
+       SELECT consecutive_failure_count AS prev_count, email, salon_name
+       FROM users WHERE id = ? FOR UPDATE
+     )
+     UPDATE users u
+     SET consecutive_failure_count = CASE WHEN ? THEN 0 ELSE old.prev_count + 1 END
+     FROM old
+     WHERE u.id = ?
+     RETURNING old.prev_count AS prev_count, u.consecutive_failure_count AS next_count, old.email AS email, old.salon_name AS salon_name`
+  )
+    .bind(userId, success, userId)
+    .first<{ prev_count: number; next_count: number; email: string; salon_name: string | null }>()
   if (!before) return
 
-  const prevCount = before.consecutive_failure_count
-  const nextCount = success ? 0 : prevCount + 1
-  await env.DB.prepare('UPDATE users SET consecutive_failure_count = ? WHERE id = ?').bind(nextCount, userId).run()
+  const prevCount = before.prev_count
+  const nextCount = before.next_count
 
   const wasFailing = prevCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
   const isFailing = nextCount >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
@@ -415,7 +429,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     .bind(jobId)
     .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
 
-  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
   if (job.status !== 'pending' && job.status !== 'running') {
@@ -497,7 +511,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
     .bind(jobId)
     .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string; run_id: number | null }>()
 
-  if (!job || authHeader !== `Bearer ${job.job_token}`) {
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
   // 既に結果を受信済み(二重コールバック・タイムアウト後の遅延コールバック等)は冪等に無視する
@@ -639,7 +653,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 automation.post('/api/cron/run-style-posts', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
   const expected = c.env.CRON_SECRET
-  if (!expected || authHeader !== `Bearer ${expected}`) {
+  if (!expected || !timingSafeEqual(authHeader, `Bearer ${expected}`)) {
     return c.json({ error: 'unauthorized' }, 401)
   }
 

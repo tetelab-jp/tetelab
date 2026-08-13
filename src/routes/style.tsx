@@ -677,13 +677,15 @@ function StyleForm({
   detail,
   stylists,
   coupons,
-  templates
+  templates,
+  imageError
 }: {
   mode: 'new' | 'edit'
   detail: StyleDetailRow | null
   stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
   templates: TemplateForAutofill[]
+  imageError?: boolean
 }) {
   const category = detail?.category_value || 'SG01'
   const menuCodes: string[] = detail ? JSON.parse(detail.menu_values_json || '[]') : []
@@ -699,6 +701,12 @@ function StyleForm({
       data-has-existing-image={detail?.front_style_image_id ? 'true' : 'false'}
       class="bg-white rounded-xl border border-gray-100 p-6 space-y-5 max-w-2xl"
     >
+      {imageError && (
+        <div class="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          画像の処理に失敗しました。別の画像でもう一度お試しください。
+        </div>
+      )}
       {mode === 'new' && templates.length > 0 && (
         <div class="bg-pink-50 border border-pink-100 rounded-lg p-3">
           <label class="block text-sm font-medium text-gray-700 mb-1">テンプレートから作成（任意）</label>
@@ -867,13 +875,15 @@ function StyleForm({
           {mode === 'new' ? '作成する' : '更新する'}
         </button>
         {mode === 'edit' && (
-          <a
-            href={`/style/${detail?.id}/delete`}
+          <button
+            type="submit"
+            formaction={`/style/${detail?.id}/delete`}
+            formmethod="post"
             onclick="return confirm('このスタイルを削除しますか？')"
             class="px-5 py-2.5 rounded-lg border border-red-200 text-red-500 text-sm font-semibold hover:bg-red-50"
           >
             削除
-          </a>
+          </button>
         )}
       </div>
       <script src="/static/style-form.js"></script>
@@ -901,6 +911,11 @@ style.get('/style/new', async (c) => {
   )
 })
 
+// public/static/style-form.jsのHASHTAGS_ALLOWED_PATTERNと同じ許可文字
+// (英数字・記号無し)。JSを経由しない直接POSTでも同じ制約を強制するため、
+// サーバー側でも同じパターンでフィルタする(部分一致ではなく1タグ丸ごと)。
+const HASHTAG_ALLOWED_PATTERN = /^[\p{L}\p{N}]+$/u
+
 function parseStyleForm(body: Record<string, any>) {
   const category = String(body.category_value || 'SG01') as 'SG01' | 'SG02'
   const lengthValue =
@@ -911,6 +926,7 @@ function parseStyleForm(body: Record<string, any>) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+    .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
 
   return {
     // 2026-08-09追記: 実際のサロンボードの文字数上限は30/50/120であり、
@@ -1017,7 +1033,17 @@ style.post('/style/new', async (c) => {
     .run()
 
   const styleId = Number(insert.meta.last_row_id)
-  await saveImageIfProvided(c, user, styleId, body)
+  try {
+    await saveImageIfProvided(c, user, styleId, body)
+  } catch (err: any) {
+    // 2026-08-13追記(重大バグ修正): 画像処理(sharp)が不正なファイル等で
+    // 例外を投げると、スタイル行は既にINSERT済みのまま素の500エラーで
+    // 終わっていた(内部ステータスがreadyのまま画像無しの中途半端な
+    // レコードが残る恐れもあった)。ステータスをdraftへ差し戻し、
+    // ユーザーへ編集画面でエラーを伝える。
+    await c.env.DB.prepare(`UPDATE styles SET internal_save_status = 'draft' WHERE id = ?`).bind(styleId).run().catch(() => {})
+    return c.redirect(`/style/${styleId}/edit?imageError=1`)
+  }
 
   return c.redirect('/style/library?saved=1')
 })
@@ -1049,7 +1075,14 @@ style.get('/style/:id/edit', async (c) => {
       title="スタイル編集"
       blogEnabled={user.blog_enabled !== 0}
     >
-      <StyleForm mode="edit" detail={detail} stylists={stylists} coupons={coupons} templates={[]} />
+      <StyleForm
+        mode="edit"
+        detail={detail}
+        stylists={stylists}
+        coupons={coupons}
+        templates={[]}
+        imageError={c.req.query('imageError') === '1'}
+      />
     </PageLayout>,
     { title: 'スタイル編集' }
   )
@@ -1066,7 +1099,11 @@ style.post('/style/:id/edit', async (c) => {
     .first<{ id: number }>()
   if (!owned) return c.notFound()
 
-  await saveImageIfProvided(c, user, id, body)
+  try {
+    await saveImageIfProvided(c, user, id, body)
+  } catch (err: any) {
+    return c.redirect(`/style/${id}/edit?imageError=1`)
+  }
 
   const hasImage = await c.env.DB.prepare(
     `SELECT id FROM style_images WHERE style_id = ? AND image_role = 'FRONT'`
@@ -1104,9 +1141,19 @@ style.post('/style/:id/edit', async (c) => {
   return c.redirect('/style/library?saved=1')
 })
 
-style.get('/style/:id/delete', async (c) => {
+style.post('/style/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
+
+  // 2026-08-13追記(重大バグ修正): 所有権チェックをせずstyle_idだけでS3画像を
+  // 削除していたため、他サロンのstyle_idを指定すればそのサロンの画像を
+  // 削除できてしまっていた(DB行自体はuser_id条件で守られていたが、
+  // 画像だけが孤立して消える実害があった)。まずstyles.user_idで所有権を
+  // 確認してから画像削除に進む。
+  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ?')
+    .bind(id, user.id)
+    .first<{ id: number }>()
+  if (!owned) return c.redirect('/style/library?deleted=1')
 
   const images = await c.env.DB.prepare('SELECT r2_key FROM style_images WHERE style_id = ?').bind(id).all<{ r2_key: string }>()
   for (const img of images.results || []) {
@@ -1711,13 +1758,15 @@ function TemplateForm({
           {mode === 'new' ? '作成する' : '更新する'}
         </button>
         {mode === 'edit' && (
-          <a
-            href={`/style/template/${detail?.id}/delete`}
+          <button
+            type="submit"
+            formaction={`/style/template/${detail?.id}/delete`}
+            formmethod="post"
             onclick="return confirm('このテンプレートを削除しますか？')"
             class="px-5 py-2.5 rounded-lg border border-red-200 text-red-500 text-sm font-semibold hover:bg-red-50"
           >
             削除
-          </a>
+          </button>
         )}
       </div>
       <script src="/static/style-form.js"></script>
@@ -1735,6 +1784,7 @@ function parseTemplateForm(body: Record<string, any>) {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
+    .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
 
   return {
     templateName: String(body.template_name || '').trim(),
@@ -1872,7 +1922,7 @@ style.post('/style/template/:id/edit', async (c) => {
   return c.redirect('/style/template?saved=1')
 })
 
-style.get('/style/template/:id/delete', async (c) => {
+style.post('/style/template/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   await c.env.DB.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?').bind(id, user.id).run()

@@ -111,18 +111,21 @@ document.addEventListener('DOMContentLoaded', () => {
           } else if (executeStatusEl) {
             executeStatusEl.textContent = '登録スタイルページをご確認ください'
           }
+          // 2026-08-13追記(重大バグ修正): 成功時はこの後リダイレクトするだけなので、
+          // ボタンを再度有効化してしまうと5秒の待機中に連打され重複した取り込み
+          // リクエストが送られてしまっていた。成功時はボタンを無効なままにする。
           setTimeout(() => {
             window.location.href = '/style/library'
           }, 5000)
+          return
         } else if (executeStatusEl) {
           executeStatusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
         }
       } catch (e) {
         if (executeStatusEl) executeStatusEl.textContent = '通信エラーが発生しました'
-      } finally {
-        executeBtn.disabled = false
-        if (executeBtnLabel) executeBtnLabel.textContent = '選択したスタイルを取り込む'
       }
+      executeBtn.disabled = false
+      if (executeBtnLabel) executeBtnLabel.textContent = '選択したスタイルを取り込む'
     })
   }
 })

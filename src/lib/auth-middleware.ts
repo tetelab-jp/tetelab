@@ -14,9 +14,15 @@ export async function requireAuth(
   c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
   next: Next
 ) {
-  const token = getCookie(c, SESSION_COOKIE_NAME)
-  const secret = c.env.JWT_SECRET || 'dev-insecure-secret-change-me'
+  const secret = c.env.JWT_SECRET
+  if (!secret) {
+    // ADMIN_JWT_SECRET同様、未設定時に固定文字列へフォールバックすると
+    // その固定文字列を知る第三者が任意ユーザーのセッションを偽造できて
+    // しまうため、フォールバックせず設定不備として明確にエラーにする。
+    return c.text('認証の設定が不足しています(JWT_SECRET未設定)', 500)
+  }
 
+  const token = getCookie(c, SESSION_COOKIE_NAME)
   if (!token) {
     return redirectOrUnauthorized(c)
   }
