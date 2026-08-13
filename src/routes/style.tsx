@@ -1417,9 +1417,16 @@ style.get('/style/schedule', async (c) => {
       </form>
 
       {isPaused && (
-        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700">
-          <i class="fas fa-triangle-exclamation mr-2"></i>
-          5件連続で投稿が失敗したため、自動投稿を一時停止しています。5時間経過後に自動的に再開します。
+        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700 flex items-center justify-between gap-4 flex-wrap">
+          <span>
+            <i class="fas fa-triangle-exclamation mr-2"></i>
+            5件連続で投稿が失敗したため、自動投稿を一時停止しています。5時間経過後に自動的に再開します。
+          </span>
+          <form method="post" action="/style/schedule/clear-pause">
+            <button type="submit" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-700 hover:bg-red-100">
+              今すぐ再開する
+            </button>
+          </form>
         </div>
       )}
 
@@ -1506,6 +1513,21 @@ style.post('/style/schedule', async (c) => {
       .run()
   }
 
+  return c.redirect('/style/schedule?saved=1')
+})
+
+// 2026-08-14追記(ユーザー指定): 5件連続失敗による5時間の自動一時停止を、
+// ユーザーの判断で今すぐ解除できるようにする(原因が解消したにも関わらず
+// 5時間待つ必要がないようにするため)。連続失敗カウント自体もリセットし、
+// 解除直後にまた5件連続失敗と判定されて即座に再度停止することを防ぐ。
+style.post('/style/schedule/clear-pause', async (c) => {
+  const user = c.get('user')
+  await c.env.DB.prepare(
+    `UPDATE style_post_schedules SET paused_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+  )
+    .bind(user.id)
+    .run()
+  await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
   return c.redirect('/style/schedule?saved=1')
 })
 
