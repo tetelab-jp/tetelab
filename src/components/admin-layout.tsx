@@ -5,8 +5,8 @@
 export type AdminNavKey = 'admin-salons' | 'admin-tool' | 'admin-status'
 
 const ADMIN_NAV_ITEMS: { key: AdminNavKey; href: string; icon: string; label: string }[] = [
-  { key: 'admin-salons', href: '/admin/salons', icon: 'fa-store', label: 'サロン一覧' },
-  { key: 'admin-tool', href: '/admin/tool', icon: 'fa-toggle-on', label: '契約設定' },
+  { key: 'admin-salons', href: '/admin/salons', icon: 'fa-store', label: '契約サロン一覧' },
+  { key: 'admin-tool', href: '/admin/tool', icon: 'fa-toggle-on', label: '機能設定' },
   { key: 'admin-status', href: '/admin/status', icon: 'fa-heart-pulse', label: '稼働状況' }
 ]
 
