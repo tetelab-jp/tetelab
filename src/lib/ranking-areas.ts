@@ -30,22 +30,38 @@ export async function getPrimarySalonArea(
   userId: number,
   fallbackName: string | null
 ): Promise<PrimarySalonArea | null> {
-  const row = await env.DB.prepare(
-    `SELECT salon_name, hpb_sln_id, service_area_cd, middle_area_cd, middle_area_name,
-            small_area_cd, small_area_name, area_synced_at
-     FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`
-  )
+  type SalonAreaRow = {
+    salon_name: string
+    hpb_sln_id: string | null
+    service_area_cd: string | null
+    middle_area_cd: string | null
+    middle_area_name: string | null
+    small_area_cd: string | null
+    small_area_name: string | null
+    area_synced_at: string | null
+  }
+  const AREA_COLUMNS = `salon_name, hpb_sln_id, service_area_cd, middle_area_cd, middle_area_name,
+            small_area_cd, small_area_name, area_synced_at`
+
+  // 複数サロンアカウント対応: salon_credentials.target_store_idで選択済みの
+  // サロンがあれば優先する(salon_key=STORE_IDで照合)。未選択(単一サロン
+  // アカウント等、従来通りの大多数のケース)の場合は、これまで通り
+  // 先頭行にフォールバックする。
+  const cred = await env.DB.prepare('SELECT target_store_id FROM salon_credentials WHERE user_id = ?')
     .bind(userId)
-    .first<{
-      salon_name: string
-      hpb_sln_id: string | null
-      service_area_cd: string | null
-      middle_area_cd: string | null
-      middle_area_name: string | null
-      small_area_cd: string | null
-      small_area_name: string | null
-      area_synced_at: string | null
-    }>()
+    .first<{ target_store_id: string | null }>()
+
+  let row: SalonAreaRow | null = null
+  if (cred?.target_store_id) {
+    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? AND salon_key = ?`)
+      .bind(userId, cred.target_store_id)
+      .first<SalonAreaRow>()
+  }
+  if (!row) {
+    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`)
+      .bind(userId)
+      .first<SalonAreaRow>()
+  }
 
   if (row) {
     return {

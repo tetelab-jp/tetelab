@@ -384,6 +384,90 @@ export async function loginToSalonBoard(
 }
 
 /**
+ * 複数サロンアカウント対応。
+ *
+ * SALON BOARDの一部アカウントは1つのログインID/パスワードに複数サロン
+ * (ヘアサロン・キレイサロン(ネイル/まつげ等))が紐づいており、ログイン直後に
+ * 通常のダッシュボードではなく「サロン一覧」中間ページ(`/CNC/groupTop/`)へ
+ * 遷移する。対象サロンの`<a id="{STORE_ID}">`をクリックしないと実際の管理画面
+ * に入れない。この中間ページが出てもヘア+キレイ合計1件だけなら自動選択でき、
+ * 2件以上ある場合のみユーザーに選択してもらう必要がある。
+ *
+ * ヘアサロンテーブルの正確なid/classは未確認のため、`alt`に「ヘアサロン」を
+ * 含む画像の次に来る`.mod_box_21`内の`<table>`という構造的探索でフォール
+ * バックしている。キレイサロンテーブルは`#kireiStoreInfoArea`と確認済み。
+ */
+export type SalonListEntry = { storeId: string; name: string; type: 'hair' | 'kirei' }
+export type GroupTopResult =
+  | { status: 'not_on_group_top' }
+  | { status: 'resolved'; storeId: string; salons: SalonListEntry[] }
+  | { status: 'needs_selection'; salons: SalonListEntry[] }
+  | { status: 'target_not_found'; salons: SalonListEntry[] }
+
+export async function handleGroupTopIfPresent(
+  page: Page,
+  targetStoreId: string | null | undefined,
+  log: AutomationLogger
+): Promise<GroupTopResult> {
+  if (!page.url().includes('/CNC/groupTop/')) {
+    return { status: 'not_on_group_top' }
+  }
+  log('複数サロンアカウントの「サロン一覧」画面を検知しました')
+
+  const salons: SalonListEntry[] = await page.evaluate(() => {
+    const rows: { storeId: string; name: string; type: 'hair' | 'kirei' }[] = []
+    const extractRows = (table: Element | null, type: 'hair' | 'kirei') => {
+      if (!table) return
+      table.querySelectorAll('tbody tr').forEach((tr) => {
+        const link = tr.querySelector('a[id]') as HTMLAnchorElement | null
+        if (!link) return
+        const storeId = link.id.trim()
+        const name = (link.textContent || '').trim()
+        if (storeId) rows.push({ storeId, name, type })
+      })
+    }
+
+    const kireiTable = document.querySelector('#kireiStoreInfoArea')
+    extractRows(kireiTable, 'kirei')
+
+    const hairImg = Array.from(document.querySelectorAll('img')).find((img) =>
+      (img.getAttribute('alt') || '').includes('ヘアサロン')
+    )
+    const hairBox = hairImg?.nextElementSibling
+    const hairTable = hairBox?.querySelector('table') || null
+    extractRows(hairTable, 'hair')
+
+    return rows
+  })
+
+  log(`サロン一覧: ${salons.map((s) => `${s.type}:${s.storeId}(${s.name})`).join(', ') || '(取得できませんでした)'}`)
+
+  const clickAndWait = async (storeId: string) => {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+      page.click(`#${storeId}`)
+    ])
+  }
+
+  if (targetStoreId && salons.some((s) => s.storeId === targetStoreId)) {
+    log(`選択済みのサロン(${targetStoreId})をクリックします`)
+    await clickAndWait(targetStoreId)
+    return { status: 'resolved', storeId: targetStoreId, salons }
+  }
+
+  if (!targetStoreId && salons.length === 1) {
+    log(`サロンが1件のみのため自動的に選択します(${salons[0].storeId})`)
+    await clickAndWait(salons[0].storeId)
+    return { status: 'resolved', storeId: salons[0].storeId, salons }
+  }
+
+  if (targetStoreId) {
+    return { status: 'target_not_found', salons }
+  }
+  return { status: 'needs_selection', salons }
+}
+
+/**
  * 1件のスタイル画像を「登録（下書き保存）」する。
  * 反映申請は含まない（別途 submitReflectApplication を呼ぶ必要がある）。
  */

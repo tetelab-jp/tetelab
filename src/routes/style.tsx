@@ -2,7 +2,7 @@ import { Hono, type Context } from 'hono'
 import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
-import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
+import { launchBrowser, newAutomationPage, loginToSalonBoard, handleGroupTopIfPresent } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
 import { processStyleImage } from '../lib/image-process'
 import { INITIAL_BURST_COUNT, resetStuckJobsForUser } from '../lib/style-post-runner'
@@ -576,13 +576,32 @@ style.get('/style/import', async (c) => {
   )
 })
 
+/**
+ * 複数サロンアカウント対応: ログイン直後に「サロン一覧」中間ページが出た場合、
+ * salon_credentials.target_store_idで対象を確定させる。未選択の場合は
+ * 設定画面でサロンを選び直すよう案内するエラーを投げる(ここでは新規に
+ * 選択フローを開始しない。選択は/api/settings/sync-stylists-couponsで行う)。
+ */
+async function ensureSalonSelected(
+  page: any,
+  targetStoreId: string | null | undefined,
+  log: (msg: string) => void
+): Promise<void> {
+  const result = await handleGroupTopIfPresent(page, targetStoreId, log)
+  if (result.status === 'needs_selection' || result.status === 'target_not_found') {
+    throw new Error(
+      'このアカウントには複数のサロンが登録されています。設定画面の「サロンボードと同期する」で使用するサロンを選択してください'
+    )
+  }
+}
+
 style.post('/api/style/import/fetch-list', async (c) => {
   const user = c.get('user')
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, salonboard_password_enc, target_store_id FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string; target_store_id: string | null }>()
 
   if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
   if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
@@ -595,6 +614,7 @@ style.post('/api/style/import/fetch-list', async (c) => {
     browser = await launchBrowser()
     const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+    await ensureSalonSelected(page, cred.target_store_id, () => {})
 
     const list = await fetchExistingStyles(page, () => {})
     return c.json({ success: true, styles: list })
@@ -614,10 +634,10 @@ style.post('/api/style/import/execute', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, salonboard_password_enc, target_store_id FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string; target_store_id: string | null }>()
 
   if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
   if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
@@ -630,6 +650,7 @@ style.post('/api/style/import/execute', async (c) => {
     browser = await launchBrowser()
     const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+    await ensureSalonSelected(page, cred.target_store_id, () => {})
 
     const result = await importSelectedStyles(page, c.env, user.id, styleIds, () => {})
     return c.json({ success: true, ...result })

@@ -2,8 +2,14 @@ import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
 import { encryptSecret, decryptSecret } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
-import { launchBrowser, newAutomationPage, loginToSalonBoard } from '../lib/salonboard-automation'
-import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea } from '../lib/salonboard-sync'
+import {
+  launchBrowser,
+  newAutomationPage,
+  loginToSalonBoard,
+  handleGroupTopIfPresent,
+  type SalonListEntry
+} from '../lib/salonboard-automation'
+import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea, upsertSalonInfo } from '../lib/salonboard-sync'
 import { formatJstDateTime, formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
@@ -127,6 +133,7 @@ dashboard.get('/dashboard', async (c) => {
             </div>
           </div>
           <p id="sync-stylists-coupons-status" class="text-sm"></p>
+          <div id="salon-select-area"></div>
         </div>
       )}
 
@@ -472,10 +479,10 @@ dashboard.post('/settings/salonboard', async (c) => {
 dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
   const user = c.get('user')
   const cred = await c.env.DB.prepare(
-    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+    'SELECT salonboard_login_id_enc, salonboard_password_enc, target_store_id FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
-    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string; target_store_id: string | null }>()
 
   if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
   if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
@@ -498,6 +505,37 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     await loginToSalonBoard(page, loginId, password, collectLog, c.env, user.id)
     console.log(`[sync-stylists-coupons] user=${user.id} ログイン成功、同期開始`)
 
+    // 複数サロンアカウント対応: ログイン直後に「サロン一覧」中間ページが出た場合、
+    // 対象サロンを確定させる(未確定かつ2件以上ある場合はユーザーに選択してもらう)
+    const groupTopResult = await handleGroupTopIfPresent(page, cred.target_store_id, collectLog)
+    if (groupTopResult.status === 'needs_selection' || groupTopResult.status === 'target_not_found') {
+      await upsertSalonListFromGroupTop(c.env, user.id, groupTopResult.salons)
+      return c.json({
+        success: false,
+        needsSalonSelection: true,
+        salons: groupTopResult.salons,
+        error:
+          groupTopResult.status === 'target_not_found'
+            ? '以前選択したサロンが見つかりませんでした。サロンを選び直してください'
+            : 'このアカウントには複数のサロンが登録されています。使用するサロンを選択してください'
+      })
+    }
+    if (groupTopResult.status === 'resolved') {
+      await upsertSalonListFromGroupTop(c.env, user.id, groupTopResult.salons)
+      if (!cred.target_store_id) {
+        await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
+          .bind(groupTopResult.storeId, user.id)
+          .run()
+      }
+      const resolvedSalon = groupTopResult.salons.find((s) => s.storeId === groupTopResult.storeId)
+      if (resolvedSalon?.type === 'kirei') {
+        // キレイサロン(ネイル/まつげ等)にはスタイル機能が存在しないため無効化する
+        await c.env.DB.prepare('UPDATE users SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+          .bind(user.id)
+          .run()
+      }
+    }
+
     // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
     const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
     if (salonInfo?.storeId) {
@@ -518,6 +556,38 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
   } finally {
     if (browser) await browser.close().catch(() => {})
   }
+})
+
+/** 複数サロン一覧(handleGroupTopIfPresentの結果)をsalonboard_salonsへ一括upsertする */
+async function upsertSalonListFromGroupTop(env: Bindings, userId: number, salons: SalonListEntry[]): Promise<void> {
+  for (const salon of salons) {
+    await upsertSalonInfo(env, userId, { storeId: salon.storeId, salonName: salon.name }, salon.type)
+  }
+}
+
+dashboard.post('/api/settings/select-salon', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const storeId = String(body.storeId || '').trim()
+  if (!storeId) return c.json({ success: false, error: 'storeIdが指定されていません' }, 400)
+
+  const salon = await c.env.DB.prepare(
+    'SELECT salon_type FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
+  )
+    .bind(user.id, storeId)
+    .first<{ salon_type: string | null }>()
+  if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
+
+  await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
+    .bind(storeId, user.id)
+    .run()
+  if (salon.salon_type === 'kirei') {
+    await c.env.DB.prepare('UPDATE users SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(user.id)
+      .run()
+  }
+
+  return c.json({ success: true })
 })
 
 function maskLoginId(loginId: string): string {

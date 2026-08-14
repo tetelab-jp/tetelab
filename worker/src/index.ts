@@ -18,6 +18,7 @@ import {
   submitReflectApplication,
   launchBrowser,
   closeAnonymizedProxy,
+  handleGroupTopIfPresent,
   ReflectionBlockedError,
   type StylePostInput,
   type LaunchedBrowser
@@ -33,6 +34,9 @@ type JobPayload = {
   // 再試行する挙動を踏襲)。ここに含まれない適当な乱数セッションIDへ
   // フォールバックすると、そのIPの実績を後で記録できなくなるため使わない。
   proxySessionCandidates?: string[] | null
+  // 複数サロンアカウント対応: ログイン後の「サロン一覧」中間ページで
+  // クリックすべき対象サロンのSTORE_ID。未選択(単一サロンアカウント等)ならnull。
+  targetStoreId?: string | null
   style: Omit<StylePostInput, 'imageBuffer'> & { imageBase64: string }
 }
 
@@ -137,6 +141,17 @@ async function attemptLogin(
     const page = await newAutomationPage(launched.browser, log)
     try {
       await loginToSalonBoard(page, payload.loginId, payload.password, log)
+      // 複数サロンアカウント対応: ログイン直後に「サロン一覧」中間ページが
+      // 出た場合、対象サロンを確定させる。ワーカーはユーザーに質問できない
+      // ため、確定できない場合(未選択で2件以上、または選択済みSTORE_IDが
+      // 見つからない)は明確なエラーとして失敗させる。
+      const groupTopResult = await handleGroupTopIfPresent(page, payload.targetStoreId, log)
+      if (groupTopResult.status === 'needs_selection' || groupTopResult.status === 'target_not_found') {
+        throw new Error(
+          'サロン選択が必要です。設定画面でサロンを選び直してください' +
+            `(検出されたサロン: ${groupTopResult.salons.map((s) => `${s.type}:${s.storeId}(${s.name})`).join(', ') || 'なし'})`
+        )
+      }
       // 2026-08-13追記: ログイン直後のURL(トップページ)を控えておく。
       // 画像アップロード失敗時、再ログインではなくこのURLへ戻って同じ
       // セッションのままやり直すために使う(runJob参照)。

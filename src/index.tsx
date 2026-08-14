@@ -412,6 +412,15 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_articles.auto_post_enabled_flag)に失敗しました:', err)
   }
   try {
+    // 2026-08-14(ユーザー指定): サロンボードの1ログインに複数サロン(ヘア/キレイ)が
+    // 紐づくアカウント対応。ユーザーが選択した(または単一サロンのため自動確定した)
+    // STORE_IDと、サロン種別(ヘア/キレイ)を保持する。
+    await bindings.DB.prepare(`ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS target_store_id TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS salon_type TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_credentials.target_store_id等)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

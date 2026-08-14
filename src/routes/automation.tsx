@@ -417,7 +417,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   }
 
   const cred = await c.env.DB.prepare(
-    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id, target_store_id
      FROM salon_credentials WHERE user_id = ?`
   )
     .bind(job.user_id)
@@ -425,6 +425,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
       salonboard_login_id_enc: string
       salonboard_password_enc: string
       last_successful_proxy_session_id: string | null
+      target_store_id: string | null
     }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
@@ -461,6 +462,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     loginId,
     password,
     proxySessionCandidates,
+    targetStoreId: cred.target_store_id || null,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),

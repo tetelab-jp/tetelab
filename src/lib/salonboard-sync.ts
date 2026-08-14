@@ -201,7 +201,12 @@ export async function fetchSalonInfoFromSalonBoard(page: Page): Promise<SyncedSa
  * 取得したサロン情報を salonboard_salons へupsertする。
  * 照合は (user_id, salon_key=STORE_ID)。STORE_IDが取れない場合はサロン名で照合。
  */
-export async function upsertSalonInfo(env: Bindings, userId: number, info: SyncedSalonInfo): Promise<void> {
+export async function upsertSalonInfo(
+  env: Bindings,
+  userId: number,
+  info: SyncedSalonInfo,
+  salonType?: 'hair' | 'kirei' | null
+): Promise<void> {
   const salonName = info.salonName || '(サロン名未取得)'
   const storeId = info.storeId || null
   const hpbSlnId = storeId ? `sln${storeId}` : null
@@ -221,17 +226,27 @@ export async function upsertSalonInfo(env: Bindings, userId: number, info: Synce
       .first<{ id: number }>()
   }
 
+  // salonTypeが指定されない場合(単一サロンの通常ログイン同期等、種別が分からない)は
+  // 既存のsalon_type列を上書きしない。複数サロン一覧から取得した場合のみ指定される。
   if (existing) {
-    await env.DB.prepare(
-      `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(salonName, storeId, hpbSlnId, existing.id)
-      .run()
+    if (salonType) {
+      await env.DB.prepare(
+        `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, salon_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(salonName, storeId, hpbSlnId, salonType, existing.id)
+        .run()
+    } else {
+      await env.DB.prepare(
+        `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(salonName, storeId, hpbSlnId, existing.id)
+        .run()
+    }
   } else {
     await env.DB.prepare(
-      `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, hpb_sln_id) VALUES (?, ?, ?, ?)`
+      `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, hpb_sln_id, salon_type) VALUES (?, ?, ?, ?, ?)`
     )
-      .bind(userId, storeId, salonName, hpbSlnId)
+      .bind(userId, storeId, salonName, hpbSlnId, salonType || null)
       .run()
   }
 }

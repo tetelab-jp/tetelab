@@ -83,13 +83,31 @@ function buildFooterText(salonName: string | null, profile: SalonProfileRow | nu
   return lines.join('\n')
 }
 
+type SalonAreaLookupRow = { salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }
+
+// 複数サロンアカウント対応: salon_credentials.target_store_idで選択済みのサロンが
+// あれば優先する(salon_key=STORE_IDで照合)。未選択(単一サロンアカウント等、
+// 従来通りの大多数のケース)の場合は、これまで通り先頭行にフォールバックする。
+async function getSalonForProfile(c: AppContext, userId: number): Promise<SalonAreaLookupRow | null> {
+  const AREA_COLUMNS = 'salon_name, middle_area_name, small_area_name'
+  const cred = await c.env.DB.prepare('SELECT target_store_id FROM salon_credentials WHERE user_id = ?')
+    .bind(userId)
+    .first<{ target_store_id: string | null }>()
+  if (cred?.target_store_id) {
+    const row = await c.env.DB.prepare(
+      `SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? AND salon_key = ?`
+    )
+      .bind(userId, cred.target_store_id)
+      .first<SalonAreaLookupRow>()
+    if (row) return row
+  }
+  return c.env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(userId)
+    .first<SalonAreaLookupRow>()
+}
+
 async function getSalonProfileForGeneration(c: AppContext, userId: number): Promise<SalonProfileForGeneration> {
-  const [profile, salon] = await Promise.all([
-    getSalonProfile(c, userId),
-    c.env.DB.prepare('SELECT salon_name, middle_area_name, small_area_name FROM salonboard_salons WHERE user_id = ? LIMIT 1')
-      .bind(userId)
-      .first<{ salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }>()
-  ])
+  const [profile, salon] = await Promise.all([getSalonProfile(c, userId), getSalonForProfile(c, userId)])
   if (!profile) return null
   const areaLabel = [salon?.middle_area_name, salon?.small_area_name].filter(Boolean).join(' > ') || null
   return {
