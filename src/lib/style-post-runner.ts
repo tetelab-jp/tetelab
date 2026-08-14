@@ -202,7 +202,9 @@ async function dispatchStylePostJob(
   env: Bindings,
   userId: number,
   styleId: number,
-  runId?: number
+  runId?: number,
+  isRetry?: boolean,
+  isAutoCycle?: boolean
 ): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_REGION) {
@@ -216,10 +218,18 @@ async function dispatchStylePostJob(
   }
 
   const jobToken = randomJobToken()
+  // このジョブが「1回だけの自動再トライ」由来かをis_retryに記録しておく。
+  // 再トライ由来のジョブが失敗しても、automation.tsx側の結果コールバックが
+  // is_retryを見てさらに新たな再トライを予約しないようにする(そうしないと
+  // 再トライの失敗がまた再トライを生み、無限ループになる)。
+  // is_auto_cycleは、このジョブが60分おきの自動巡回(runNextStyleForUser)
+  // 由来かを記録する。手動投稿(テスト実行・個別再実行ボタン)の失敗からは
+  // 再トライを予約しないため(ユーザー指定ルール)、automation.tsx側の結果
+  // コールバックはこのフラグを見て再トライ予約の可否を判定する。
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id) VALUES (?, ?, ?, 'pending', ?)`
+    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id, is_retry, is_auto_cycle) VALUES (?, ?, ?, 'pending', ?, ?, ?)`
   )
-    .bind(styleId, userId, jobToken, runId ?? null)
+    .bind(styleId, userId, jobToken, runId ?? null, isRetry ? 1 : 0, isAutoCycle ? 1 : 0)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -450,6 +460,7 @@ type ScheduleState = {
   burst_remaining: number
   next_cursor_style_id: number | null
   paused_until: string | null
+  retry_pending_style_id: number | null
 }
 
 /**
@@ -561,7 +572,7 @@ export async function runNextStyleForUser(
   scheduledTimeLabel: string
 ): Promise<RunSummary | null> {
   const schedule = await env.DB.prepare(
-    `SELECT burst_remaining, next_cursor_style_id, paused_until
+    `SELECT burst_remaining, next_cursor_style_id, paused_until, retry_pending_style_id
      FROM style_post_schedules WHERE user_id = ?`
   )
     .bind(userId)
@@ -572,7 +583,29 @@ export async function runNextStyleForUser(
 
   await requireCredentialsConfigured(env, userId)
 
-  const styleId = await selectNextStyleId(env, userId, schedule)
+  // 2026-08-14追記(ユーザー指定ルール): エラーが出たスタイルは、次の自動投稿
+  // タイミング(60分後)に1回だけ再トライする(通常のバースト/巡回選定より
+  // 優先する)。3回目の再トライは行わない。手動投稿(テスト実行・個別再実行)
+  // には適用しない(この関数は60分おきの自動巡回からのみ呼ばれるため)。
+  let isRetrySlot = false
+  let styleId: number | null = null
+  if (schedule.retry_pending_style_id) {
+    if (await isStyleEligible(env, userId, schedule.retry_pending_style_id)) {
+      isRetrySlot = true
+      styleId = schedule.retry_pending_style_id
+    } else {
+      // 対象が既に無効(OFF・削除等)になっている場合は再トライ枠を放棄し、
+      // 通常の巡回選定にフォールバックする。
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(userId)
+        .run()
+    }
+  }
+  if (!styleId) {
+    styleId = await selectNextStyleId(env, userId, schedule)
+  }
   if (!styleId) return null
 
   const runInsert = await env.DB.prepare(
@@ -592,7 +625,16 @@ export async function runNextStyleForUser(
   // 進めるようにする(投稿自体の成否はワーカーの結果コールバックが別途
   // 判定するため、ここでの「進める」は投稿の成功を意味しない)。
   const advanceSchedule = async () => {
-    if (schedule.burst_remaining > 0) {
+    if (isRetrySlot) {
+      // 再トライ枠は結果(成功/失敗)に関わらずここで使い切る(3回目はしない)。
+      // バースト残数/巡回カーソルは元々このスタイルの選定に使っていないため
+      // 進めない。
+      await env.DB.prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      )
+        .bind(userId)
+        .run()
+    } else if (schedule.burst_remaining > 0) {
       await env.DB.prepare(
         `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
       )
@@ -608,7 +650,7 @@ export async function runNextStyleForUser(
   }
 
   try {
-    await dispatchStylePostJob(env, userId, styleId, runId)
+    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot, true)
     await advanceSchedule()
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {

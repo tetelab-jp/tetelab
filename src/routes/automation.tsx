@@ -494,7 +494,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status, run_id FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, job_token, status, run_id, is_retry, is_auto_cycle FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
     .first<{
@@ -504,6 +504,8 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       job_token: string
       status: string
       run_id: number | null
+      is_retry: number
+      is_auto_cycle: number
     }>()
 
   if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
@@ -624,6 +626,24 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   }
 
   await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
+
+  // 2026-08-14追記(ユーザー指定ルール): 60分おきの自動巡回で投稿に失敗した
+  // スタイルは、次の自動投稿タイミングに1回だけ再トライする
+  // (style-post-runner.tsのrunNextStyleForUser参照)。手動投稿(テスト実行・
+  // 個別再実行ボタン)の失敗からは予約しない(is_auto_cycleで判定)。
+  // このジョブ自体が既に「1回だけの再トライ」(is_retry=1)だった場合は、
+  // たとえこれも失敗してもさらに再トライを予約しない(3回目はしない)。
+  // 既に別の再トライが予約されている場合も上書きしない。
+  if (jobStatus !== 'success' && job.is_auto_cycle && !job.is_retry) {
+    await c.env.DB
+      .prepare(
+        `UPDATE style_post_schedules SET retry_pending_style_id = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ? AND retry_pending_style_id IS NULL`
+      )
+      .bind(styleId, userId)
+      .run()
+      .catch(() => {})
+  }
 
   await c.env.DB.prepare(
     `UPDATE style_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
