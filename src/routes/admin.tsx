@@ -246,6 +246,7 @@ type FlatSalonRow = {
   isActiveWorkspace: number
   deletionRequestedAt: string | null
   isFirstOfGroup: boolean
+  groupSize: number
 }
 
 function buildSalonsListUrl(page: number, q: string) {
@@ -379,7 +380,8 @@ admin.get('/admin/salons', async (c) => {
         salonKey: null,
         isActiveWorkspace: 0,
         deletionRequestedAt: null,
-        isFirstOfGroup: true
+        isFirstOfGroup: true,
+        groupSize: 1
       })
       continue
     }
@@ -394,7 +396,8 @@ admin.get('/admin/salons', async (c) => {
         salonKey: sub.salon_key,
         isActiveWorkspace: sub.is_active_workspace,
         deletionRequestedAt: sub.deletion_requested_at,
-        isFirstOfGroup: i === 0
+        isFirstOfGroup: i === 0,
+        groupSize: subs.length
       })
     })
   }
@@ -442,9 +445,19 @@ admin.get('/admin/salons', async (c) => {
             <tbody class="divide-y divide-gray-50">
               {flatRows.map((row) => (
                 <tr class={row.isFirstOfGroup ? 'border-t-2 border-t-gray-100' : ''}>
-                  <td class="px-4 py-2.5 text-gray-400">{row.seq}</td>
-                  <td class="px-4 py-2.5 font-medium text-gray-800">{row.accountSalonName || '(未設定)'}</td>
-                  <td class="px-4 py-2.5 text-gray-500">{row.email}</td>
+                  {row.isFirstOfGroup && (
+                    <>
+                      <td class="px-4 py-2.5 text-gray-400" rowspan={row.groupSize}>
+                        {row.seq}
+                      </td>
+                      <td class="px-4 py-2.5 font-medium text-gray-800" rowspan={row.groupSize}>
+                        {row.accountSalonName || '(未設定)'}
+                      </td>
+                      <td class="px-4 py-2.5 text-gray-500" rowspan={row.groupSize}>
+                        {row.email}
+                      </td>
+                    </>
+                  )}
                   <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{row.salonKey || '(未確定)'}</td>
                   <td class="px-4 py-2.5">
                     <form
