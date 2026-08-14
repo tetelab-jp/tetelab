@@ -97,7 +97,10 @@ dashboard.get('/dashboard', async (c) => {
       blogEnabled={user.blog_enabled !== 0}
     >
       {activeSalonInfo?.salon_name && (
-        <h2 class="text-xl font-bold text-gray-900">{activeSalonInfo.salon_name}</h2>
+        <div class="flex items-center gap-2 min-w-0">
+          <i class="fas fa-shop text-pink-500 text-sm md:text-lg flex-shrink-0"></i>
+          <h2 class="text-base md:text-2xl font-bold text-gray-900 truncate">{activeSalonInfo.salon_name}</h2>
+        </div>
       )}
       {blockedError && (
         <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
