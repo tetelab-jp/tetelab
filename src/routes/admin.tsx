@@ -5,6 +5,7 @@ import { signJwt, verifyJwt } from '../lib/jwt'
 import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth } from '../lib/admin-auth-middleware'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import { AdminPageLayout } from '../components/admin-layout'
+import { GRACE_PERIOD_DAYS } from '../lib/account-deletion'
 import sharp from 'sharp'
 import type { Bindings, AdminUser } from '../types'
 
@@ -219,7 +220,18 @@ type SalonRow = {
   salon_name: string | null
   is_active: number
   created_at: string
+  deletion_requested_at: string | null
   seq: number
+}
+
+type SalonSubRow = {
+  id: number
+  user_id: number
+  salon_key: string | null
+  salon_name: string
+  salon_type: string | null
+  is_active_workspace: number
+  deletion_requested_at: string | null
 }
 
 function buildSalonsListUrl(page: number, q: string) {
@@ -228,6 +240,203 @@ function buildSalonsListUrl(page: number, q: string) {
   if (q) params.set('q', q)
   const qs = params.toString()
   return '/admin/salons' + (qs ? `?${qs}` : '')
+}
+
+/** deletion_requested_atからの経過日数を見て、削除実行までの残り日数を返す(0未満にはしない) */
+function daysUntilDeletion(deletionRequestedAt: string): number {
+  const requestedMs = new Date(deletionRequestedAt.replace(' ', 'T') + 'Z').getTime()
+  const dueMs = requestedMs + GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000
+  const remainingMs = dueMs - Date.now()
+  return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
+}
+
+/** 削除予約が無ければ「削除」ボタン、予約済みなら「あとN日で削除されます」+中止ボタンを出す */
+function DeletionControl({
+  requestAction,
+  cancelAction,
+  page,
+  q,
+  deletionRequestedAt,
+  confirmMessage,
+  label
+}: {
+  requestAction: string
+  cancelAction: string
+  page: number
+  q: string
+  deletionRequestedAt: string | null
+  confirmMessage: string
+  label: string
+}) {
+  if (deletionRequestedAt) {
+    const days = daysUntilDeletion(deletionRequestedAt)
+    return (
+      <div class="flex items-center gap-2 flex-wrap">
+        <span class="text-xs font-semibold text-red-600 whitespace-nowrap">あと{days}日で削除されます</span>
+        <form method="post" action={cancelAction}>
+          <input type="hidden" name="page" value={page} />
+          <input type="hidden" name="q" value={q} />
+          <button
+            type="submit"
+            class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 whitespace-nowrap"
+          >
+            削除を中止する
+          </button>
+        </form>
+      </div>
+    )
+  }
+  return (
+    <form method="post" action={requestAction} onsubmit={`return confirm(${JSON.stringify(confirmMessage)})`}>
+      <input type="hidden" name="page" value={page} />
+      <input type="hidden" name="q" value={q} />
+      <button
+        type="submit"
+        class="text-xs font-semibold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 whitespace-nowrap"
+      >
+        {label}
+      </button>
+    </form>
+  )
+}
+
+function SalonSubList({
+  userId,
+  subSalons,
+  page,
+  q
+}: {
+  userId: number
+  subSalons: SalonSubRow[]
+  page: number
+  q: string
+}) {
+  const activeSalons = subSalons.filter((s) => s.is_active_workspace === 1)
+  const inactiveSalons = subSalons.filter((s) => s.is_active_workspace === 0)
+
+  return (
+    <div class="space-y-1.5">
+      {subSalons.length === 0 && <p class="text-xs text-gray-400">サロンボード未連携</p>}
+      {subSalons.map((salon) => (
+        <div class="flex items-center justify-between gap-2 flex-wrap text-xs bg-gray-50 rounded-lg px-3 py-2">
+          <div>
+            <span class="font-mono text-gray-600">{salon.salon_key || '(サロンID未確定)'}</span>
+            <span class="ml-2 text-gray-700">{salon.salon_name}</span>
+            <span class="ml-2 text-gray-400">{salon.salon_type === 'kirei' ? 'キレイサロン' : 'ヘアサロン'}</span>
+            {salon.is_active_workspace !== 1 && <span class="ml-2 text-gray-400">(未有効化)</span>}
+          </div>
+          {salon.is_active_workspace === 1 && activeSalons.length > 1 && (
+            <DeletionControl
+              requestAction={`/admin/salons/${userId}/salon/${salon.id}/request-delete`}
+              cancelAction={`/admin/salons/${userId}/salon/${salon.id}/cancel-delete`}
+              page={page}
+              q={q}
+              deletionRequestedAt={salon.deletion_requested_at}
+              confirmMessage="このサロンを削除しますか？3日間は削除を中止できます。"
+              label="このサロンを削除"
+            />
+          )}
+        </div>
+      ))}
+      {inactiveSalons.length > 0 && (
+        <form
+          method="post"
+          action={`/admin/salons/${userId}/activate-salon`}
+          class="flex items-center gap-2 flex-wrap pt-1"
+        >
+          <input type="hidden" name="page" value={page} />
+          <input type="hidden" name="q" value={q} />
+          <select name="salonId" class="rounded-lg border border-gray-300 px-2 py-1 text-xs">
+            {inactiveSalons.map((s) => (
+              <option value={s.id}>
+                {s.salon_key || '(サロンID未確定)'} {s.salon_name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="submit"
+            class="text-xs font-semibold px-2 py-1 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-600 whitespace-nowrap"
+          >
+            このサロンを有効化する
+          </button>
+        </form>
+      )}
+    </div>
+  )
+}
+
+function SalonAccountCard({
+  salon,
+  subSalons,
+  page,
+  q
+}: {
+  salon: SalonRow
+  subSalons: SalonSubRow[]
+  page: number
+  q: string
+}) {
+  return (
+    <div class="p-4 space-y-3">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <span class="text-xs text-gray-400">No.{salon.seq}</span>
+          <p class="font-medium text-gray-800">{salon.salon_name || '(未設定)'}</p>
+          <p class="text-xs text-gray-500">{salon.email}</p>
+          <p class="text-xs text-gray-400">登録日: {String(salon.created_at).slice(0, 10)}</p>
+        </div>
+        <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
+          <input type="hidden" name="page" value={page} />
+          <input type="hidden" name="q" value={q} />
+          <label class="flex items-center gap-2 cursor-pointer w-fit">
+            <span class="relative inline-flex items-center flex-shrink-0">
+              <input
+                type="checkbox"
+                checked={salon.is_active === 1}
+                onchange="this.form.submit()"
+                class="sr-only peer"
+              />
+              <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+            </span>
+            <span class={'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')}>
+              {salon.is_active === 1 ? '契約中' : '契約外'}
+            </span>
+          </label>
+        </form>
+      </div>
+
+      <div class="pt-2 border-t border-gray-100">
+        <p class="text-xs text-gray-400 mb-1.5">サロン一覧</p>
+        <SalonSubList userId={salon.id} subSalons={subSalons} page={page} q={q} />
+      </div>
+
+      <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
+        <form
+          method="post"
+          action={`/admin/salons/${salon.id}/impersonate`}
+          target="_blank"
+          onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
+        >
+          <button
+            type="submit"
+            class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+          >
+            <i class="fas fa-right-to-bracket mr-1"></i>ログイン
+          </button>
+        </form>
+        <DeletionControl
+          requestAction={`/admin/salons/${salon.id}/request-delete`}
+          cancelAction={`/admin/salons/${salon.id}/cancel-delete`}
+          page={page}
+          q={q}
+          deletionRequestedAt={salon.deletion_requested_at}
+          confirmMessage="このアカウントを削除しますか？紐づく全サロンのデータが削除対象になります。3日間は削除を中止できます。"
+          label="アカウントを削除する"
+        />
+      </div>
+    </div>
+  )
 }
 
 admin.get('/admin/salons', async (c) => {
@@ -246,7 +455,7 @@ admin.get('/admin/salons', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / SALONS_PAGE_SIZE))
 
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, is_active, created_at,
+    `SELECT id, email, salon_name, is_active, created_at, deletion_requested_at,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -255,6 +464,25 @@ admin.get('/admin/salons', async (c) => {
   )
     .bind(q, likePattern, likePattern, SALONS_PAGE_SIZE, offset)
     .all<SalonRow>()
+
+  // 各アカウントに紐づくサロン(salonboard_salons)一覧を1クエリでまとめて取得し、
+  // JS側でuser_idごとにグルーピングする(ページあたり最大20アカウントなのでN+1を避ける)。
+  const userIds = salons.map((s) => s.id)
+  const subSalonsByUser = new Map<number, SalonSubRow[]>()
+  if (userIds.length > 0) {
+    const placeholders = userIds.map(() => '?').join(',')
+    const { results: subSalons } = await c.env.DB.prepare(
+      `SELECT id, user_id, salon_key, salon_name, salon_type, is_active_workspace, deletion_requested_at
+       FROM salonboard_salons WHERE user_id IN (${placeholders}) ORDER BY user_id, id`
+    )
+      .bind(...userIds)
+      .all<SalonSubRow>()
+    for (const s of subSalons || []) {
+      const list = subSalonsByUser.get(s.user_id) || []
+      list.push(s)
+      subSalonsByUser.set(s.user_id, list)
+    }
+  }
 
   return c.render(
     <AdminPageLayout active="admin-salons" adminEmail={adminUser.email} title="サロン一覧">
@@ -282,130 +510,13 @@ admin.get('/admin/salons', async (c) => {
         )}
       </form>
 
-      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
-        <div class="hidden md:block overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead class="bg-gray-50 text-gray-500 text-xs">
-              <tr>
-                <th class="px-4 py-3 text-left font-medium">No.</th>
-                <th class="px-4 py-3 text-left font-medium">サロン名</th>
-                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
-                <th class="px-4 py-3 text-left font-medium">登録日</th>
-                <th class="px-4 py-3 text-left font-medium">契約状況</th>
-                <th class="px-4 py-3 text-left font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-gray-50">
-              {salons.map((salon) => (
-                <tr>
-                  <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
-                  <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
-                  <td class="px-4 py-3 text-gray-500">{salon.email}</td>
-                  <td class="px-4 py-3 text-gray-500">{String(salon.created_at).slice(0, 10)}</td>
-                  <td class="px-4 py-3">
-                    <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
-                      <input type="hidden" name="page" value={page} />
-                      <input type="hidden" name="q" value={q} />
-                      <label class="flex items-center gap-2 cursor-pointer w-fit">
-                        <span class="relative inline-flex items-center flex-shrink-0">
-                          <input
-                            type="checkbox"
-                            checked={salon.is_active === 1}
-                            onchange="this.form.submit()"
-                            class="sr-only peer"
-                          />
-                          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-                        </span>
-                        <span
-                          class={
-                            'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')
-                          }
-                        >
-                          {salon.is_active === 1 ? '契約中' : '契約外'}
-                        </span>
-                      </label>
-                    </form>
-                  </td>
-                  <td class="px-4 py-3">
-                    <form
-                      method="post"
-                      action={`/admin/salons/${salon.id}/impersonate`}
-                      target="_blank"
-                      onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
-                    >
-                      <button
-                        type="submit"
-                        class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
-                      >
-                        <i class="fas fa-right-to-bracket mr-1"></i>なりすましログイン
-                      </button>
-                    </form>
-                  </td>
-                </tr>
-              ))}
-              {salons.length === 0 && (
-                <tr>
-                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
-                    該当するサロンがありません
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        <div class="md:hidden divide-y divide-gray-50">
-          {salons.map((salon) => (
-            <div class="p-4 space-y-2">
-              <div class="flex items-center justify-between gap-2">
-                <span class="text-xs text-gray-400">No.{salon.seq}</span>
-                <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
-                  <input type="hidden" name="page" value={page} />
-                  <input type="hidden" name="q" value={q} />
-                  <label class="flex items-center gap-2 cursor-pointer w-fit">
-                    <span class="relative inline-flex items-center flex-shrink-0">
-                      <input
-                        type="checkbox"
-                        checked={salon.is_active === 1}
-                        onchange="this.form.submit()"
-                        class="sr-only peer"
-                      />
-                      <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                      <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-                    </span>
-                    <span
-                      class={
-                        'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')
-                      }
-                    >
-                      {salon.is_active === 1 ? '契約中' : '契約外'}
-                    </span>
-                  </label>
-                </form>
-              </div>
-              <p class="font-medium text-gray-800">{salon.salon_name || '(未設定)'}</p>
-              <p class="text-xs text-gray-500">{salon.email}</p>
-              <p class="text-xs text-gray-400">登録日: {String(salon.created_at).slice(0, 10)}</p>
-              <form
-                method="post"
-                action={`/admin/salons/${salon.id}/impersonate`}
-                target="_blank"
-                onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
-              >
-                <button
-                  type="submit"
-                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
-                >
-                  <i class="fas fa-right-to-bracket mr-1"></i>なりすましログイン
-                </button>
-              </form>
-            </div>
-          ))}
-          {salons.length === 0 && (
-            <p class="px-4 py-8 text-center text-sm text-gray-400">該当するサロンがありません</p>
-          )}
-        </div>
+      <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+        {salons.map((salon) => (
+          <SalonAccountCard salon={salon} subSalons={subSalonsByUser.get(salon.id) || []} page={page} q={q} />
+        ))}
+        {salons.length === 0 && (
+          <p class="px-4 py-8 text-center text-sm text-gray-400">該当するサロンがありません</p>
+        )}
       </div>
 
       <div class="flex items-center justify-between text-sm text-gray-500">
@@ -478,6 +589,168 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
   return c.redirect('/dashboard')
 })
 
+// 複数サロン対応: アカウント単位の削除予約/中止。3日間の猶予が経過すると
+// src/lib/account-deletion.tsのsweepPendingDeletions()が実際に削除する。
+admin.post('/admin/salons/:id/request-delete', async (c) => {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const target = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+    .bind(targetId)
+    .first<{ id: number; email: string }>()
+  if (target) {
+    await c.env.DB.prepare(
+      `UPDATE users SET deletion_requested_at = CURRENT_TIMESTAMP, deletion_requested_by_admin_id = ? WHERE id = ?`
+    )
+      .bind(adminUser.id, targetId)
+      .run()
+    await logAdminAction(c, adminUser.id, 'request_account_deletion', 'user', targetId, target.email)
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
+admin.post('/admin/salons/:id/cancel-delete', async (c) => {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const target = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
+    .bind(targetId)
+    .first<{ id: number; email: string }>()
+  if (target) {
+    await c.env.DB.prepare(
+      `UPDATE users SET deletion_requested_at = NULL, deletion_requested_by_admin_id = NULL WHERE id = ?`
+    )
+      .bind(targetId)
+      .run()
+    await logAdminAction(c, adminUser.id, 'cancel_account_deletion', 'user', targetId, target.email)
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
+// 複数サロン対応: サロン(ワークスペース)単位の削除予約/中止。有効サロンが
+// 1件しか無い場合は拒否する(唯一のサロンを消すとアカウントが実質壊れるため、
+// その場合はアカウント削除を使ってもらう。UIでもボタン自体を非表示にしているが
+// サーバー側でも防御する)。
+admin.post('/admin/salons/:userId/salon/:salonId/request-delete', async (c) => {
+  const adminUser = c.get('admin')
+  const userId = Number(c.req.param('userId'))
+  const salonId = Number(c.req.param('salonId'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const salon = await c.env.DB.prepare(
+    `SELECT id, salon_key,
+       (SELECT COUNT(*) FROM salonboard_salons s2 WHERE s2.user_id = salonboard_salons.user_id AND s2.is_active_workspace = 1) AS active_count
+     FROM salonboard_salons WHERE id = ? AND user_id = ? AND is_active_workspace = 1`
+  )
+    .bind(salonId, userId)
+    .first<{ id: number; salon_key: string | null; active_count: number }>()
+
+  if (salon && salon.active_count > 1) {
+    await c.env.DB.prepare(
+      `UPDATE salonboard_salons SET deletion_requested_at = CURRENT_TIMESTAMP, deletion_requested_by_admin_id = ? WHERE id = ?`
+    )
+      .bind(adminUser.id, salonId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'request_salon_deletion',
+      'salonboard_salon',
+      salonId,
+      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
+    )
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
+admin.post('/admin/salons/:userId/salon/:salonId/cancel-delete', async (c) => {
+  const adminUser = c.get('admin')
+  const userId = Number(c.req.param('userId'))
+  const salonId = Number(c.req.param('salonId'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const salon = await c.env.DB.prepare('SELECT id, salon_key FROM salonboard_salons WHERE id = ? AND user_id = ?')
+    .bind(salonId, userId)
+    .first<{ id: number; salon_key: string | null }>()
+  if (salon) {
+    await c.env.DB.prepare(
+      `UPDATE salonboard_salons SET deletion_requested_at = NULL, deletion_requested_by_admin_id = NULL WHERE id = ?`
+    )
+      .bind(salonId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'cancel_salon_deletion',
+      'salonboard_salon',
+      salonId,
+      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
+    )
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
+// 複数サロン対応: 管理者が「どの物理サロンを追加するか」を直接サロンIDで
+// 選んで有効化する(以前の「枠数を+1するだけ」という抽象的な操作から変更)。
+// 有効化と同時にsalon_slot_limitを新しい有効サロン数以上に自動調整する。
+admin.post('/admin/salons/:userId/activate-salon', async (c) => {
+  const adminUser = c.get('admin')
+  const userId = Number(c.req.param('userId'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+  const salonId = Number(body.salonId)
+
+  const salon = await c.env.DB.prepare(
+    'SELECT id, salon_key, is_active_workspace FROM salonboard_salons WHERE id = ? AND user_id = ?'
+  )
+    .bind(salonId, userId)
+    .first<{ id: number; salon_key: string | null; is_active_workspace: number }>()
+
+  if (salon && salon.is_active_workspace === 0) {
+    await c.env.DB.prepare(
+      `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(salonId)
+      .run()
+    const activeCountRow = await c.env.DB.prepare(
+      'SELECT COUNT(*) AS cnt FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1'
+    )
+      .bind(userId)
+      .first<{ cnt: number }>()
+    const activeCount = activeCountRow?.cnt ?? 1
+    await c.env.DB.prepare(
+      'UPDATE users SET salon_slot_limit = GREATEST(salon_slot_limit, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+    )
+      .bind(activeCount, userId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'admin_activate_salon',
+      'salonboard_salon',
+      salonId,
+      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
+    )
+  }
+
+  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
+})
+
 // ---------- ツール設定(サロンごとのスタイル/ブログ機能オンオフ) ----------
 // OFFにすると、salon側のrequireStyleEnabled/requireBlogEnabledミドルウェアに
 // より該当ルート・API・バッチ(cronの投稿対象)から完全にブロックされる
@@ -492,9 +765,6 @@ type ToolSalonRow = {
   style_enabled: number
   blog_enabled: number
   seo_enabled: number
-  salon_slot_limit: number
-  active_salon_count: number
-  total_salon_count: number
   seq: number
 }
 
@@ -504,42 +774,6 @@ function buildToolListUrl(page: number, q: string) {
   if (q) params.set('q', q)
   const qs = params.toString()
   return '/admin/tool' + (qs ? `?${qs}` : '')
-}
-
-function SalonSlotLimitForm({
-  userId,
-  page,
-  q,
-  salonSlotLimit,
-  activeSalonCount,
-  totalSalonCount
-}: {
-  userId: number
-  page: number
-  q: string
-  salonSlotLimit: number
-  activeSalonCount: number
-  totalSalonCount: number
-}) {
-  const canAdd = salonSlotLimit < totalSalonCount
-  return (
-    <div class="flex items-center gap-2">
-      <span class="text-sm text-gray-700 whitespace-nowrap font-medium">
-        {activeSalonCount}/{salonSlotLimit}店舗
-      </span>
-      <form method="post" action={`/admin/tool/${userId}/add-salon-slot`}>
-        <input type="hidden" name="page" value={page} />
-        <input type="hidden" name="q" value={q} />
-        <button
-          type="submit"
-          disabled={!canAdd}
-          class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
-        >
-          サロンを追加する
-        </button>
-      </form>
-    </div>
-  )
 }
 
 function FeatureToggleForm({
@@ -591,9 +825,7 @@ admin.get('/admin/tool', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / TOOL_PAGE_SIZE))
 
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled, salon_slot_limit,
-       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND s.is_active_workspace = 1) AS active_salon_count,
-       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count,
+    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -640,7 +872,6 @@ admin.get('/admin/tool', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
-                <th class="px-4 py-3 text-left font-medium">契約サロン数</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -679,21 +910,11 @@ admin.get('/admin/tool', async (c) => {
                       offLabel="無効"
                     />
                   </td>
-                  <td class="px-4 py-3">
-                    <SalonSlotLimitForm
-                      userId={salon.id}
-                      page={page}
-                      q={q}
-                      salonSlotLimit={salon.salon_slot_limit}
-                      activeSalonCount={salon.active_salon_count}
-                      totalSalonCount={salon.total_salon_count}
-                    />
-                  </td>
                 </tr>
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -764,44 +985,6 @@ async function toggleSalonFeature(
 admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_enabled', 'toggle_salon_style_enabled'))
 admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
 admin.post('/admin/tool/:id/toggle-seo', (c) => toggleSalonFeature(c, 'seo_enabled', 'toggle_salon_seo_enabled'))
-
-// 複数サロン対応: 顧客が追加契約した際に、管理者が「契約サロン数」を1増やす。
-// 実際にどの物理サロンを追加するかはユーザー自身が設定画面で選ぶ(既存の
-// toggleSalonFeatureと同じ「監査ログ→一覧へリダイレクト」の骨格を踏襲)。
-// 増やせる上限は、そのユーザーのサロンボードログインで実際に検出済みの
-// ヘアサロン総数まで(それ以上は物理的に存在しないため追加できない)。
-admin.post('/admin/tool/:id/add-salon-slot', async (c) => {
-  const adminUser = c.get('admin')
-  const targetId = Number(c.req.param('id'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const target = (await c.env.DB.prepare(
-    `SELECT id, email, salon_slot_limit,
-       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count
-     FROM users WHERE id = ?`
-  )
-    .bind(targetId)
-    .first()) as { id: number; email: string; salon_slot_limit: number; total_salon_count: number } | null
-
-  if (target && target.salon_slot_limit < target.total_salon_count) {
-    const nextLimit = target.salon_slot_limit + 1
-    await c.env.DB.prepare(`UPDATE users SET salon_slot_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(nextLimit, targetId)
-      .run()
-    await logAdminAction(
-      c,
-      adminUser.id,
-      'add_salon_slot',
-      'user',
-      targetId,
-      `${target.email}: salon_slot_limit ${target.salon_slot_limit} -> ${nextLimit}`
-    )
-  }
-
-  return c.redirect(buildToolListUrl(Number(page) || 1, q))
-})
 
 // ---------- 稼働状況 ----------
 // スタイル自動投稿の連続失敗回数(users.consecutive_failure_count、

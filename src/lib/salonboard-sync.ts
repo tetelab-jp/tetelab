@@ -243,6 +243,23 @@ export async function upsertSalonInfo(
       .first<{ id: number }>()
   }
 
+  // 重大バグ修正: salon_key/salon_nameのどちらでも一致しなかった場合、新規登録時
+  // (auth.tsx)に作られたプレースホルダー行(salon_key未設定、is_active_workspace=1)
+  // が既にこのユーザーの実質1個目のワークスペースを表している可能性が高い。
+  // 以前はここで新規行をINSERTしてしまい、users.active_salon_idが指す
+  // プレースホルダー行とは別に、正しいsalon_keyを持つ孤立行ができてしまっていた
+  // (単一サロンの通常ログイン(複数サロン選択画面を経由しない)で必ず発生し、
+  // サロンIDがいつまでも確定しない不具合の原因だった)。他の3箇所(select-salon・
+  // sync-stylists-coupons内のresolved分岐・起動時バックフィル)と同じく、
+  // プレースホルダー行があればそれを転用する。
+  if (!existing) {
+    existing = await env.DB.prepare(
+      `SELECT id FROM salonboard_salons WHERE user_id = ? AND salon_key IS NULL AND is_active_workspace = 1`
+    )
+      .bind(userId)
+      .first<{ id: number }>()
+  }
+
   // salonTypeが指定されない場合(単一サロンの通常ログイン同期等、種別が分からない)は
   // 既存のsalon_type列を上書きしない。複数サロン一覧から取得した場合のみ指定される。
   if (existing) {

@@ -427,7 +427,14 @@ dashboard.get('/settings/salonboard', async (c) => {
         {cred && (
           <div
             id="salonboard-onboarding-area"
-            data-autorun={!activeSalonKey ? '1' : ''}
+            // 重大バグ修正: 以前はsalon_key(サロンID)の有無だけで判定していたが、
+            // upsertSalonInfoの不具合(修正済み)によりsalon_keyがいつまでも
+            // 確定しないケースがあった。connection_status(ログイン試行そのものの
+            // 成否)も合わせて見ることで、(a)ログインがまだ成功していない、
+            // (b)ログインには成功したがウィザード途中(契約店舗数/サロン選択が
+            // 未完了)で離脱した、のどちらの場合も再開できるようにする。
+            // 両方が揃って初めて「連携完了」とみなし自動実行しない。
+            data-autorun={cred.connection_status !== 'success' || !activeSalonKey ? '1' : ''}
             class="space-y-3"
           ></div>
         )}
