@@ -211,16 +211,19 @@ async function logAdminAction(
 }
 
 // ---------- サロン一覧 ----------
+// 2026-08-14追記(ユーザー指定): カードレイアウトは縦領域を取りすぎて一覧性が
+// 悪かったため、以前の密なテーブル形式に戻す。行は「サロン(salonboard_salons)
+// 単位」とし、複数サロンを持つアカウントは同じNo.を複数行で共有する
+// (サインアップ時に必ず1行以上のプレースホルダーが作られるため、
+// 「サロン0件のアカウント」は存在しない前提)。
 
 const SALONS_PAGE_SIZE = 20
 
-type SalonRow = {
+type AccountRow = {
   id: number
   email: string
   salon_name: string | null
   is_active: number
-  created_at: string
-  deletion_requested_at: string | null
   seq: number
 }
 
@@ -228,10 +231,21 @@ type SalonSubRow = {
   id: number
   user_id: number
   salon_key: string | null
-  salon_name: string
-  salon_type: string | null
   is_active_workspace: number
   deletion_requested_at: string | null
+}
+
+type FlatSalonRow = {
+  seq: number
+  accountId: number
+  accountSalonName: string | null
+  email: string
+  isActive: number
+  salonId: number | null
+  salonKey: string | null
+  isActiveWorkspace: number
+  deletionRequestedAt: string | null
+  isFirstOfGroup: boolean
 }
 
 function buildSalonsListUrl(page: number, q: string) {
@@ -250,30 +264,31 @@ function daysUntilDeletion(deletionRequestedAt: string): number {
   return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
 }
 
-/** 削除予約が無ければ「削除」ボタン、予約済みなら「あとN日で削除されます」+中止ボタンを出す */
-function DeletionControl({
-  requestAction,
-  cancelAction,
-  page,
-  q,
-  deletionRequestedAt,
-  confirmMessage,
-  label
-}: {
-  requestAction: string
-  cancelAction: string
-  page: number
-  q: string
-  deletionRequestedAt: string | null
-  confirmMessage: string
-  label: string
-}) {
-  if (deletionRequestedAt) {
-    const days = daysUntilDeletion(deletionRequestedAt)
+function SalonOperationCell({ row, page, q }: { row: FlatSalonRow; page: number; q: string }) {
+  if (!row.salonId) return <span class="text-xs text-gray-300">-</span>
+
+  if (row.isActiveWorkspace === 0) {
+    return (
+      <form method="post" action={`/admin/salons/${row.accountId}/activate-salon`}>
+        <input type="hidden" name="page" value={page} />
+        <input type="hidden" name="q" value={q} />
+        <input type="hidden" name="salonId" value={row.salonId} />
+        <button
+          type="submit"
+          class="text-xs font-semibold px-2 py-1 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-600 whitespace-nowrap"
+        >
+          有効化する
+        </button>
+      </form>
+    )
+  }
+
+  if (row.deletionRequestedAt) {
+    const days = daysUntilDeletion(row.deletionRequestedAt)
     return (
       <div class="flex items-center gap-2 flex-wrap">
-        <span class="text-xs font-semibold text-red-600 whitespace-nowrap">あと{days}日で削除されます</span>
-        <form method="post" action={cancelAction}>
+        <span class="text-xs font-semibold text-red-600 whitespace-nowrap">あと{days}日で削除</span>
+        <form method="post" action={`/admin/salons/${row.accountId}/salon/${row.salonId}/cancel-delete`}>
           <input type="hidden" name="page" value={page} />
           <input type="hidden" name="q" value={q} />
           <button
@@ -286,156 +301,22 @@ function DeletionControl({
       </div>
     )
   }
+
   return (
-    <form method="post" action={requestAction} onsubmit={`return confirm(${JSON.stringify(confirmMessage)})`}>
+    <form
+      method="post"
+      action={`/admin/salons/${row.accountId}/salon/${row.salonId}/request-delete`}
+      onsubmit="return confirm('このサロンを削除しますか？3日間は削除を中止できます。')"
+    >
       <input type="hidden" name="page" value={page} />
       <input type="hidden" name="q" value={q} />
       <button
         type="submit"
         class="text-xs font-semibold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 whitespace-nowrap"
       >
-        {label}
+        このサロンを削除
       </button>
     </form>
-  )
-}
-
-function SalonSubList({
-  userId,
-  subSalons,
-  page,
-  q
-}: {
-  userId: number
-  subSalons: SalonSubRow[]
-  page: number
-  q: string
-}) {
-  const activeSalons = subSalons.filter((s) => s.is_active_workspace === 1)
-  const inactiveSalons = subSalons.filter((s) => s.is_active_workspace === 0)
-
-  return (
-    <div class="space-y-1.5">
-      {subSalons.length === 0 && <p class="text-xs text-gray-400">サロンボード未連携</p>}
-      {subSalons.map((salon) => (
-        <div class="flex items-center justify-between gap-2 flex-wrap text-xs bg-gray-50 rounded-lg px-3 py-2">
-          <div>
-            <span class="font-mono text-gray-600">{salon.salon_key || '(サロンID未確定)'}</span>
-            <span class="ml-2 text-gray-700">{salon.salon_name}</span>
-            <span class="ml-2 text-gray-400">{salon.salon_type === 'kirei' ? 'キレイサロン' : 'ヘアサロン'}</span>
-            {salon.is_active_workspace !== 1 && <span class="ml-2 text-gray-400">(未有効化)</span>}
-          </div>
-          {salon.is_active_workspace === 1 && activeSalons.length > 1 && (
-            <DeletionControl
-              requestAction={`/admin/salons/${userId}/salon/${salon.id}/request-delete`}
-              cancelAction={`/admin/salons/${userId}/salon/${salon.id}/cancel-delete`}
-              page={page}
-              q={q}
-              deletionRequestedAt={salon.deletion_requested_at}
-              confirmMessage="このサロンを削除しますか？3日間は削除を中止できます。"
-              label="このサロンを削除"
-            />
-          )}
-        </div>
-      ))}
-      {inactiveSalons.length > 0 && (
-        <form
-          method="post"
-          action={`/admin/salons/${userId}/activate-salon`}
-          class="flex items-center gap-2 flex-wrap pt-1"
-        >
-          <input type="hidden" name="page" value={page} />
-          <input type="hidden" name="q" value={q} />
-          <select name="salonId" class="rounded-lg border border-gray-300 px-2 py-1 text-xs">
-            {inactiveSalons.map((s) => (
-              <option value={s.id}>
-                {s.salon_key || '(サロンID未確定)'} {s.salon_name}
-              </option>
-            ))}
-          </select>
-          <button
-            type="submit"
-            class="text-xs font-semibold px-2 py-1 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-600 whitespace-nowrap"
-          >
-            このサロンを有効化する
-          </button>
-        </form>
-      )}
-    </div>
-  )
-}
-
-function SalonAccountCard({
-  salon,
-  subSalons,
-  page,
-  q
-}: {
-  salon: SalonRow
-  subSalons: SalonSubRow[]
-  page: number
-  q: string
-}) {
-  return (
-    <div class="p-4 space-y-3">
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <span class="text-xs text-gray-400">No.{salon.seq}</span>
-          <p class="font-medium text-gray-800">{salon.salon_name || '(未設定)'}</p>
-          <p class="text-xs text-gray-500">{salon.email}</p>
-          <p class="text-xs text-gray-400">登録日: {String(salon.created_at).slice(0, 10)}</p>
-        </div>
-        <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
-          <input type="hidden" name="page" value={page} />
-          <input type="hidden" name="q" value={q} />
-          <label class="flex items-center gap-2 cursor-pointer w-fit">
-            <span class="relative inline-flex items-center flex-shrink-0">
-              <input
-                type="checkbox"
-                checked={salon.is_active === 1}
-                onchange="this.form.submit()"
-                class="sr-only peer"
-              />
-              <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-              <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-            </span>
-            <span class={'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')}>
-              {salon.is_active === 1 ? '契約中' : '契約外'}
-            </span>
-          </label>
-        </form>
-      </div>
-
-      <div class="pt-2 border-t border-gray-100">
-        <p class="text-xs text-gray-400 mb-1.5">サロン一覧</p>
-        <SalonSubList userId={salon.id} subSalons={subSalons} page={page} q={q} />
-      </div>
-
-      <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-gray-100">
-        <form
-          method="post"
-          action={`/admin/salons/${salon.id}/impersonate`}
-          target="_blank"
-          onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
-        >
-          <button
-            type="submit"
-            class="px-3 py-1.5 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
-          >
-            <i class="fas fa-right-to-bracket mr-1"></i>ログイン
-          </button>
-        </form>
-        <DeletionControl
-          requestAction={`/admin/salons/${salon.id}/request-delete`}
-          cancelAction={`/admin/salons/${salon.id}/cancel-delete`}
-          page={page}
-          q={q}
-          deletionRequestedAt={salon.deletion_requested_at}
-          confirmMessage="このアカウントを削除しますか？紐づく全サロンのデータが削除対象になります。3日間は削除を中止できます。"
-          label="アカウントを削除する"
-        />
-      </div>
-    </div>
   )
 }
 
@@ -454,8 +335,8 @@ admin.get('/admin/salons', async (c) => {
   const totalCount = countRow?.cnt ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / SALONS_PAGE_SIZE))
 
-  const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, is_active, created_at, deletion_requested_at,
+  const { results: accounts } = await c.env.DB.prepare(
+    `SELECT id, email, salon_name, is_active,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -463,25 +344,59 @@ admin.get('/admin/salons', async (c) => {
      LIMIT ? OFFSET ?`
   )
     .bind(q, likePattern, likePattern, SALONS_PAGE_SIZE, offset)
-    .all<SalonRow>()
+    .all<AccountRow>()
 
   // 各アカウントに紐づくサロン(salonboard_salons)一覧を1クエリでまとめて取得し、
   // JS側でuser_idごとにグルーピングする(ページあたり最大20アカウントなのでN+1を避ける)。
-  const userIds = salons.map((s) => s.id)
-  const subSalonsByUser = new Map<number, SalonSubRow[]>()
-  if (userIds.length > 0) {
-    const placeholders = userIds.map(() => '?').join(',')
+  const accountIds = accounts.map((a) => a.id)
+  const subSalonsByAccount = new Map<number, SalonSubRow[]>()
+  if (accountIds.length > 0) {
+    const placeholders = accountIds.map(() => '?').join(',')
     const { results: subSalons } = await c.env.DB.prepare(
-      `SELECT id, user_id, salon_key, salon_name, salon_type, is_active_workspace, deletion_requested_at
+      `SELECT id, user_id, salon_key, is_active_workspace, deletion_requested_at
        FROM salonboard_salons WHERE user_id IN (${placeholders}) ORDER BY user_id, id`
     )
-      .bind(...userIds)
+      .bind(...accountIds)
       .all<SalonSubRow>()
     for (const s of subSalons || []) {
-      const list = subSalonsByUser.get(s.user_id) || []
+      const list = subSalonsByAccount.get(s.user_id) || []
       list.push(s)
-      subSalonsByUser.set(s.user_id, list)
+      subSalonsByAccount.set(s.user_id, list)
     }
+  }
+
+  const flatRows: FlatSalonRow[] = []
+  for (const account of accounts) {
+    const subs = subSalonsByAccount.get(account.id) || []
+    if (subs.length === 0) {
+      flatRows.push({
+        seq: account.seq,
+        accountId: account.id,
+        accountSalonName: account.salon_name,
+        email: account.email,
+        isActive: account.is_active,
+        salonId: null,
+        salonKey: null,
+        isActiveWorkspace: 0,
+        deletionRequestedAt: null,
+        isFirstOfGroup: true
+      })
+      continue
+    }
+    subs.forEach((sub, i) => {
+      flatRows.push({
+        seq: account.seq,
+        accountId: account.id,
+        accountSalonName: account.salon_name,
+        email: account.email,
+        isActive: account.is_active,
+        salonId: sub.id,
+        salonKey: sub.salon_key,
+        isActiveWorkspace: sub.is_active_workspace,
+        deletionRequestedAt: sub.deletion_requested_at,
+        isFirstOfGroup: i === 0
+      })
+    })
   }
 
   return c.render(
@@ -510,13 +425,80 @@ admin.get('/admin/salons', async (c) => {
         )}
       </form>
 
-      <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
-        {salons.map((salon) => (
-          <SalonAccountCard salon={salon} subSalons={subSalonsByUser.get(salon.id) || []} page={page} q={q} />
-        ))}
-        {salons.length === 0 && (
-          <p class="px-4 py-8 text-center text-sm text-gray-400">該当するサロンがありません</p>
-        )}
+      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="bg-gray-50 text-gray-500 text-xs">
+              <tr>
+                <th class="px-4 py-3 text-left font-medium">No.</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
+                <th class="px-4 py-3 text-left font-medium">サロンID</th>
+                <th class="px-4 py-3 text-left font-medium">ログイン</th>
+                <th class="px-4 py-3 text-left font-medium">このサロンを削除</th>
+                <th class="px-4 py-3 text-left font-medium">契約</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {flatRows.map((row) => (
+                <tr class={row.isFirstOfGroup ? 'border-t-2 border-t-gray-100' : ''}>
+                  <td class="px-4 py-2.5 text-gray-400">{row.seq}</td>
+                  <td class="px-4 py-2.5 font-medium text-gray-800">{row.accountSalonName || '(未設定)'}</td>
+                  <td class="px-4 py-2.5 text-gray-500">{row.email}</td>
+                  <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{row.salonKey || '(未確定)'}</td>
+                  <td class="px-4 py-2.5">
+                    <form
+                      method="post"
+                      action={`/admin/salons/${row.accountId}/impersonate`}
+                      target="_blank"
+                      onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
+                    >
+                      <button
+                        type="submit"
+                        class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+                      >
+                        <i class="fas fa-right-to-bracket mr-1"></i>ログイン
+                      </button>
+                    </form>
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <SalonOperationCell row={row} page={page} q={q} />
+                  </td>
+                  <td class="px-4 py-2.5">
+                    <form method="post" action={`/admin/salons/${row.accountId}/toggle-active`}>
+                      <input type="hidden" name="page" value={page} />
+                      <input type="hidden" name="q" value={q} />
+                      <label class="flex items-center gap-2 cursor-pointer w-fit">
+                        <span class="relative inline-flex items-center flex-shrink-0">
+                          <input
+                            type="checkbox"
+                            checked={row.isActive === 1}
+                            onchange="this.form.submit()"
+                            class="sr-only peer"
+                          />
+                          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+                        </span>
+                        <span
+                          class={'text-xs font-semibold ' + (row.isActive === 1 ? 'text-pink-600' : 'text-gray-400')}
+                        >
+                          {row.isActive === 1 ? '契約中' : '契約外'}
+                        </span>
+                      </label>
+                    </form>
+                  </td>
+                </tr>
+              ))}
+              {flatRows.length === 0 && (
+                <tr>
+                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
+                    該当するサロンがありません
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div class="flex items-center justify-between text-sm text-gray-500">
@@ -589,56 +571,10 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
   return c.redirect('/dashboard')
 })
 
-// 複数サロン対応: アカウント単位の削除予約/中止。3日間の猶予が経過すると
-// src/lib/account-deletion.tsのsweepPendingDeletions()が実際に削除する。
-admin.post('/admin/salons/:id/request-delete', async (c) => {
-  const adminUser = c.get('admin')
-  const targetId = Number(c.req.param('id'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const target = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
-    .bind(targetId)
-    .first<{ id: number; email: string }>()
-  if (target) {
-    await c.env.DB.prepare(
-      `UPDATE users SET deletion_requested_at = CURRENT_TIMESTAMP, deletion_requested_by_admin_id = ? WHERE id = ?`
-    )
-      .bind(adminUser.id, targetId)
-      .run()
-    await logAdminAction(c, adminUser.id, 'request_account_deletion', 'user', targetId, target.email)
-  }
-
-  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
-})
-
-admin.post('/admin/salons/:id/cancel-delete', async (c) => {
-  const adminUser = c.get('admin')
-  const targetId = Number(c.req.param('id'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const target = await c.env.DB.prepare('SELECT id, email FROM users WHERE id = ?')
-    .bind(targetId)
-    .first<{ id: number; email: string }>()
-  if (target) {
-    await c.env.DB.prepare(
-      `UPDATE users SET deletion_requested_at = NULL, deletion_requested_by_admin_id = NULL WHERE id = ?`
-    )
-      .bind(targetId)
-      .run()
-    await logAdminAction(c, adminUser.id, 'cancel_account_deletion', 'user', targetId, target.email)
-  }
-
-  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
-})
-
-// 複数サロン対応: サロン(ワークスペース)単位の削除予約/中止。有効サロンが
-// 1件しか無い場合は拒否する(唯一のサロンを消すとアカウントが実質壊れるため、
-// その場合はアカウント削除を使ってもらう。UIでもボタン自体を非表示にしているが
-// サーバー側でも防御する)。
+// 複数サロン対応: サロン(ワークスペース)単位の削除予約/中止。
+// (2026-08-14追記: 以前あった「有効サロンが1件しか無い場合は拒否する」制限、
+// および別建てだった「アカウントを削除する」ボタンは、ユーザー指定により撤廃。
+// 削除操作はサロン単位に一本化する。)
 admin.post('/admin/salons/:userId/salon/:salonId/request-delete', async (c) => {
   const adminUser = c.get('admin')
   const userId = Number(c.req.param('userId'))
@@ -647,15 +583,11 @@ admin.post('/admin/salons/:userId/salon/:salonId/request-delete', async (c) => {
   const page = String(body.page || '1')
   const q = String(body.q || '')
 
-  const salon = await c.env.DB.prepare(
-    `SELECT id, salon_key,
-       (SELECT COUNT(*) FROM salonboard_salons s2 WHERE s2.user_id = salonboard_salons.user_id AND s2.is_active_workspace = 1) AS active_count
-     FROM salonboard_salons WHERE id = ? AND user_id = ? AND is_active_workspace = 1`
-  )
+  const salon = await c.env.DB.prepare('SELECT id, salon_key FROM salonboard_salons WHERE id = ? AND user_id = ?')
     .bind(salonId, userId)
-    .first<{ id: number; salon_key: string | null; active_count: number }>()
+    .first<{ id: number; salon_key: string | null }>()
 
-  if (salon && salon.active_count > 1) {
+  if (salon) {
     await c.env.DB.prepare(
       `UPDATE salonboard_salons SET deletion_requested_at = CURRENT_TIMESTAMP, deletion_requested_by_admin_id = ? WHERE id = ?`
     )
@@ -836,7 +768,7 @@ admin.get('/admin/tool', async (c) => {
     .all<ToolSalonRow>()
 
   return c.render(
-    <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="ツール設定">
+    <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="契約設定">
       <form method="get" action="/admin/tool" class="flex gap-2">
         <input
           type="text"
@@ -868,7 +800,6 @@ admin.get('/admin/tool', async (c) => {
               <tr>
                 <th class="px-4 py-3 text-left font-medium">No.</th>
                 <th class="px-4 py-3 text-left font-medium">サロン名</th>
-                <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
@@ -879,7 +810,6 @@ admin.get('/admin/tool', async (c) => {
                 <tr>
                   <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
                   <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
-                  <td class="px-4 py-3 text-gray-500">{salon.email}</td>
                   <td class="px-4 py-3">
                     <FeatureToggleForm
                       action={`/admin/tool/${salon.id}/toggle-style`}
@@ -914,7 +844,7 @@ admin.get('/admin/tool', async (c) => {
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={5} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -946,7 +876,7 @@ admin.get('/admin/tool', async (c) => {
         </div>
       </div>
     </AdminPageLayout>,
-    { title: 'ツール設定' }
+    { title: '契約設定' }
   )
 })
 
