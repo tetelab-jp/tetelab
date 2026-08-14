@@ -83,23 +83,28 @@ export async function fetchCouponsFromSalonBoard(page: Page): Promise<SyncedCoup
  * 新規は insert。SALON BOARD側で削除されたスタイリストは削除しない
  * (過去のスタイル・スタイリスト紐付けを壊さないため。非表示にする運用は将来検討)。
  */
-export async function upsertStylists(env: Bindings, userId: number, stylists: SyncedStylist[]): Promise<number> {
+export async function upsertStylists(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  stylists: SyncedStylist[]
+): Promise<number> {
   let count = 0
   for (const s of stylists) {
     const existing = await env.DB.prepare(
-      `SELECT id FROM stylists WHERE user_id = ? AND salonboard_stylist_key = ?`
+      `SELECT id FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key = ?`
     )
-      .bind(userId, s.stylistId)
+      .bind(userId, salonId, s.stylistId)
       .first<{ id: number }>()
 
     if (existing) {
       await env.DB.prepare(`UPDATE stylists SET name = ? WHERE id = ?`).bind(s.name, existing.id).run()
     } else {
       await env.DB.prepare(
-        `INSERT INTO stylists (user_id, name, salonboard_stylist_key, is_active, sort_order)
-         VALUES (?, ?, ?, 1, 0)`
+        `INSERT INTO stylists (user_id, salon_id, name, salonboard_stylist_key, is_active, sort_order)
+         VALUES (?, ?, ?, ?, 1, 0)`
       )
-        .bind(userId, s.name, s.stylistId)
+        .bind(userId, salonId, s.name, s.stylistId)
         .run()
     }
     count++
@@ -113,23 +118,28 @@ export async function upsertStylists(env: Bindings, userId: number, stylists: Sy
 /**
  * 取得したクーポン一覧をDBへupsertする(upsertStylistsと同様の方針)。
  */
-export async function upsertCoupons(env: Bindings, userId: number, coupons: SyncedCoupon[]): Promise<number> {
+export async function upsertCoupons(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  coupons: SyncedCoupon[]
+): Promise<number> {
   let count = 0
   for (const c of coupons) {
     const existing = await env.DB.prepare(
-      `SELECT id FROM coupons WHERE user_id = ? AND salonboard_coupon_key = ?`
+      `SELECT id FROM coupons WHERE user_id = ? AND salon_id = ? AND salonboard_coupon_key = ?`
     )
-      .bind(userId, c.couponId)
+      .bind(userId, salonId, c.couponId)
       .first<{ id: number }>()
 
     if (existing) {
       await env.DB.prepare(`UPDATE coupons SET name = ? WHERE id = ?`).bind(c.name, existing.id).run()
     } else {
       await env.DB.prepare(
-        `INSERT INTO coupons (user_id, name, salonboard_coupon_key, is_active, sort_order)
-         VALUES (?, ?, ?, 1, 0)`
+        `INSERT INTO coupons (user_id, salon_id, name, salonboard_coupon_key, is_active, sort_order)
+         VALUES (?, ?, ?, ?, 1, 0)`
       )
-        .bind(userId, c.name, c.couponId)
+        .bind(userId, salonId, c.name, c.couponId)
         .run()
     }
     count++
@@ -147,11 +157,12 @@ export async function syncStylists(
   page: Page,
   env: Bindings,
   userId: number,
+  salonId: number | null,
   log: AutomationLogger
 ): Promise<number> {
   log('スタイリスト一覧を取得中...')
   const stylists = await fetchStylistsFromSalonBoard(page)
-  const count = await upsertStylists(env, userId, stylists)
+  const count = await upsertStylists(env, userId, salonId, stylists)
   log(`スタイリスト ${count}件を同期しました`)
   return count
 }
@@ -159,10 +170,16 @@ export async function syncStylists(
 /**
  * クーポン同期の一連の処理(ログイン済みのpageを渡すこと)。
  */
-export async function syncCoupons(page: Page, env: Bindings, userId: number, log: AutomationLogger): Promise<number> {
+export async function syncCoupons(
+  page: Page,
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  log: AutomationLogger
+): Promise<number> {
   log('クーポン一覧を取得中...')
   const coupons = await fetchCouponsFromSalonBoard(page)
-  const count = await upsertCoupons(env, userId, coupons)
+  const count = await upsertCoupons(env, userId, salonId, coupons)
   log(`クーポン ${count}件を同期しました`)
   return count
 }
@@ -201,7 +218,12 @@ export async function fetchSalonInfoFromSalonBoard(page: Page): Promise<SyncedSa
  * 取得したサロン情報を salonboard_salons へupsertする。
  * 照合は (user_id, salon_key=STORE_ID)。STORE_IDが取れない場合はサロン名で照合。
  */
-export async function upsertSalonInfo(env: Bindings, userId: number, info: SyncedSalonInfo): Promise<void> {
+export async function upsertSalonInfo(
+  env: Bindings,
+  userId: number,
+  info: SyncedSalonInfo,
+  salonType?: 'hair' | 'kirei' | null
+): Promise<void> {
   const salonName = info.salonName || '(サロン名未取得)'
   const storeId = info.storeId || null
   const hpbSlnId = storeId ? `sln${storeId}` : null
@@ -221,17 +243,27 @@ export async function upsertSalonInfo(env: Bindings, userId: number, info: Synce
       .first<{ id: number }>()
   }
 
+  // salonTypeが指定されない場合(単一サロンの通常ログイン同期等、種別が分からない)は
+  // 既存のsalon_type列を上書きしない。複数サロン一覧から取得した場合のみ指定される。
   if (existing) {
-    await env.DB.prepare(
-      `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-    )
-      .bind(salonName, storeId, hpbSlnId, existing.id)
-      .run()
+    if (salonType) {
+      await env.DB.prepare(
+        `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, salon_type = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(salonName, storeId, hpbSlnId, salonType, existing.id)
+        .run()
+    } else {
+      await env.DB.prepare(
+        `UPDATE salonboard_salons SET salon_name = ?, salon_key = ?, hpb_sln_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(salonName, storeId, hpbSlnId, existing.id)
+        .run()
+    }
   } else {
     await env.DB.prepare(
-      `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, hpb_sln_id) VALUES (?, ?, ?, ?)`
+      `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, hpb_sln_id, salon_type) VALUES (?, ?, ?, ?, ?)`
     )
-      .bind(userId, storeId, salonName, hpbSlnId)
+      .bind(userId, storeId, salonName, hpbSlnId, salonType || null)
       .run()
   }
 }

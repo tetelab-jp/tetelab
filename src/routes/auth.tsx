@@ -116,8 +116,29 @@ auth.post('/signup', async (c) => {
     .run()
 
   const userId = result.meta.last_row_id as number
+
+  // 複数サロンワークスペース対応 フェーズ1: 新規登録時点で「1つ目のサロン
+  // ワークスペース」をプレースホルダーとして作成し、active_salon_idを確定
+  // させる。salon_key=NULLのため、後日サロンボード連携を実際に同期すると
+  // upsertSalonInfo()の「salon_key一致→無ければsalon_name一致」フォール
+  // バックでこの行にUPDATEされる(新規行は増えない、既存のsrc/index.tsx
+  // フェーズ0バックフィルと同じロジック)。
+  const placeholderSalon = await c.env.DB.prepare(
+    `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, is_active_workspace, activated_at)
+     VALUES (?, NULL, ?, 1, CURRENT_TIMESTAMP)`
+  )
+    .bind(userId, salonName || '(未設定)')
+    .run()
+  const placeholderSalonId = placeholderSalon.meta.last_row_id as number
+  await c.env.DB.prepare('UPDATE users SET active_salon_id = ? WHERE id = ?')
+    .bind(placeholderSalonId, userId)
+    .run()
+
   await setSession(c, userId, email)
-  return c.redirect('/dashboard')
+  // 複数サロン対応: 登録直後はサロンボード連携ウィザード(/settings/salonboard)へ
+  // 進んでもらう(そのままダッシュボードに出しても未連携バナーから同じ場所へ
+  // 誘導されるだけなので、最初から一体化した導線にする)。
+  return c.redirect('/settings/salonboard')
 })
 
 // ---------- Login ----------
@@ -156,7 +177,12 @@ auth.get('/login', (c) => {
           ログイン
         </button>
       </form>
-      <p class="text-sm text-gray-500 mt-6 text-center">
+      <p class="text-sm text-gray-500 mt-4 text-center">
+        <a href="/forgot-password" class="text-gray-400 hover:text-gray-600 hover:underline">
+          パスワードをお忘れの方はこちら
+        </a>
+      </p>
+      <p class="text-sm text-gray-500 mt-2 text-center">
         アカウントをお持ちでない方は{' '}
         <a href="/signup" class="text-pink-600 font-medium hover:underline">
           新規登録
@@ -164,6 +190,29 @@ auth.get('/login', (c) => {
       </p>
     </AuthLayout>,
     { title: 'ログイン' }
+  )
+})
+
+// ---------- Forgot password ----------
+// 2026-08-14追記: メール送信基盤(SES等)を持たないため、本格的な自動リセット
+// フローではなく、サポート窓口への問い合わせ案内のみを表示する簡易ページ。
+auth.get('/forgot-password', (c) => {
+  return c.render(
+    <AuthLayout>
+      <h2 class="text-lg font-bold mb-4">パスワードをお忘れの方</h2>
+      <p class="text-sm text-gray-600 leading-relaxed">
+        大変お手数ですが、現在パスワードの自動再設定には対応しておりません。
+        <br />
+        ご登録のメールアドレスを添えて、サポート窓口までお問い合わせください。
+        パスワードの再設定を代行いたします。
+      </p>
+      <p class="text-sm text-gray-500 mt-6 text-center">
+        <a href="/login" class="text-pink-600 font-medium hover:underline">
+          ログイン画面に戻る
+        </a>
+      </p>
+    </AuthLayout>,
+    { title: 'パスワードをお忘れの方' }
   )
 })
 

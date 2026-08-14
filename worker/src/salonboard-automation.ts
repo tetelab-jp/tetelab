@@ -284,6 +284,98 @@ export async function loginToSalonBoard(
   log('ログイン成功')
 }
 
+// ============================================
+// 2026-08-14追記: 複数サロン対応。
+// 一部のSALON BOARDアカウントは1つのログインID/パスワードに対して複数の
+// サロン(ヘアサロン・キレイサロン(ネイル/まつげ等の別業態))が登録されており、
+// ログイン直後に通常のダッシュボードではなく「サロン一覧」中間ページ
+// (https://salonboard.com/CNC/groupTop/)に遷移する。対象サロンの
+// <a id="{STORE_ID}">をクリックして初めて実際のサロンの管理画面に入れる。
+//
+// 実機確認済み(ユーザー提供のスクリーンショット+DevTools):
+//   - ヘアサロン一覧: <img alt="...ヘアサロン">の次に来る.mod_box_21内のtable
+//     (テーブル自体のid未確認のため、alt属性を手がかりに構造的に辿る)
+//   - キレイサロン一覧: <table id="kireiStoreInfoArea">
+//   - 各行: <tr><td class="mod_center">{STORE_ID}</td>
+//           <td class="storeName"><a id="{STORE_ID}">{サロン名}</a></td></tr>
+//   - 選択後の遷移先は通常ログイン直後のページとほぼ同じ
+// ============================================
+
+export type SalonListEntry = { storeId: string; name: string; type: 'hair' | 'kirei' }
+
+export type GroupTopResult =
+  | { status: 'not_on_group_top' }
+  | { status: 'resolved'; storeId: string; salons: SalonListEntry[] }
+  | { status: 'needs_selection'; salons: SalonListEntry[] }
+  | { status: 'target_not_found'; salons: SalonListEntry[] }
+
+/**
+ * ログイン直後、複数サロンアカウント特有の「サロン一覧」中間ページに
+ * いる場合はそれを検知し、targetStoreIdが解決できればクリックして通過する。
+ * 中間ページでなければ何もせず{status:'not_on_group_top'}を返す(既存の
+ * 単一サロンアカウントの挙動には一切影響しない)。
+ */
+export async function handleGroupTopIfPresent(
+  page: Page,
+  targetStoreId: string | null | undefined,
+  log: AutomationLogger
+): Promise<GroupTopResult> {
+  if (!page.url().includes('/CNC/groupTop/')) {
+    return { status: 'not_on_group_top' }
+  }
+  log('複数サロンアカウントの「サロン一覧」画面を検知しました')
+
+  const salons: SalonListEntry[] = await page.evaluate(() => {
+    const rows: { storeId: string; name: string; type: 'hair' | 'kirei' }[] = []
+    const extractRows = (table: Element | null, type: 'hair' | 'kirei') => {
+      if (!table) return
+      table.querySelectorAll('tbody tr').forEach((tr) => {
+        const link = tr.querySelector('a[id]') as HTMLAnchorElement | null
+        if (!link) return
+        const storeId = link.id.trim()
+        const name = (link.textContent || '').trim()
+        if (storeId) rows.push({ storeId, name, type })
+      })
+    }
+
+    const kireiTable = document.querySelector('#kireiStoreInfoArea')
+    extractRows(kireiTable, 'kirei')
+
+    const hairImg = Array.from(document.querySelectorAll('img')).find((img) => (img.getAttribute('alt') || '').includes('ヘアサロン'))
+    const hairBox = hairImg?.nextElementSibling
+    const hairTable = hairBox?.querySelector('table') || null
+    extractRows(hairTable, 'hair')
+
+    return rows
+  })
+
+  log(`サロン一覧: ${salons.map((s) => `${s.type}:${s.storeId}(${s.name})`).join(', ') || '(取得できませんでした)'}`)
+
+  const clickAndWait = async (storeId: string) => {
+    await Promise.all([
+      page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+      page.click(`#${storeId}`)
+    ])
+  }
+
+  if (targetStoreId && salons.some((s) => s.storeId === targetStoreId)) {
+    log(`選択済みのサロン(${targetStoreId})をクリックします`)
+    await clickAndWait(targetStoreId)
+    return { status: 'resolved', storeId: targetStoreId, salons }
+  }
+
+  if (!targetStoreId && salons.length === 1) {
+    log(`サロンが1件のみのため自動的に選択します(${salons[0].storeId})`)
+    await clickAndWait(salons[0].storeId)
+    return { status: 'resolved', storeId: salons[0].storeId, salons }
+  }
+
+  if (targetStoreId) {
+    return { status: 'target_not_found', salons }
+  }
+  return { status: 'needs_selection', salons }
+}
+
 /**
  * 1件のスタイル画像を「登録(下書き保存)」する。
  * 反映申請は含まない(別途 submitReflectApplication を呼ぶ必要がある)。

@@ -22,30 +22,41 @@ export type PrimarySalonArea = {
 }
 
 /**
- * ユーザーの主要サロン(salonboard_salonsの先頭行、無ければusers.salon_nameへ
+ * ユーザーの主要サロン(現在アクティブなワークスペース、無ければusers.salon_nameへ
  * フォールバック)のサロン名・対策エリアを返す。
  */
 export async function getPrimarySalonArea(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   fallbackName: string | null
 ): Promise<PrimarySalonArea | null> {
-  const row = await env.DB.prepare(
-    `SELECT salon_name, hpb_sln_id, service_area_cd, middle_area_cd, middle_area_name,
-            small_area_cd, small_area_name, area_synced_at
-     FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`
-  )
-    .bind(userId)
-    .first<{
-      salon_name: string
-      hpb_sln_id: string | null
-      service_area_cd: string | null
-      middle_area_cd: string | null
-      middle_area_name: string | null
-      small_area_cd: string | null
-      small_area_name: string | null
-      area_synced_at: string | null
-    }>()
+  type SalonAreaRow = {
+    salon_name: string
+    hpb_sln_id: string | null
+    service_area_cd: string | null
+    middle_area_cd: string | null
+    middle_area_name: string | null
+    small_area_cd: string | null
+    small_area_name: string | null
+    area_synced_at: string | null
+  }
+  const AREA_COLUMNS = `salon_name, hpb_sln_id, service_area_cd, middle_area_cd, middle_area_name,
+            small_area_cd, small_area_name, area_synced_at`
+
+  // 複数サロンワークスペース対応: 現在アクティブなサロン(salonId)をそのまま
+  // 参照する。未設定(移行前の異常系)の場合のみ、従来通り先頭行にフォールバックする。
+  let row: SalonAreaRow | null = null
+  if (salonId) {
+    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE id = ?`)
+      .bind(salonId)
+      .first<SalonAreaRow>()
+  }
+  if (!row) {
+    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`)
+      .bind(userId)
+      .first<SalonAreaRow>()
+  }
 
   if (row) {
     return {

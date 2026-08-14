@@ -412,6 +412,168 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_articles.auto_post_enabled_flag)に失敗しました:', err)
   }
   try {
+    // 2026-08-14(ユーザー指定): サロンボードの1ログインに複数サロン(ヘア/キレイ)が
+    // 紐づくアカウント対応。ユーザーが選択した(または単一サロンのため自動確定した)
+    // STORE_IDと、サロン種別(ヘア/キレイ)を保持する。
+    await bindings.DB.prepare(`ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS target_store_id TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS salon_type TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_credentials.target_store_id等)に失敗しました:', err)
+  }
+  try {
+    // 2026-08-14再追記(ユーザー指定・複数サロンワークスペース対応 フェーズ0):
+    // 「追加契約すれば複数サロンをこのアプリで使え、サロン切り替えボタンで
+    // スタイル・クーポン・スタイリスト・ブログ・順位測定等のデータを完全に
+    // 別々に切り替えられる」機能の土台。salonboard_salons(既存の複数サロン
+    // 一覧テーブル)を「サロンワークスペース」の主エンティティに昇格させ、
+    // 業務データ全テーブルにsalon_idを追加する。この時点ではまだ挙動を
+    // 一切変えない(salon_idは書き込まれるが、クエリはまだuser_idのみで
+    // 動作し続ける。読み取りへの適用は後続の各ルート改修フェーズで行う)。
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS salon_slot_limit INTEGER NOT NULL DEFAULT 1`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS is_active_workspace INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP`).run()
+    // active_salon_idはsalonboard_salons.idを参照するため、salonboard_salons側の
+    // 列追加より後に実行する必要がある(参照先テーブルの列が先に存在すること自体は
+    // 元々満たしているが、依存関係を明示するためこの位置に置く)。
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS active_salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE SET NULL`
+    ).run()
+
+    const salonIdTables = [
+      'styles',
+      'stylists',
+      'coupons',
+      'templates',
+      'posts',
+      'execution_logs',
+      'batch_template_apply_logs',
+      'salon_profiles',
+      'style_post_schedules',
+      'style_post_runs',
+      'style_post_jobs',
+      'blog_categories',
+      'blog_articles',
+      'ranking_queries',
+      'ranking_runs',
+      'ranking_results',
+      'ranking_schedules'
+    ]
+    for (const table of salonIdTables) {
+      await bindings.DB.prepare(
+        `ALTER TABLE ${table} ADD COLUMN IF NOT EXISTS salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE`
+      ).run()
+      await bindings.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_${table}_salon_id ON ${table}(salon_id)`).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(複数サロンワークスペース フェーズ0: salon_id列追加)に失敗しました:', err)
+  }
+  try {
+    // 複数サロンワークスペース対応 フェーズ0: 既存データのバックフィル。
+    // 既存ユーザーは全員「実質1サロンだけ使っている」状態なので機械的に
+    // 決定できる。一度きりの実行をschema_migration_flagsで保証する
+    // (seo_enabled_backfillと同じパターン)。
+    const workspaceBackfillDone = await bindings.DB.prepare(
+      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'salon_workspace_backfill_v1'`
+    ).first()
+    if (!workspaceBackfillDone) {
+      // 1. まだsalonboard_salonsに1行も持たない(一度も同期していない)ユーザーに
+      //    プレースホルダー行を作成する。salon_key=NULLなので、後日実際に同期
+      //    すると upsertSalonInfo() の「salon_key一致→無ければsalon_name一致」
+      //    フォールバックでこの行にUPDATEされる(新規行は増えない)。
+      await bindings.DB.prepare(
+        `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, is_active_workspace, activated_at)
+         SELECT u.id, NULL, COALESCE(u.salon_name, '(未設定)'), 1, CURRENT_TIMESTAMP
+         FROM users u
+         WHERE NOT EXISTS (SELECT 1 FROM salonboard_salons s WHERE s.user_id = u.id)`
+      ).run()
+
+      // 2. salonboard_salonsが1行だけのユーザーは、その行を有効なワークスペースにする。
+      await bindings.DB.prepare(
+        `UPDATE salonboard_salons s SET is_active_workspace = 1, activated_at = COALESCE(s.activated_at, CURRENT_TIMESTAMP)
+         WHERE s.is_active_workspace = 0
+           AND (SELECT COUNT(*) FROM salonboard_salons s2 WHERE s2.user_id = s.user_id) = 1`
+      ).run()
+
+      // 3. 既に複数行ある(複数サロン選択機能を経験済みの)ユーザーは、
+      //    salon_credentials.target_store_idと一致する行を有効なワークスペースにする。
+      await bindings.DB.prepare(
+        `UPDATE salonboard_salons s SET is_active_workspace = 1, activated_at = COALESCE(s.activated_at, CURRENT_TIMESTAMP)
+         FROM salon_credentials c
+         WHERE c.user_id = s.user_id AND c.target_store_id IS NOT NULL AND c.target_store_id = s.salon_key
+           AND s.is_active_workspace = 0`
+      ).run()
+
+      // 4. users.active_salon_idを、有効化されたワークスペースのidに確定する。
+      //    (中間ページでの選択が未完了のまま複数行だけ持つ極めて稀なケースは、
+      //    有効な行が無いためactive_salon_idはNULLのまま=このユーザーは元々
+      //    同期も自動投稿も出来ていなかったはずなので、既存動作に対する後退はない)
+      await bindings.DB.prepare(
+        `UPDATE users u SET active_salon_id = s.id
+         FROM salonboard_salons s
+         WHERE s.user_id = u.id AND s.is_active_workspace = 1 AND u.active_salon_id IS NULL`
+      ).run()
+
+      // 5. 業務データ全テーブルへsalon_idをバックフィルする。この時点で各ユーザーの
+      //    active_salon_idは高々1つなので紐付けに曖昧さはない。
+      const backfillTables = [
+        'styles',
+        'stylists',
+        'coupons',
+        'templates',
+        'posts',
+        'execution_logs',
+        'batch_template_apply_logs',
+        'salon_profiles',
+        'style_post_schedules',
+        'style_post_runs',
+        'style_post_jobs',
+        'blog_categories',
+        'blog_articles',
+        'ranking_queries',
+        'ranking_runs',
+        'ranking_results',
+        'ranking_schedules'
+      ]
+      for (const table of backfillTables) {
+        await bindings.DB.prepare(
+          `UPDATE ${table} t SET salon_id = u.active_salon_id
+           FROM users u
+           WHERE t.user_id = u.id AND t.salon_id IS NULL AND u.active_salon_id IS NOT NULL`
+        ).run()
+      }
+
+      await bindings.DB.prepare(
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_workspace_backfill_v1') ON CONFLICT (flag_key) DO NOTHING`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(複数サロンワークスペース フェーズ0: バックフィル)に失敗しました:', err)
+  }
+  try {
+    // 複数サロンワークスペース対応 フェーズ5仕上げ: salon_profiles / style_post_schedules /
+    // ranking_schedules は元々「1 user_id = 1行」前提のUNIQUE(user_id)制約を持っていた。
+    // 2サロン目を有効化しても、アプリ側の(user_id, salon_id)存在チェック後のINSERTが
+    // この制約に阻まれて失敗する(2サロン目のプロフィール/スケジュール保存が常に
+    // 失敗するバグ)ため、バックフィル完了後の今、UNIQUE(user_id)をUNIQUE(salon_id)へ
+    // 差し替える(1物理サロンにつき1行、という制約に置き換わるだけで意味は保たれる)。
+    const uniqueSalonIdTables = ['salon_profiles', 'style_post_schedules', 'ranking_schedules']
+    for (const table of uniqueSalonIdTables) {
+      await bindings.DB.prepare(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_user_id_key`).run()
+      await bindings.DB.prepare(
+        `DO $$ BEGIN
+           ALTER TABLE ${table} ADD CONSTRAINT ${table}_salon_id_key UNIQUE (salon_id);
+         EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
+         END $$;`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(複数サロンワークスペース: user_id→salon_id UNIQUE制約差替)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

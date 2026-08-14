@@ -174,14 +174,14 @@ export async function getStyleRowForJob(env: Bindings, styleId: number): Promise
  * execution_logs.style_noへ都度保存し、後で並びが変わっても実行時点のNo.を
  * 表示できるようにする。
  */
-export async function getStyleNo(env: Bindings, userId: number, styleId: number): Promise<number | null> {
+export async function getStyleNo(env: Bindings, userId: number, salonId: number | null, styleId: number): Promise<number | null> {
   const row = await env.DB.prepare(
     `SELECT no FROM (
        SELECT id, ROW_NUMBER() OVER (ORDER BY sort_order ASC, id DESC) AS no
-       FROM styles WHERE user_id = ?
+       FROM styles WHERE user_id = ? AND salon_id = ?
      ) ranked WHERE id = ?`
   )
-    .bind(userId, styleId)
+    .bind(userId, salonId, styleId)
     .first<{ no: number }>()
   return row?.no ?? null
 }
@@ -201,6 +201,7 @@ function randomJobToken(): string {
 async function dispatchStylePostJob(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   styleId: number,
   runId?: number,
   isRetry?: boolean,
@@ -227,9 +228,9 @@ async function dispatchStylePostJob(
   // 再トライを予約しないため(ユーザー指定ルール)、automation.tsx側の結果
   // コールバックはこのフラグを見て再トライ予約の可否を判定する。
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO style_post_jobs (style_id, user_id, job_token, status, run_id, is_retry, is_auto_cycle) VALUES (?, ?, ?, 'pending', ?, ?, ?)`
+    `INSERT INTO style_post_jobs (style_id, user_id, salon_id, job_token, status, run_id, is_retry, is_auto_cycle) VALUES (?, ?, ?, ?, 'pending', ?, ?, ?)`
   )
-    .bind(styleId, userId, jobToken, runId ?? null, isRetry ? 1 : 0, isAutoCycle ? 1 : 0)
+    .bind(styleId, userId, salonId, jobToken, runId ?? null, isRetry ? 1 : 0, isAutoCycle ? 1 : 0)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -259,12 +260,12 @@ async function dispatchStylePostJob(
     await env.DB.prepare(`UPDATE styles SET salonboard_register_status = 'failed', last_error = ? WHERE id = ?`)
       .bind(`ジョブ起動に失敗しました: ${message}`, styleId)
       .run()
-    const styleNo = await getStyleNo(env, userId, styleId)
+    const styleNo = await getStyleNo(env, userId, salonId, styleId)
     await env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'register_style', 'failure', ?)`
     )
-      .bind(userId, styleId, styleNo, `ジョブ起動失敗: ${message}`)
+      .bind(userId, salonId, styleId, styleNo, `ジョブ起動失敗: ${message}`)
       .run()
     throw err
   }
@@ -316,6 +317,7 @@ async function waitForJobTerminal(env: Bindings, jobId: number): Promise<void> {
 async function dispatchRemainingStylesSequentially(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   runId: number,
   remaining: { id: number }[],
   previousJobId: number | null
@@ -325,12 +327,12 @@ async function dispatchRemainingStylesSequentially(
     if (prevJobId !== null) {
       await waitForJobTerminal(env, prevJobId)
     }
-    if (!(await isStyleEligible(env, userId, t.id))) {
+    if (!(await isStyleEligible(env, userId, salonId, t.id))) {
       prevJobId = null
       continue
     }
     try {
-      prevJobId = await dispatchStylePostJob(env, userId, t.id, runId)
+      prevJobId = await dispatchStylePostJob(env, userId, salonId, t.id, runId)
     } catch {
       prevJobId = null
     }
@@ -348,6 +350,7 @@ async function requireCredentialsConfigured(env: Bindings, userId: number): Prom
 export async function runStyleAutomationForUser(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   scheduledTimeLabel: string
 ): Promise<RunSummary> {
   await requireCredentialsConfigured(env, userId)
@@ -357,10 +360,14 @@ export async function runStyleAutomationForUser(
   // 巡回投稿(runNextStyleForUser)が進行中の状態で手動実行(テスト実行)を
   // 押した場合に、対象一覧が重複したまま2系統の投入ループが並行して走り、
   // 同一スタイルへの二重投稿を招く恐れがあったため。
+  //
+  // 複数サロンワークスペース対応: このワークスペース(salonId)の進行中
+  // ジョブのみを確認する(別サロンの進行中ジョブがあっても、こちらの
+  // 新規投入をブロックしない)。
   const alreadyInFlight = await env.DB.prepare(
-    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1`
+    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND salon_id = ? AND status IN ('pending', 'running') LIMIT 1`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .first<{ x: number }>()
   if (alreadyInFlight) {
     throw new Error('既に投稿処理が進行中です。完了してからもう一度お試しください')
@@ -368,14 +375,14 @@ export async function runStyleAutomationForUser(
 
   const { results } = await env.DB.prepare(
     `SELECT s.id FROM styles s
-     WHERE s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+     WHERE s.user_id = ? AND s.salon_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
        AND NOT EXISTS (
          SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running')
        )
      ORDER BY s.sort_order ASC, s.id ASC
      LIMIT ${DAILY_POST_LIMIT}`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .all<{ id: number }>()
 
   const targets = results || []
@@ -384,10 +391,10 @@ export async function runStyleAutomationForUser(
   }
 
   const runInsert = await env.DB.prepare(
-    `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
-     VALUES (?, ?, ?, 'processing')`
+    `INSERT INTO style_post_runs (user_id, salon_id, scheduled_time, total_images, status)
+     VALUES (?, ?, ?, ?, 'processing')`
   )
-    .bind(userId, scheduledTimeLabel, targets.length)
+    .bind(userId, salonId, scheduledTimeLabel, targets.length)
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
@@ -400,7 +407,7 @@ export async function runStyleAutomationForUser(
   let firstDispatchErrorMessage: string | undefined
   let firstJobId: number | null = null
   try {
-    firstJobId = await dispatchStylePostJob(env, userId, targets[0].id, runId)
+    firstJobId = await dispatchStylePostJob(env, userId, salonId, targets[0].id, runId)
   } catch (err: any) {
     firstDispatchFailed = true
     // 2026-08-14追記(重大バグ修正): ここでエラーを握りつぶしていたため、
@@ -410,7 +417,7 @@ export async function runStyleAutomationForUser(
   }
 
   if (targets.length > 1) {
-    void dispatchRemainingStylesSequentially(env, userId, runId, targets.slice(1), firstJobId)
+    void dispatchRemainingStylesSequentially(env, userId, salonId, runId, targets.slice(1), firstJobId)
   }
 
   // 2件目以降(および1件目のFargate側の最終結果)はバックグラウンドで進行・
@@ -472,7 +479,13 @@ type ScheduleState = {
  * 候補一覧から進行中スタイルが除外されることによる巡回スキップを招いていた)。
  * それ以外(通常運転)は前回のジョブ投入から60分以上経過していること。
  */
-async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, schedule: ScheduleState): Promise<boolean> {
+async function shouldPostNow(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  nowLabel: string,
+  schedule: ScheduleState
+): Promise<boolean> {
   const nowMinutes = jstMinutesOfDay(nowLabel)
   if (nowMinutes >= BLACKOUT_START_MINUTES && nowMinutes < BLACKOUT_END_MINUTES) return false
 
@@ -481,17 +494,21 @@ async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, sc
     if (pausedUntilMs > Date.now()) return false
   }
 
+  // 複数サロンワークスペース対応: このワークスペース(salonId)の進行中
+  // ジョブのみを見る(別サロンの進行中ジョブに巻き込まれてスキップしない)。
   const inFlight = await env.DB.prepare(
-    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND status IN ('pending', 'running') LIMIT 1`
+    `SELECT 1 as x FROM style_post_jobs WHERE user_id = ? AND salon_id = ? AND status IN ('pending', 'running') LIMIT 1`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .first<{ x: number }>()
   if (inFlight) return false
 
   if (schedule.burst_remaining > 0) return true
 
-  const lastRow = await env.DB.prepare(`SELECT MAX(created_at) as last_at FROM style_post_jobs WHERE user_id = ?`)
-    .bind(userId)
+  const lastRow = await env.DB.prepare(
+    `SELECT MAX(created_at) as last_at FROM style_post_jobs WHERE user_id = ? AND salon_id = ?`
+  )
+    .bind(userId, salonId)
     .first<{ last_at: string | null }>()
 
   if (!lastRow?.last_at) return true
@@ -507,20 +524,25 @@ async function shouldPostNow(env: Bindings, userId: number, nowLabel: string, sc
  * 通常運転時はnext_cursor_style_idより登録順で後ろの最初の1件を選び、
  * 無ければ(カーソル未設定、または最後まで巡回し終えた場合)先頭に戻る。
  */
-const ELIGIBLE_STYLE_WHERE = `s.user_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
+const ELIGIBLE_STYLE_WHERE = `s.user_id = ? AND s.salon_id = ? AND s.auto_post_enabled_flag = 1 AND s.internal_save_status = 'ready'
      AND NOT EXISTS (SELECT 1 FROM style_post_jobs j WHERE j.style_id = s.id AND j.status IN ('pending', 'running'))`
 
 /**
  * 指定したスタイルがまだ有効(自動投稿ON・入力完了・進行中ジョブなし)かを確認する。
  */
-async function isStyleEligible(env: Bindings, userId: number, styleId: number): Promise<boolean> {
+async function isStyleEligible(env: Bindings, userId: number, salonId: number | null, styleId: number): Promise<boolean> {
   const row = await env.DB.prepare(`SELECT s.id FROM styles s WHERE ${ELIGIBLE_STYLE_WHERE} AND s.id = ?`)
-    .bind(userId, styleId)
+    .bind(userId, salonId, styleId)
     .first<{ id: number }>()
   return !!row
 }
 
-async function selectNextStyleId(env: Bindings, userId: number, schedule: ScheduleState): Promise<number | null> {
+async function selectNextStyleId(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  schedule: ScheduleState
+): Promise<number | null> {
   const baseWhere = ELIGIBLE_STYLE_WHERE
 
   if (schedule.burst_remaining > 0) {
@@ -528,14 +550,14 @@ async function selectNextStyleId(env: Bindings, userId: number, schedule: Schedu
     const row = await env.DB.prepare(
       `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1 OFFSET ${offset}`
     )
-      .bind(userId)
+      .bind(userId, salonId)
       .first<{ id: number }>()
     if (row) return row.id
     // 対象スタイルがバースト件数(3件)に満たない場合は先頭に戻ってでも1件選ぶ
     const fallback = await env.DB.prepare(
       `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1`
     )
-      .bind(userId)
+      .bind(userId, salonId)
       .first<{ id: number }>()
     return fallback?.id ?? null
   }
@@ -548,7 +570,7 @@ async function selectNextStyleId(env: Bindings, userId: number, schedule: Schedu
        ORDER BY s.sort_order ASC, s.id ASC
        LIMIT 1`
     )
-      .bind(userId, schedule.next_cursor_style_id)
+      .bind(userId, salonId, schedule.next_cursor_style_id)
       .first<{ id: number }>()
     if (nextRow) return nextRow.id
   }
@@ -556,7 +578,7 @@ async function selectNextStyleId(env: Bindings, userId: number, schedule: Schedu
   const firstRow = await env.DB.prepare(
     `SELECT s.id FROM styles s WHERE ${baseWhere} ORDER BY s.sort_order ASC, s.id ASC LIMIT 1`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .first<{ id: number }>()
   return firstRow?.id ?? null
 }
@@ -569,17 +591,18 @@ async function selectNextStyleId(env: Bindings, userId: number, schedule: Schedu
 export async function runNextStyleForUser(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   scheduledTimeLabel: string
 ): Promise<RunSummary | null> {
   const schedule = await env.DB.prepare(
     `SELECT burst_remaining, next_cursor_style_id, paused_until, retry_pending_style_id
-     FROM style_post_schedules WHERE user_id = ?`
+     FROM style_post_schedules WHERE user_id = ? AND salon_id = ?`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .first<ScheduleState>()
 
   if (!schedule) return null
-  if (!(await shouldPostNow(env, userId, scheduledTimeLabel, schedule))) return null
+  if (!(await shouldPostNow(env, userId, salonId, scheduledTimeLabel, schedule))) return null
 
   await requireCredentialsConfigured(env, userId)
 
@@ -590,29 +613,29 @@ export async function runNextStyleForUser(
   let isRetrySlot = false
   let styleId: number | null = null
   if (schedule.retry_pending_style_id) {
-    if (await isStyleEligible(env, userId, schedule.retry_pending_style_id)) {
+    if (await isStyleEligible(env, userId, salonId, schedule.retry_pending_style_id)) {
       isRetrySlot = true
       styleId = schedule.retry_pending_style_id
     } else {
       // 対象が既に無効(OFF・削除等)になっている場合は再トライ枠を放棄し、
       // 通常の巡回選定にフォールバックする。
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(userId)
+        .bind(userId, salonId)
         .run()
     }
   }
   if (!styleId) {
-    styleId = await selectNextStyleId(env, userId, schedule)
+    styleId = await selectNextStyleId(env, userId, salonId, schedule)
   }
   if (!styleId) return null
 
   const runInsert = await env.DB.prepare(
-    `INSERT INTO style_post_runs (user_id, scheduled_time, total_images, status)
-     VALUES (?, ?, 1, 'processing')`
+    `INSERT INTO style_post_runs (user_id, salon_id, scheduled_time, total_images, status)
+     VALUES (?, ?, ?, 1, 'processing')`
   )
-    .bind(userId, scheduledTimeLabel)
+    .bind(userId, salonId, scheduledTimeLabel)
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
@@ -630,27 +653,27 @@ export async function runNextStyleForUser(
       // バースト残数/巡回カーソルは元々このスタイルの選定に使っていないため
       // 進めない。
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET retry_pending_style_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(userId)
+        .bind(userId, salonId)
         .run()
     } else if (schedule.burst_remaining > 0) {
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET burst_remaining = burst_remaining - 1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(userId)
+        .bind(userId, salonId)
         .run()
     } else {
       await env.DB.prepare(
-        `UPDATE style_post_schedules SET next_cursor_style_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET next_cursor_style_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(styleId, userId)
+        .bind(styleId, userId, salonId)
         .run()
     }
   }
 
   try {
-    await dispatchStylePostJob(env, userId, styleId, runId, isRetrySlot, true)
+    await dispatchStylePostJob(env, userId, salonId, styleId, runId, isRetrySlot, true)
     await advanceSchedule()
     return { runId, totalImages: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
@@ -683,13 +706,18 @@ export type RetryResult = { outcome: 'dispatched' | 'failed' }
  * 失敗/ブロックされた1件のスタイルのみを再実行する(ジョブ投入)。
  * internal_save_status='ready'であることのみ要求する。
  */
-export async function retryStylePost(env: Bindings, userId: number, styleId: number): Promise<RetryResult> {
+export async function retryStylePost(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  styleId: number
+): Promise<RetryResult> {
   await requireCredentialsConfigured(env, userId)
 
   const row = await env.DB.prepare(
-    `SELECT id FROM styles WHERE id = ? AND user_id = ? AND internal_save_status = 'ready'`
+    `SELECT id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ? AND internal_save_status = 'ready'`
   )
-    .bind(styleId, userId)
+    .bind(styleId, userId, salonId)
     .first<{ id: number }>()
 
   if (!row) throw new Error('対象のスタイルが見つからないか、入力が未完了(ready状態でない)です')
@@ -698,14 +726,21 @@ export async function retryStylePost(env: Bindings, userId: number, styleId: num
   }
 
   try {
-    await dispatchStylePostJob(env, userId, styleId)
+    await dispatchStylePostJob(env, userId, salonId, styleId)
     return { outcome: 'dispatched' }
   } catch {
     return { outcome: 'failed' }
   }
 }
 
-type StaleJobRow = { id: number; style_id: number; user_id: number; ecs_task_arn: string | null; run_id: number | null }
+type StaleJobRow = {
+  id: number
+  style_id: number
+  user_id: number
+  salon_id: number | null
+  ecs_task_arn: string | null
+  run_id: number | null
+}
 
 /**
  * 1件の停滞ジョブ(pending/running状態のまま結果コールバックが来ない)を
@@ -753,12 +788,12 @@ async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
   )
     .bind(j.style_id)
     .run()
-  const styleNo = await getStyleNo(env, j.user_id, j.style_id)
+  const styleNo = await getStyleNo(env, j.user_id, j.salon_id, j.style_id)
   await env.DB.prepare(
-    `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-     VALUES (NULL, ?, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
+    `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+     VALUES (NULL, ?, ?, ?, ?, 'register_style', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
   )
-    .bind(j.user_id, j.style_id, styleNo)
+    .bind(j.user_id, j.salon_id, j.style_id, styleNo)
     .run()
 
   await updateConsecutiveFailureAndNotify(env, j.user_id, false)
@@ -776,7 +811,7 @@ async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
  */
 export async function sweepStaleJobs(env: Bindings): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT id, style_id, user_id, ecs_task_arn, run_id FROM style_post_jobs
+    `SELECT id, style_id, user_id, salon_id, ecs_task_arn, run_id FROM style_post_jobs
      WHERE status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   ).all<StaleJobRow>()
 
@@ -803,12 +838,12 @@ export async function sweepStaleJobs(env: Bindings): Promise<number> {
  * ユースケースには、閾値を下げるのではなくCronが正常に動いているかの
  * 確認で対応する)。このユーザーのジョブのみを対象にする。
  */
-export async function resetStuckJobsForUser(env: Bindings, userId: number): Promise<number> {
+export async function resetStuckJobsForUser(env: Bindings, userId: number, salonId: number | null): Promise<number> {
   const { results } = await env.DB.prepare(
-    `SELECT id, style_id, user_id, ecs_task_arn, run_id FROM style_post_jobs
-     WHERE user_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
+    `SELECT id, style_id, user_id, salon_id, ecs_task_arn, run_id FROM style_post_jobs
+     WHERE user_id = ? AND salon_id = ? AND status IN ('pending', 'running') AND created_at < (now() - interval '15 minutes')`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .all<StaleJobRow>()
 
   const staleJobs = results || []

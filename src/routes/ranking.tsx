@@ -23,14 +23,15 @@ const MEASURE_MAX_PAGES = 5
 async function runTemplates(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   runId: number,
   queryIds?: number[]
 ): Promise<void> {
   try {
     let sql =
       `SELECT id, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
-       FROM ranking_queries WHERE user_id = ? AND is_active = 1`
-    const binds: unknown[] = [userId]
+       FROM ranking_queries WHERE user_id = ? AND salon_id = ? AND is_active = 1`
+    const binds: unknown[] = [userId, salonId]
     if (queryIds && queryIds.length > 0) {
       sql += ` AND id IN (${queryIds.map(() => '?').join(',')})`
       binds.push(...queryIds)
@@ -63,12 +64,13 @@ async function runTemplates(
       ) => {
         await env.DB.prepare(
           `INSERT INTO ranking_results
-            (user_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
+            (user_id, salon_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
              area_scope, keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             userId,
+            salonId,
             runId,
             q.id,
             q.salon_name,
@@ -130,13 +132,13 @@ async function runTemplates(
 }
 
 /** 定期測定: あるユーザーの有効な全テンプレートを1runでまとめて計測 */
-async function runScheduledForUser(env: Bindings, userId: number): Promise<void> {
+async function runScheduledForUser(env: Bindings, userId: number, salonId: number | null): Promise<void> {
   const run = await env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'scheduled', 'running')`
+    `INSERT INTO ranking_runs (user_id, salon_id, trigger, status) VALUES (?, ?, 'scheduled', 'running')`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .run()
-  await runTemplates(env, userId, run.meta.last_row_id as number)
+  await runTemplates(env, userId, salonId, run.meta.last_row_id as number)
 }
 
 /** UTCの "YYYY-MM-DD HH:MM:SS" 文字列を JST の Date に変換 */
@@ -540,9 +542,9 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
 
   const primaryQuery = await c.env.DB.prepare(
-    `SELECT id, salon_name, area_label FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`
+    `SELECT id, salon_name, area_label FROM ranking_queries WHERE user_id = ? AND salon_id = ? ORDER BY id LIMIT 1`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number; salon_name: string; area_label: string | null }>()
 
   let keywordsList: string[] = []
@@ -556,9 +558,9 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
   }
 
   const runningRun = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND status = 'running'`
+    `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND salon_id = ? AND status = 'running'`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ n: number }>()
   const hasRunning = (runningRun?.n || 0) > 0
 
@@ -712,8 +714,10 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
 ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
 
-  const primaryQuery = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
-    .bind(user.id)
+  const primaryQuery = await c.env.DB.prepare(
+    `SELECT id FROM ranking_queries WHERE user_id = ? AND salon_id = ? ORDER BY id LIMIT 1`
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (!primaryQuery) {
     return c.json({ success: false, error: '対策キーワード設定がありません' }, 400)
@@ -731,20 +735,20 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
   // (結果の重複・HPBへの過剰アクセスにつながる)。既に実行中のrunが
   // あれば新規開始を拒否する。
   const runningRun = await c.env.DB.prepare(
-    `SELECT id FROM ranking_runs WHERE user_id = ? AND status = 'running' LIMIT 1`
+    `SELECT id FROM ranking_runs WHERE user_id = ? AND salon_id = ? AND status = 'running' LIMIT 1`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (runningRun) {
     return c.json({ success: false, error: '既に計測が実行中です。完了までお待ちください' }, 409)
   }
 
   const run = await c.env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'manual', 'running')`
+    `INSERT INTO ranking_runs (user_id, salon_id, trigger, status) VALUES (?, ?, 'manual', 'running')`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .run()
-  void runTemplates(c.env, user.id, run.meta.last_row_id as number, [primaryQuery.id])
+  void runTemplates(c.env, user.id, user.active_salon_id, run.meta.last_row_id as number, [primaryQuery.id])
 
   return c.json({ success: true })
 })
@@ -754,18 +758,25 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
  * ため、名前を付けての複数登録はやめ、既存の最初の1件(無ければ自動作成)へ
  * キーワードを直接追加/削除する方式にした。
  */
-async function getOrCreatePrimaryQueryId(env: Bindings, userId: number, salon: PrimarySalonArea): Promise<number> {
-  const existing = await env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
-    .bind(userId)
+async function getOrCreatePrimaryQueryId(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  salon: PrimarySalonArea
+): Promise<number> {
+  const existing = await env.DB.prepare(
+    `SELECT id FROM ranking_queries WHERE user_id = ? AND salon_id = ? ORDER BY id LIMIT 1`
+  )
+    .bind(userId, salonId)
     .first<{ id: number }>()
   if (existing) return existing.id
 
   const areaLabel = buildAreaLabel(salon.middleAreaName, salon.smallAreaName)
   const q = await env.DB.prepare(
-    `INSERT INTO ranking_queries (user_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
-     VALUES (?, NULL, ?, ?, ?, ?, ?)`
+    `INSERT INTO ranking_queries (user_id, salon_id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label)
+     VALUES (?, ?, NULL, ?, ?, ?, ?, ?)`
   )
-    .bind(userId, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
+    .bind(userId, salonId, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel)
     .run()
   return q.meta.last_row_id as number
 }
@@ -775,10 +786,12 @@ async function getOrCreatePrimaryQueryId(env: Bindings, userId: number, salon: P
 // ============================================
 ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
-  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+  const salon = await getPrimarySalonArea(c.env, user.id, user.active_salon_id, user.salon_name)
 
-  const existingQuery = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE user_id = ? ORDER BY id LIMIT 1`)
-    .bind(user.id)
+  const existingQuery = await c.env.DB.prepare(
+    `SELECT id FROM ranking_queries WHERE user_id = ? AND salon_id = ? ORDER BY id LIMIT 1`
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number }>()
   let keywords: { id: number; keyword: string }[] = []
   if (existingQuery) {
@@ -864,12 +877,12 @@ ranking.post('/api/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
   const keyword = String(body.keyword || '').trim()
   if (!keyword) return c.json({ success: false, error: 'キーワードを入力してください' }, 400)
 
-  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+  const salon = await getPrimarySalonArea(c.env, user.id, user.active_salon_id, user.salon_name)
   if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd) {
     return c.json({ success: false, error: 'サロン名または対策エリアが未取得です。サロンボードと同期してください' }, 400)
   }
 
-  const queryId = await getOrCreatePrimaryQueryId(c.env, user.id, salon)
+  const queryId = await getOrCreatePrimaryQueryId(c.env, user.id, user.active_salon_id, salon)
   const { results: existing } = await c.env.DB.prepare(
     `SELECT id, keyword FROM ranking_query_keywords WHERE query_id = ? ORDER BY sort_order, id`
   )
@@ -899,9 +912,9 @@ ranking.post('/api/seo/keywords/:id/delete', requireAuth, requireSeoEnabled, asy
   if (Number.isFinite(id)) {
     await c.env.DB.prepare(
       `DELETE FROM ranking_query_keywords
-       WHERE id = ? AND query_id IN (SELECT id FROM ranking_queries WHERE user_id = ?)`
+       WHERE id = ? AND query_id IN (SELECT id FROM ranking_queries WHERE user_id = ? AND salon_id = ?)`
     )
-      .bind(id, user.id)
+      .bind(id, user.id, user.active_salon_id)
       .run()
   }
   return c.json({ success: true })
@@ -915,9 +928,9 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
   const id = Number(c.req.param('id'))
   const q = await c.env.DB.prepare(
     `SELECT id, name, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
-     FROM ranking_queries WHERE id = ? AND user_id = ?`
+     FROM ranking_queries WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<{
       id: number
       name: string | null
@@ -936,7 +949,7 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
     .all<{ keyword: string }>()
   const keywords = kwRows.map((r) => r.keyword)
 
-  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+  const salon = await getPrimarySalonArea(c.env, user.id, user.active_salon_id, user.salon_name)
 
   return c.render(
     <PageLayout
@@ -994,14 +1007,14 @@ ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => 
   const id = Number(c.req.param('id'))
   const body = (await c.req.parseBody()) as Record<string, unknown>
 
-  const owned = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE id = ? AND user_id = ?`)
-    .bind(id, user.id)
+  const owned = await c.env.DB.prepare(`SELECT id FROM ranking_queries WHERE id = ? AND user_id = ? AND salon_id = ?`)
+    .bind(id, user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (!owned) return c.redirect('/seo/keywords')
 
   const name = String(body.name || '').trim()
   // 作成時と同様、サロン名・対策エリアは画面上で編集不可(自動入力)のため送信値を信用しない。
-  const salon = await getPrimarySalonArea(c.env, user.id, user.salon_name)
+  const salon = await getPrimarySalonArea(c.env, user.id, user.active_salon_id, user.salon_name)
   const keywords = parseKeywords(body)
 
   if (!salon?.salonName || !salon.serviceAreaCd || !salon.middleAreaCd || keywords.length === 0) {
@@ -1013,9 +1026,19 @@ ranking.post('/seo/templates/:id', requireAuth, requireSeoEnabled, async (c) => 
     `UPDATE ranking_queries
        SET name = ?, salon_name = ?, service_area_cd = ?, middle_area_cd = ?, small_area_cd = ?,
            area_label = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ?`
+     WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
-    .bind(name || null, salon.salonName, salon.serviceAreaCd, salon.middleAreaCd, salon.smallAreaCd, areaLabel, id, user.id)
+    .bind(
+      name || null,
+      salon.salonName,
+      salon.serviceAreaCd,
+      salon.middleAreaCd,
+      salon.smallAreaCd,
+      areaLabel,
+      id,
+      user.id,
+      user.active_salon_id
+    )
     .run()
 
   await c.env.DB.prepare(`DELETE FROM ranking_query_keywords WHERE query_id = ?`).bind(id).run()
@@ -1035,8 +1058,8 @@ ranking.post('/seo/templates/:id/delete', requireAuth, requireSeoEnabled, async 
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   if (Number.isFinite(id)) {
-    await c.env.DB.prepare(`DELETE FROM ranking_queries WHERE id = ? AND user_id = ?`)
-      .bind(id, user.id)
+    await c.env.DB.prepare(`DELETE FROM ranking_queries WHERE id = ? AND user_id = ? AND salon_id = ?`)
+      .bind(id, user.id, user.active_salon_id)
       .run()
   }
   return c.redirect('/seo/keywords')
@@ -1048,9 +1071,9 @@ ranking.post('/seo/templates/:id/delete', requireAuth, requireSeoEnabled, async 
 ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
   const sched = await c.env.DB.prepare(
-    `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ?`
+    `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ? AND salon_id = ?`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ enabled: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
 
   const saved = c.req.query('saved') === '1'
@@ -1108,20 +1131,20 @@ ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const frequency = 'weekly'
   const runTime = '20:00'
 
-  const existing = await c.env.DB.prepare(`SELECT id FROM ranking_schedules WHERE user_id = ?`)
-    .bind(user.id)
+  const existing = await c.env.DB.prepare(`SELECT id FROM ranking_schedules WHERE user_id = ? AND salon_id = ?`)
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (existing) {
     await c.env.DB.prepare(
-      `UPDATE ranking_schedules SET enabled = ?, frequency = ?, run_time = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      `UPDATE ranking_schedules SET enabled = ?, frequency = ?, run_time = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(enabled, frequency, runTime, user.id)
+      .bind(enabled, frequency, runTime, user.id, user.active_salon_id)
       .run()
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO ranking_schedules (user_id, enabled, frequency, run_time) VALUES (?, ?, ?, ?)`
+      `INSERT INTO ranking_schedules (user_id, salon_id, enabled, frequency, run_time) VALUES (?, ?, ?, ?, ?)`
     )
-      .bind(user.id, enabled, frequency, runTime)
+      .bind(user.id, user.active_salon_id, enabled, frequency, runTime)
       .run()
   }
   return c.redirect('/seo/schedule?saved=1')
@@ -1152,11 +1175,18 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(seo_enabled=0)にされた
   // サロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT s.user_id, s.frequency, s.run_time, s.last_run_at
+    `SELECT s.user_id, s.salon_id, s.frequency, s.run_time, s.last_run_at
      FROM ranking_schedules s
      JOIN users u ON u.id = s.user_id
-     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1`
-  ).all<{ user_id: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
+     JOIN salonboard_salons sb ON sb.id = s.salon_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1 AND sb.is_active_workspace = 1`
+  ).all<{
+    user_id: number
+    salon_id: number
+    frequency: string
+    run_time: string | null
+    last_run_at: string | null
+  }>()
 
   const triggered: number[] = []
   for (const s of schedules) {
@@ -1174,11 +1204,13 @@ ranking.post('/api/cron/run-ranking', async (c) => {
     }
 
     await c.env.DB.prepare(
-      `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(s.user_id)
+      .bind(s.user_id, s.salon_id)
       .run()
-    void runScheduledForUser(c.env, s.user_id).catch((e) => console.error('runScheduledForUser failed:', e))
+    void runScheduledForUser(c.env, s.user_id, s.salon_id).catch((e) =>
+      console.error('runScheduledForUser failed:', e)
+    )
     triggered.push(s.user_id)
   }
 

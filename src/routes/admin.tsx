@@ -492,6 +492,9 @@ type ToolSalonRow = {
   style_enabled: number
   blog_enabled: number
   seo_enabled: number
+  salon_slot_limit: number
+  active_salon_count: number
+  total_salon_count: number
   seq: number
 }
 
@@ -501,6 +504,42 @@ function buildToolListUrl(page: number, q: string) {
   if (q) params.set('q', q)
   const qs = params.toString()
   return '/admin/tool' + (qs ? `?${qs}` : '')
+}
+
+function SalonSlotLimitForm({
+  userId,
+  page,
+  q,
+  salonSlotLimit,
+  activeSalonCount,
+  totalSalonCount
+}: {
+  userId: number
+  page: number
+  q: string
+  salonSlotLimit: number
+  activeSalonCount: number
+  totalSalonCount: number
+}) {
+  const canAdd = salonSlotLimit < totalSalonCount
+  return (
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-gray-700 whitespace-nowrap font-medium">
+        {activeSalonCount}/{salonSlotLimit}店舗
+      </span>
+      <form method="post" action={`/admin/tool/${userId}/add-salon-slot`}>
+        <input type="hidden" name="page" value={page} />
+        <input type="hidden" name="q" value={q} />
+        <button
+          type="submit"
+          disabled={!canAdd}
+          class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          サロンを追加する
+        </button>
+      </form>
+    </div>
+  )
 }
 
 function FeatureToggleForm({
@@ -552,7 +591,9 @@ admin.get('/admin/tool', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / TOOL_PAGE_SIZE))
 
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled,
+    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled, salon_slot_limit,
+       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND s.is_active_workspace = 1) AS active_salon_count,
+       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -599,6 +640,7 @@ admin.get('/admin/tool', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
+                <th class="px-4 py-3 text-left font-medium">契約サロン数</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -637,11 +679,21 @@ admin.get('/admin/tool', async (c) => {
                       offLabel="無効"
                     />
                   </td>
+                  <td class="px-4 py-3">
+                    <SalonSlotLimitForm
+                      userId={salon.id}
+                      page={page}
+                      q={q}
+                      salonSlotLimit={salon.salon_slot_limit}
+                      activeSalonCount={salon.active_salon_count}
+                      totalSalonCount={salon.total_salon_count}
+                    />
+                  </td>
                 </tr>
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -712,6 +764,44 @@ async function toggleSalonFeature(
 admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_enabled', 'toggle_salon_style_enabled'))
 admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
 admin.post('/admin/tool/:id/toggle-seo', (c) => toggleSalonFeature(c, 'seo_enabled', 'toggle_salon_seo_enabled'))
+
+// 複数サロン対応: 顧客が追加契約した際に、管理者が「契約サロン数」を1増やす。
+// 実際にどの物理サロンを追加するかはユーザー自身が設定画面で選ぶ(既存の
+// toggleSalonFeatureと同じ「監査ログ→一覧へリダイレクト」の骨格を踏襲)。
+// 増やせる上限は、そのユーザーのサロンボードログインで実際に検出済みの
+// ヘアサロン総数まで(それ以上は物理的に存在しないため追加できない)。
+admin.post('/admin/tool/:id/add-salon-slot', async (c) => {
+  const adminUser = c.get('admin')
+  const targetId = Number(c.req.param('id'))
+  const body = await c.req.parseBody()
+  const page = String(body.page || '1')
+  const q = String(body.q || '')
+
+  const target = (await c.env.DB.prepare(
+    `SELECT id, email, salon_slot_limit,
+       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count
+     FROM users WHERE id = ?`
+  )
+    .bind(targetId)
+    .first()) as { id: number; email: string; salon_slot_limit: number; total_salon_count: number } | null
+
+  if (target && target.salon_slot_limit < target.total_salon_count) {
+    const nextLimit = target.salon_slot_limit + 1
+    await c.env.DB.prepare(`UPDATE users SET salon_slot_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(nextLimit, targetId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'add_salon_slot',
+      'user',
+      targetId,
+      `${target.email}: salon_slot_limit ${target.salon_slot_limit} -> ${nextLimit}`
+    )
+  }
+
+  return c.redirect(buildToolListUrl(Number(page) || 1, q))
+})
 
 // ---------- 稼働状況 ----------
 // スタイル自動投稿の連続失敗回数(users.consecutive_failure_count、

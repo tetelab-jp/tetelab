@@ -33,6 +33,22 @@ blog.use('/api/blog/*', requireBlogEnabled)
 // Phase 2で実装するため、このPhase 1では「記事を作って承認する」ところまで。
 // ============================================
 
+// SALON BOARDのブログ投稿フォーム(カテゴリ選択select#blogCategoryCd)に
+// 実際に存在する11件のカテゴリ(固定enum)。表示順もSALON BOARD側と一致させる。
+const HPB_BLOG_CATEGORY_OPTIONS = [
+  'こだわりの仕事道具',
+  'おすすめスタイル',
+  'サロンのNEWS',
+  'おすすめメニュー',
+  '仕事の出来事',
+  'プライベート',
+  'マイペット',
+  'お気に入りアイテム',
+  '趣味・マイブーム',
+  'ビューティー',
+  'その他'
+] as const
+
 type SalonProfileRow = {
   concept: string | null
   target_customer: string | null
@@ -53,14 +69,14 @@ type SalonProfileRow = {
   salonboard_synced_at: string | null
 }
 
-async function getSalonProfile(c: AppContext, userId: number): Promise<SalonProfileRow | null> {
+async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfileRow | null> {
   return c.env.DB.prepare(
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
             business_hours, closing_days, strengths, price_range, reference_text, first_person,
             sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at
-     FROM salon_profiles WHERE user_id = ?`
+     FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
   )
-    .bind(userId)
+    .bind(user.id, user.active_salon_id)
     .first<SalonProfileRow>()
 }
 
@@ -69,27 +85,40 @@ function buildFooterText(salonName: string | null, profile: SalonProfileRow | nu
   const sep = (profile.footer_separator || '＊').repeat(16)
   const lines = [sep, salonName || '']
   if (profile.address || profile.nearest_station) {
-    lines.push('【アクセス】')
+    lines.push('', '【アクセス】')
     if (profile.address) lines.push(profile.address)
     if (profile.nearest_station) lines.push(`${profile.nearest_station}${profile.walk_minutes ? ` 徒歩${profile.walk_minutes}` : ''}`)
   }
   if (profile.business_hours || profile.closing_days) {
-    lines.push('【営業時間】')
+    lines.push('', '【営業時間】')
     if (profile.business_hours) lines.push(profile.business_hours)
     if (profile.closing_days) lines.push(`※定休：${profile.closing_days}`)
   }
   const keywords: string[] = JSON.parse(profile.footer_keywords_json || '[]')
-  if (keywords.length > 0) lines.push(`[${keywords.join('/')}]`)
+  if (keywords.length > 0) lines.push('', `[${keywords.join('/')}]`)
   return lines.join('\n')
 }
 
-async function getSalonProfileForGeneration(c: AppContext, userId: number): Promise<SalonProfileForGeneration> {
-  const [profile, salon] = await Promise.all([
-    getSalonProfile(c, userId),
-    c.env.DB.prepare('SELECT salon_name, middle_area_name, small_area_name FROM salonboard_salons WHERE user_id = ? LIMIT 1')
-      .bind(userId)
-      .first<{ salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }>()
-  ])
+type SalonAreaLookupRow = { salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }
+
+// 複数サロンワークスペース対応: 現在アクティブなサロン(user.active_salon_id)を
+// そのまま参照する。未設定(移行前の異常系)の場合のみ、従来通り先頭行に
+// フォールバックする。
+async function getSalonForProfile(c: AppContext, user: AppUser): Promise<SalonAreaLookupRow | null> {
+  const AREA_COLUMNS = 'salon_name, middle_area_name, small_area_name'
+  if (user.active_salon_id) {
+    const row = await c.env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE id = ?`)
+      .bind(user.active_salon_id)
+      .first<SalonAreaLookupRow>()
+    if (row) return row
+  }
+  return c.env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? ORDER BY id LIMIT 1`)
+    .bind(user.id)
+    .first<SalonAreaLookupRow>()
+}
+
+async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promise<SalonProfileForGeneration> {
+  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
   if (!profile) return null
   const areaLabel = [salon?.middle_area_name, salon?.small_area_name].filter(Boolean).join(' > ') || null
   return {
@@ -112,7 +141,7 @@ async function getSalonProfileForGeneration(c: AppContext, userId: number): Prom
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
-  const profile = await getSalonProfile(c, user.id)
+  const profile = await getSalonProfile(c, user)
   const footerText = buildFooterText(user.salon_name, profile)
   const footerLines = footerText ? footerText.split('\n').length : 0
 
@@ -290,7 +319,9 @@ blog.post('/blog/salon', async (c) => {
     )
   }
 
-  const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ?').bind(user.id).first()
+  const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first()
   if (existing) {
     await c.env.DB.prepare(
       `UPDATE salon_profiles SET
@@ -298,25 +329,25 @@ blog.post('/blog/salon', async (c) => {
          concept=?, strengths=?, target_customer=?, price_range=?, reference_text=?,
          first_person=?, sentence_ending=?, writing_tone=?, ng_words=?,
          footer_separator=?, footer_keywords_json=?, updated_at=CURRENT_TIMESTAMP
-       WHERE user_id=?`
+       WHERE user_id=? AND salon_id=?`
     )
       .bind(
         fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
         fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
         fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
-        fields.footer_separator, fields.footer_keywords_json, user.id
+        fields.footer_separator, fields.footer_keywords_json, user.id, user.active_salon_id
       )
       .run()
   } else {
     await c.env.DB.prepare(
       `INSERT INTO salon_profiles (
-         user_id, address, nearest_station, walk_minutes, business_hours, closing_days,
+         user_id, salon_id, address, nearest_station, walk_minutes, business_hours, closing_days,
          concept, strengths, target_customer, price_range, reference_text,
          first_person, sentence_ending, writing_tone, ng_words, footer_separator, footer_keywords_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
-        user.id, fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
+        user.id, user.active_salon_id, fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
         fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
         fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
         fields.footer_separator, fields.footer_keywords_json
@@ -333,11 +364,21 @@ blog.post('/blog/salon', async (c) => {
 // 二重実装を避ける(public/static/blog-salon.js参照)。
 blog.post('/blog/salon/mark-synced', async (c) => {
   const user = c.get('user')
-  const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ?').bind(user.id).first()
+  const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first()
   if (existing) {
-    await c.env.DB.prepare('UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP WHERE user_id = ?').bind(user.id).run()
+    await c.env.DB.prepare(
+      'UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?'
+    )
+      .bind(user.id, user.active_salon_id)
+      .run()
   } else {
-    await c.env.DB.prepare('INSERT INTO salon_profiles (user_id, salonboard_synced_at) VALUES (?, CURRENT_TIMESTAMP)').bind(user.id).run()
+    await c.env.DB.prepare(
+      'INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at) VALUES (?, ?, CURRENT_TIMESTAMP)'
+    )
+      .bind(user.id, user.active_salon_id)
+      .run()
   }
   return c.json({ success: true })
 })
@@ -376,9 +417,9 @@ blog.get('/blog/template', async (c) => {
 
   const { results: categories } = await c.env.DB.prepare(
     `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode
-     FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC`
+     FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<CategoryRow>()
 
   const catList = categories || []
@@ -386,9 +427,9 @@ blog.get('/blog/template', async (c) => {
   const selected = catList.find((cat) => cat.id === selectedId) || null
 
   const { results: stylists } = await c.env.DB.prepare(
-    'SELECT id, name FROM stylists WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC'
+    'SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number; name: string }>()
 
   let articles: { id: number; image_description: string | null; status: string; title: string | null }[] = []
@@ -396,9 +437,9 @@ blog.get('/blog/template', async (c) => {
   if (selected) {
     const { results } = await c.env.DB.prepare(
       `SELECT id, image_description, status, title FROM blog_articles
-       WHERE user_id = ? AND category_id = ? ORDER BY sort_order ASC, id ASC`
+       WHERE user_id = ? AND salon_id = ? AND category_id = ? ORDER BY sort_order ASC, id ASC`
     )
-      .bind(user.id, selected.id)
+      .bind(user.id, user.active_salon_id, selected.id)
       .all<{ id: number; image_description: string | null; status: string; title: string | null }>()
     articles = results || []
     counts = { total: articles.length, generated: articles.filter((a) => a.status !== 'pending_generation').length }
@@ -456,7 +497,12 @@ blog.get('/blog/template', async (c) => {
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">HPBブログカテゴリ</label>
-                    <input type="text" name="hpb_category_value" value={selected.hpb_category_value || ''} placeholder="例）ヘアケア" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                      <option value="">選択しない</option>
+                      {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
+                        <option value={opt} selected={selected.hpb_category_value === opt}>{opt}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">デフォルト投稿者</label>
@@ -582,15 +628,21 @@ blog.post('/blog/template/categories/add', async (c) => {
   const name = String(body.name || '').trim()
   if (!name) return c.redirect('/blog/template')
 
-  const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM blog_categories WHERE user_id = ?').bind(user.id).first<{ cnt: number }>()
+  const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM blog_categories WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first<{ cnt: number }>()
   if ((countRow?.cnt || 0) >= 10) {
     return c.redirect('/blog/template')
   }
-  const nextOrder = await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_categories WHERE user_id = ?')
-    .bind(user.id)
+  const nextOrder = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_categories WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ n: number }>()
-  const insert = await c.env.DB.prepare('INSERT INTO blog_categories (user_id, name, sort_order) VALUES (?, ?, ?)')
-    .bind(user.id, name, nextOrder?.n ?? 0)
+  const insert = await c.env.DB.prepare(
+    'INSERT INTO blog_categories (user_id, salon_id, name, sort_order) VALUES (?, ?, ?, ?)'
+  )
+    .bind(user.id, user.active_salon_id, name, nextOrder?.n ?? 0)
     .run()
   return c.redirect(`/blog/template?category=${insert.meta.last_row_id}`)
 })
@@ -599,13 +651,17 @@ blog.post('/blog/template/categories/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const { results: images } = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE user_id = ? AND category_id = ? AND image_r2_key IS NOT NULL')
-    .bind(user.id, id)
+  const { results: images } = await c.env.DB.prepare(
+    'SELECT image_r2_key FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? AND image_r2_key IS NOT NULL'
+  )
+    .bind(user.id, user.active_salon_id, id)
     .all<{ image_r2_key: string }>()
   for (const img of images || []) {
     await c.env.STYLE_IMAGES.delete(img.image_r2_key).catch(() => {})
   }
-  await c.env.DB.prepare('DELETE FROM blog_categories WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  await c.env.DB.prepare('DELETE FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
   return c.redirect('/blog/template')
 })
 
@@ -617,7 +673,7 @@ blog.post('/blog/template/categories/:id', async (c) => {
   const styleMode = ['params', 'reference', 'scraped'].includes(String(body.style_mode)) ? String(body.style_mode) : 'params'
   await c.env.DB.prepare(
     `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, style_mode=?
-     WHERE id=? AND user_id=?`
+     WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
       String(body.name || '').trim(),
@@ -627,7 +683,8 @@ blog.post('/blog/template/categories/:id', async (c) => {
       String(body.body_prompt || '').trim() || null,
       styleMode,
       id,
-      user.id
+      user.id,
+      user.active_salon_id
     )
     .run()
   return c.redirect(`/blog/template?category=${id}`)
@@ -636,13 +693,13 @@ blog.post('/blog/template/categories/:id', async (c) => {
 blog.post('/api/blog/categories/:id/generate-draft', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  const category = await c.env.DB.prepare('SELECT name FROM blog_categories WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const category = await c.env.DB.prepare('SELECT name FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ name: string }>()
   if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
 
   try {
-    const profile = await getSalonProfileForGeneration(c, user.id)
+    const profile = await getSalonProfileForGeneration(c, user)
     const draft = await generateCategoryDraft(c.env, category.name, profile)
     return c.json({ success: true, draft })
   } catch (err: any) {
@@ -653,14 +710,18 @@ blog.post('/api/blog/categories/:id/generate-draft', async (c) => {
 blog.post('/blog/template/categories/:id/images', async (c) => {
   const user = c.get('user')
   const categoryId = Number(c.req.param('id'))
-  const category = await c.env.DB.prepare('SELECT id FROM blog_categories WHERE id = ? AND user_id = ?').bind(categoryId, user.id).first()
+  const category = await c.env.DB.prepare('SELECT id FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(categoryId, user.id, user.active_salon_id)
+    .first()
   if (!category) return c.redirect('/blog/template')
 
   const body = await c.req.parseBody({ all: true })
   const files = Array.isArray(body.images) ? body.images : body.images ? [body.images] : []
 
-  const nextOrderRow = await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ?')
-    .bind(user.id)
+  const nextOrderRow = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ n: number }>()
   let nextOrder = nextOrderRow?.n ?? 0
 
@@ -672,10 +733,10 @@ blog.post('/blog/template/categories/:id/images', async (c) => {
     const fileName = `${(f.name || 'blog').replace(/\.[^./\\]+$/, '')}.jpg`
     await c.env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
     await c.env.DB.prepare(
-      `INSERT INTO blog_articles (user_id, category_id, image_r2_key, image_file_name, sort_order, status)
-       VALUES (?, ?, ?, ?, ?, 'pending_generation')`
+      `INSERT INTO blog_articles (user_id, salon_id, category_id, image_r2_key, image_file_name, sort_order, status)
+       VALUES (?, ?, ?, ?, ?, ?, 'pending_generation')`
     )
-      .bind(user.id, categoryId, key, fileName, nextOrder)
+      .bind(user.id, user.active_salon_id, categoryId, key, fileName, nextOrder)
       .run()
     nextOrder += 1
   }
@@ -686,21 +747,23 @@ blog.post('/blog/template/categories/:id/images', async (c) => {
 blog.post('/blog/template/articles/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  const article = await c.env.DB.prepare('SELECT category_id, image_r2_key FROM blog_articles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const article = await c.env.DB.prepare('SELECT category_id, image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ category_id: number | null; image_r2_key: string | null }>()
   if (!article) return c.redirect('/blog/template')
 
   if (article.image_r2_key) await c.env.STYLE_IMAGES.delete(article.image_r2_key).catch(() => {})
-  await c.env.DB.prepare('DELETE FROM blog_articles WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  await c.env.DB.prepare('DELETE FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
   return c.redirect(`/blog/template?category=${article.category_id || ''}`)
 })
 
 blog.get('/blog/article/:id/image', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  const owned = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const owned = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ image_r2_key: string | null }>()
   if (!owned?.image_r2_key) return c.notFound()
 
@@ -715,21 +778,20 @@ blog.get('/blog/article/:id/image', async (c) => {
   })
 })
 
-async function computeBodyMaxChars(c: AppContext, userId: number): Promise<number> {
-  const user = await c.env.DB.prepare('SELECT salon_name FROM users WHERE id = ?').bind(userId).first<{ salon_name: string | null }>()
-  const profile = await getSalonProfile(c, userId)
-  const footerText = buildFooterText(user?.salon_name || null, profile)
+async function computeBodyMaxChars(c: AppContext, user: AppUser): Promise<number> {
+  const profile = await getSalonProfile(c, user)
+  const footerText = buildFooterText(user.salon_name, profile)
   return Math.max(300, 1000 - footerText.length)
 }
 
 async function generateOneArticle(
   c: AppContext,
-  userId: number,
+  user: AppUser,
   category: CategoryRow,
   article: { id: number; image_description: string | null }
 ): Promise<void> {
-  const profile = await getSalonProfileForGeneration(c, userId)
-  const bodyMaxChars = await computeBodyMaxChars(c, userId)
+  const profile = await getSalonProfileForGeneration(c, user)
+  const bodyMaxChars = await computeBodyMaxChars(c, user)
 
   const stylistRow = category.default_stylist_id
     ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
@@ -748,9 +810,9 @@ async function generateOneArticle(
   })
 
   await c.env.DB.prepare(
-    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=?`
+    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
   )
-    .bind(result.title, result.body, category.default_stylist_id || null, article.id, userId)
+    .bind(result.title, result.body, category.default_stylist_id || null, article.id, user.id, user.active_salon_id)
     .run()
 }
 
@@ -758,21 +820,21 @@ blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<CategoryRow>()
   if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
 
   try {
     const sampleArticle = await c.env.DB.prepare(
-      `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND category_id = ? ORDER BY sort_order ASC LIMIT 1`
+      `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? ORDER BY sort_order ASC LIMIT 1`
     )
-      .bind(user.id, id)
+      .bind(user.id, user.active_salon_id, id)
       .first<{ id: number; image_description: string | null }>()
 
-    const profile = await getSalonProfileForGeneration(c, user.id)
-    const bodyMaxChars = await computeBodyMaxChars(c, user.id)
+    const profile = await getSalonProfileForGeneration(c, user)
+    const bodyMaxChars = await computeBodyMaxChars(c, user)
     const stylistRow = category.default_stylist_id
       ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
       : null
@@ -798,24 +860,24 @@ blog.post('/api/blog/categories/:id/generate-batch', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<CategoryRow>()
   if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
 
   const { results: targets } = await c.env.DB.prepare(
-    `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND category_id = ? AND status = 'pending_generation' ORDER BY sort_order ASC`
+    `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? AND status = 'pending_generation' ORDER BY sort_order ASC`
   )
-    .bind(user.id, id)
+    .bind(user.id, user.active_salon_id, id)
     .all<{ id: number; image_description: string | null }>()
 
   const list = targets || []
   if (list.length === 0) return c.json({ success: true, count: 0 })
 
   for (const article of list) {
-    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'generating' WHERE id = ? AND user_id = ?`)
-      .bind(article.id, user.id)
+    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'generating' WHERE id = ? AND user_id = ? AND salon_id = ?`)
+      .bind(article.id, user.id, user.active_salon_id)
       .run()
   }
 
@@ -842,7 +904,7 @@ blog.post('/api/blog/categories/:id/generate-batch', async (c) => {
       }
 
       try {
-        await generateOneArticle(c, user.id, category, article)
+        await generateOneArticle(c, user, category, article)
       } catch (err: any) {
         await c.env.DB.prepare(`UPDATE blog_articles SET status = 'pending_generation', last_error = ? WHERE id = ?`)
           .bind(String(err?.message || err).slice(0, 500), article.id)
@@ -859,9 +921,9 @@ blog.get('/api/blog/categories/:id/generation-status', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const { results } = await c.env.DB.prepare(
-    `SELECT status, COUNT(*) as cnt FROM blog_articles WHERE user_id = ? AND category_id = ? GROUP BY status`
+    `SELECT status, COUNT(*) as cnt FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? GROUP BY status`
   )
-    .bind(user.id, id)
+    .bind(user.id, user.active_salon_id, id)
     .all<{ status: string; cnt: number }>()
   return c.json({ success: true, counts: results || [] })
 })
@@ -893,9 +955,9 @@ blog.get('/blog/articles', async (c) => {
   const user = c.get('user')
 
   const { results: couponOptions } = await c.env.DB.prepare(
-    'SELECT id, name FROM coupons WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC'
+    'SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number; name: string }>()
 
   const { results: rows } = await c.env.DB.prepare(
@@ -908,10 +970,10 @@ blog.get('/blog/articles', async (c) => {
      LEFT JOIN blog_categories bc ON bc.id = a.category_id
      LEFT JOIN stylists st ON st.id = a.stylist_id
      LEFT JOIN coupons cp ON cp.id = a.coupon_id
-     WHERE a.user_id = ?
+     WHERE a.user_id = ? AND a.salon_id = ?
      ORDER BY a.sort_order ASC, a.id ASC`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<ArticleListRow>()
 
   const articles = rows || []
@@ -1174,8 +1236,10 @@ blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
   const user = c.get('user')
   const { articleId, enabled } = await c.req.json<{ articleId: number; enabled: boolean }>()
 
-  await c.env.DB.prepare('UPDATE blog_articles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-    .bind(enabled ? 1 : 0, articleId, user.id)
+  await c.env.DB.prepare(
+    'UPDATE blog_articles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+  )
+    .bind(enabled ? 1 : 0, articleId, user.id, user.active_salon_id)
     .run()
 
   return c.json({ success: true })
@@ -1185,8 +1249,10 @@ blog.post('/api/blog/articles/reorder', async (c) => {
   const user = c.get('user')
   const { articleId, newPosition } = await c.req.json<{ articleId: number; newPosition: number }>()
 
-  const { results } = await c.env.DB.prepare('SELECT id FROM blog_articles WHERE user_id = ? ORDER BY sort_order ASC, id ASC')
-    .bind(user.id)
+  const { results } = await c.env.DB.prepare(
+    'SELECT id FROM blog_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number }>()
   const ids = (results || []).map((r) => r.id)
   const currentIndex = ids.indexOf(articleId)
@@ -1197,8 +1263,10 @@ blog.post('/api/blog/articles/reorder', async (c) => {
   ids.splice(targetIndex, 0, articleId)
 
   for (let i = 0; i < ids.length; i++) {
-    await c.env.DB.prepare('UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-      .bind(i, ids[i], user.id)
+    await c.env.DB.prepare(
+      'UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+    )
+      .bind(i, ids[i], user.id, user.active_salon_id)
       .run()
   }
   return c.json({ success: true })
@@ -1213,15 +1281,15 @@ blog.post('/api/blog/articles/rearrange-by-category', async (c) => {
   const user = c.get('user')
 
   const { results: categories } = await c.env.DB.prepare(
-    'SELECT id FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+    'SELECT id FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number }>()
 
   const { results: articles } = await c.env.DB.prepare(
-    'SELECT id, category_id FROM blog_articles WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+    'SELECT id, category_id FROM blog_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number; category_id: number | null }>()
 
   const queues = new Map<number | null, number[]>()
@@ -1245,8 +1313,10 @@ blog.post('/api/blog/articles/rearrange-by-category', async (c) => {
   }
 
   for (let i = 0; i < orderedIds.length; i++) {
-    await c.env.DB.prepare('UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-      .bind(i, orderedIds[i], user.id)
+    await c.env.DB.prepare(
+      'UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+    )
+      .bind(i, orderedIds[i], user.id, user.active_salon_id)
       .run()
   }
   return c.json({ success: true })
@@ -1259,9 +1329,9 @@ blog.post('/api/blog/articles/bulk-approve', async (c) => {
   for (const id of articleIds || []) {
     const result = await c.env.DB.prepare(
       `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND user_id = ? AND status = 'unapproved'`
+       WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'unapproved'`
     )
-      .bind(id, user.id)
+      .bind(id, user.id, user.active_salon_id)
       .run()
     if (result.success) count++
   }
@@ -1272,8 +1342,10 @@ blog.post('/api/blog/articles/bulk-set-coupon', async (c) => {
   const user = c.get('user')
   const { articleIds, couponId } = await c.req.json<{ articleIds: number[]; couponId: number | null }>()
   for (const id of articleIds || []) {
-    await c.env.DB.prepare('UPDATE blog_articles SET coupon_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-      .bind(couponId || null, id, user.id)
+    await c.env.DB.prepare(
+      'UPDATE blog_articles SET coupon_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+    )
+      .bind(couponId || null, id, user.id, user.active_salon_id)
       .run()
   }
   return c.json({ success: true })
@@ -1286,9 +1358,9 @@ blog.get('/api/blog/articles/:id', async (c) => {
   const [article, categories, stylists, coupons, profile, salonUser] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, category_id, title, body, image_description, coupon_id, stylist_id, month_tags_json, status
-       FROM blog_articles WHERE id = ? AND user_id = ?`
+       FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?`
     )
-      .bind(id, user.id)
+      .bind(id, user.id, user.active_salon_id)
       .first<{
         id: number
         category_id: number | null
@@ -1300,10 +1372,16 @@ blog.get('/api/blog/articles/:id', async (c) => {
         month_tags_json: string
         status: string
       }>(),
-    c.env.DB.prepare('SELECT id, name FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC').bind(user.id).all<{ id: number; name: string }>(),
-    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC').bind(user.id).all<{ id: number; name: string }>(),
-    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC').bind(user.id).all<{ id: number; name: string }>(),
-    getSalonProfile(c, user.id),
+    c.env.DB.prepare('SELECT id, name FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC')
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string }>(),
+    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string }>(),
+    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string }>(),
+    getSalonProfile(c, user),
     c.env.DB.prepare('SELECT salon_name FROM users WHERE id = ?').bind(user.id).first<{ salon_name: string | null }>()
   ])
 
@@ -1332,8 +1410,8 @@ blog.patch('/api/blog/articles/:id', async (c) => {
     month_tags?: number[]
   }>()
 
-  const existing = await c.env.DB.prepare('SELECT status FROM blog_articles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const existing = await c.env.DB.prepare('SELECT status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ status: string }>()
   if (!existing) return c.json({ success: false, error: '記事が見つかりません' }, 404)
   if (existing.status === 'approved') {
@@ -1345,7 +1423,7 @@ blog.patch('/api/blog/articles/:id', async (c) => {
        title = COALESCE(?, title), body = COALESCE(?, body), image_description = COALESCE(?, image_description),
        category_id = ?, stylist_id = ?, coupon_id = ?, month_tags_json = COALESCE(?, month_tags_json),
        updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ?`
+     WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
     .bind(
       body.title ?? null,
@@ -1356,7 +1434,8 @@ blog.patch('/api/blog/articles/:id', async (c) => {
       body.coupon_id ?? null,
       body.month_tags ? JSON.stringify(body.month_tags) : null,
       id,
-      user.id
+      user.id,
+      user.active_salon_id
     )
     .run()
 
@@ -1368,9 +1447,9 @@ blog.post('/api/blog/articles/:id/approve', async (c) => {
   const id = Number(c.req.param('id'))
   const result = await c.env.DB.prepare(
     `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ? AND status = 'unapproved'`
+     WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'unapproved'`
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .run()
   return c.json({ success: !!result.success })
 })
@@ -1380,9 +1459,9 @@ blog.post('/api/blog/articles/:id/unapprove', async (c) => {
   const id = Number(c.req.param('id'))
   await c.env.DB.prepare(
     `UPDATE blog_articles SET status = 'unapproved', approved_at = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ? AND status = 'approved'`
+     WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'approved'`
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .run()
   return c.json({ success: true })
 })
@@ -1390,8 +1469,8 @@ blog.post('/api/blog/articles/:id/unapprove', async (c) => {
 blog.post('/api/blog/articles/:id/regenerate-description', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  const article = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const article = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ image_r2_key: string | null }>()
   if (!article?.image_r2_key) return c.json({ error: '画像が見つかりません' }, 404)
 
@@ -1400,7 +1479,9 @@ blog.post('/api/blog/articles/:id/regenerate-description', async (c) => {
     if (!obj) return c.json({ error: '画像が見つかりません' }, 404)
     const buf = Buffer.from(await obj.arrayBuffer())
     const description = await generateImageDescription(c.env, buf)
-    await c.env.DB.prepare('UPDATE blog_articles SET image_description = ? WHERE id = ? AND user_id = ?').bind(description, id, user.id).run()
+    await c.env.DB.prepare('UPDATE blog_articles SET image_description = ? WHERE id = ? AND user_id = ? AND salon_id = ?')
+      .bind(description, id, user.id, user.active_salon_id)
+      .run()
     return c.json({ success: true, description })
   } catch (err: any) {
     return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
@@ -1411,23 +1492,23 @@ blog.post('/api/blog/articles/:id/regenerate-body', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const article = await c.env.DB.prepare(
-    'SELECT category_id, image_description, status FROM blog_articles WHERE id = ? AND user_id = ?'
+    'SELECT category_id, image_description, status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<{ category_id: number | null; image_description: string | null; status: string }>()
   if (!article) return c.json({ error: '記事が見つかりません' }, 404)
   if (article.status === 'approved') return c.json({ error: '承認済みの記事は編集できません' }, 400)
   if (!article.category_id) return c.json({ error: 'カテゴリが設定されていません' }, 400)
 
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
-    .bind(article.category_id, user.id)
+    .bind(article.category_id, user.id, user.active_salon_id)
     .first<CategoryRow>()
   if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
 
   try {
-    await generateOneArticle(c, user.id, category, { id, image_description: article.image_description })
+    await generateOneArticle(c, user, category, { id, image_description: article.image_description })
     const updated = await c.env.DB.prepare('SELECT title, body FROM blog_articles WHERE id = ?').bind(id).first<{ title: string; body: string }>()
     return c.json({ success: true, ...updated })
   } catch (err: any) {

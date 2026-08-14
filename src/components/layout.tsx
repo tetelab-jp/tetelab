@@ -79,6 +79,10 @@ export function Sidebar({
         </a>
       </div>
 
+      {/* 複数サロンワークスペース対応: JSが2件以上の有効なサロンを検知した
+          場合のみ切り替えUIを描画する(単一サロンのアカウントには何も出ない)。 */}
+      <div id="salon-switcher-area" class="mb-4"></div>
+
       {groups.map((group) => {
         const items = NAV_ITEMS.filter(
           (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
@@ -129,6 +133,7 @@ function MobileNavPanel({
 }) {
   return (
     <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
+      <div id="salon-switcher-area-mobile" class="mb-2"></div>
       <div class="space-y-4">
         {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
           const items = NAV_ITEMS.filter(
@@ -256,6 +261,7 @@ export function PageLayout({
         <MobileGroupNav active={active} />
         <main class="p-6 space-y-6">{children}</main>
       </div>
+      <script src="/static/salon-switcher.js"></script>
     </div>
   )
 }
