@@ -231,6 +231,7 @@ type SalonSubRow = {
   id: number
   user_id: number
   salon_key: string | null
+  salon_name: string | null
   is_active_workspace: number
   deletion_requested_at: string | null
 }
@@ -243,6 +244,7 @@ type FlatSalonRow = {
   isActive: number
   salonId: number | null
   salonKey: string | null
+  salonName: string | null
   isActiveWorkspace: number
   deletionRequestedAt: string | null
   isFirstOfGroup: boolean
@@ -354,7 +356,7 @@ admin.get('/admin/salons', async (c) => {
   if (accountIds.length > 0) {
     const placeholders = accountIds.map(() => '?').join(',')
     const { results: subSalons } = await c.env.DB.prepare(
-      `SELECT id, user_id, salon_key, is_active_workspace, deletion_requested_at
+      `SELECT id, user_id, salon_key, salon_name, is_active_workspace, deletion_requested_at
        FROM salonboard_salons WHERE user_id IN (${placeholders}) ORDER BY user_id, id`
     )
       .bind(...accountIds)
@@ -378,6 +380,7 @@ admin.get('/admin/salons', async (c) => {
         isActive: account.is_active,
         salonId: null,
         salonKey: null,
+        salonName: null,
         isActiveWorkspace: 0,
         deletionRequestedAt: null,
         isFirstOfGroup: true,
@@ -394,6 +397,7 @@ admin.get('/admin/salons', async (c) => {
         isActive: account.is_active,
         salonId: sub.id,
         salonKey: sub.salon_key,
+        salonName: sub.salon_name,
         isActiveWorkspace: sub.is_active_workspace,
         deletionRequestedAt: sub.deletion_requested_at,
         isFirstOfGroup: i === 0,
@@ -437,6 +441,7 @@ admin.get('/admin/salons', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">氏名</th>
                 <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
                 <th class="px-4 py-3 text-left font-medium">サロンID</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名(HPB)</th>
                 <th class="px-4 py-3 text-left font-medium">ログイン</th>
                 <th class="px-4 py-3 text-left font-medium">このサロンを削除</th>
                 <th class="px-4 py-3 text-left font-medium">契約</th>
@@ -459,6 +464,7 @@ admin.get('/admin/salons', async (c) => {
                     </>
                   )}
                   <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{row.salonKey || '(未確定)'}</td>
+                  <td class="px-4 py-2.5 text-gray-600">{row.salonName || '(未取得)'}</td>
                   <td class="px-4 py-2.5">
                     <form
                       method="post"
@@ -504,7 +510,7 @@ admin.get('/admin/salons', async (c) => {
               ))}
               {flatRows.length === 0 && (
                 <tr>
-                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={8} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -780,6 +786,26 @@ admin.get('/admin/tool', async (c) => {
     .bind(q, likePattern, likePattern, TOOL_PAGE_SIZE, offset)
     .all<ToolSalonRow>()
 
+  // 契約中(is_active_workspace=1)のサロンIDのみをアカウントごとにまとめて取得する
+  // (/admin/salonsと同じN+1回避パターン)。
+  const toolAccountIds = salons.map((s) => s.id)
+  const activeSalonKeysByAccount = new Map<number, string[]>()
+  if (toolAccountIds.length > 0) {
+    const placeholders = toolAccountIds.map(() => '?').join(',')
+    const { results: activeSalons } = await c.env.DB.prepare(
+      `SELECT user_id, salon_key FROM salonboard_salons
+       WHERE user_id IN (${placeholders}) AND is_active_workspace = 1
+       ORDER BY user_id, id`
+    )
+      .bind(...toolAccountIds)
+      .all<{ user_id: number; salon_key: string | null }>()
+    for (const row of activeSalons || []) {
+      const list = activeSalonKeysByAccount.get(row.user_id) || []
+      if (row.salon_key) list.push(row.salon_key)
+      activeSalonKeysByAccount.set(row.user_id, list)
+    }
+  }
+
   return c.render(
     <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="契約設定">
       <form method="get" action="/admin/tool" class="flex gap-2">
@@ -787,7 +813,7 @@ admin.get('/admin/tool', async (c) => {
           type="text"
           name="q"
           value={q}
-          placeholder="サロン名・メールアドレスで検索"
+          placeholder="氏名・メールアドレスで検索"
           class="flex-1 max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
         />
         <button
@@ -812,7 +838,8 @@ admin.get('/admin/tool', async (c) => {
             <thead class="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th class="px-4 py-3 text-left font-medium">No.</th>
-                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">氏名</th>
+                <th class="px-4 py-3 text-left font-medium">サロンID</th>
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
@@ -823,6 +850,9 @@ admin.get('/admin/tool', async (c) => {
                 <tr>
                   <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
                   <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
+                  <td class="px-4 py-3 font-mono text-xs text-gray-600">
+                    {(activeSalonKeysByAccount.get(salon.id) || []).join(', ') || '(未確定)'}
+                  </td>
                   <td class="px-4 py-3">
                     <FeatureToggleForm
                       action={`/admin/tool/${salon.id}/toggle-style`}
@@ -857,7 +887,7 @@ admin.get('/admin/tool', async (c) => {
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={5} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
