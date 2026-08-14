@@ -46,7 +46,17 @@ document.addEventListener('DOMContentLoaded', () => {
           await selectOnboardingSalon(area, hairSalons[0].storeId)
           return
         }
-        renderContractCountStep(area, hairSalons)
+        // 2026-08-14追記(ユーザー指定): 複数サロンが検出された場合、これまでは
+        // 「契約する店舗数」→「利用するサロンを選択」というウィザードを画面上で
+        // 進めてもらっていたが、サインアップ側の作業はサロンボードのログイン情報
+        // 入力までで完了とし、以降の店舗選択・有効化は管理者サイト(/admin/salons)
+        // 側で管理者が行う運用に変更した。検出したサロン一覧はサーバー側で既に
+        // salonboard_salonsへ保存済みなので、ここでは案内メッセージのみ表示する。
+        clearAndAppendText(
+          area,
+          'text-sm text-green-600',
+          'サロンボードとの連携情報を確認しました。複数の店舗が検出されたため、運営にて設定を行います。今しばらくお待ちください。'
+        )
         return
       }
       clearAndAppendText(area, 'text-sm text-red-600', 'エラー: ' + (data.error || '不明なエラー'))
@@ -55,154 +65,11 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  function renderContractCountStep(area, hairSalons) {
-    const n = hairSalons.length
-    area.innerHTML = ''
-
-    const box = document.createElement('div')
-    box.className = 'bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3'
-
-    const title = document.createElement('p')
-    title.className = 'text-sm font-semibold text-gray-700'
-    title.textContent = 'このアカウントには複数のサロン（' + n + '件）が登録されています。契約する店舗数を選択してください。'
-    box.appendChild(title)
-
-    const allLabel = document.createElement('label')
-    allLabel.className = 'flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2 text-sm cursor-pointer'
-    const allRadio = document.createElement('input')
-    allRadio.type = 'radio'
-    allRadio.name = 'contract-count-mode'
-    allRadio.value = 'all'
-    allRadio.checked = true
-    allLabel.appendChild(allRadio)
-    const allText = document.createElement('span')
-    allText.textContent = '全ての店舗を利用する（' + n + '店舗）'
-    allLabel.appendChild(allText)
-    box.appendChild(allLabel)
-
-    const partialLabel = document.createElement('label')
-    partialLabel.className = 'flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2 text-sm cursor-pointer'
-    const partialRadio = document.createElement('input')
-    partialRadio.type = 'radio'
-    partialRadio.name = 'contract-count-mode'
-    partialRadio.value = 'partial'
-    partialLabel.appendChild(partialRadio)
-    const partialTextBefore = document.createElement('span')
-    partialTextBefore.textContent = '一部の店舗を利用する（' + n + '店舗中'
-    partialLabel.appendChild(partialTextBefore)
-    const countSelect = document.createElement('select')
-    countSelect.className = 'mx-1 rounded border border-gray-300 text-sm'
-    countSelect.disabled = true
-    for (let i = 1; i < n; i++) {
-      const opt = document.createElement('option')
-      opt.value = String(i)
-      opt.textContent = String(i)
-      countSelect.appendChild(opt)
-    }
-    partialLabel.appendChild(countSelect)
-    const partialTextAfter = document.createElement('span')
-    partialTextAfter.textContent = '店舗）'
-    partialLabel.appendChild(partialTextAfter)
-    box.appendChild(partialLabel)
-
-    allRadio.addEventListener('change', () => {
-      countSelect.disabled = true
-    })
-    partialRadio.addEventListener('change', () => {
-      countSelect.disabled = false
-    })
-
-    const confirmBtn = document.createElement('button')
-    confirmBtn.type = 'button'
-    confirmBtn.className = 'w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm'
-    confirmBtn.textContent = '次へ進む'
-    box.appendChild(confirmBtn)
-
-    const statusEl = document.createElement('p')
-    statusEl.className = 'text-sm'
-    box.appendChild(statusEl)
-
-    confirmBtn.addEventListener('click', async () => {
-      confirmBtn.disabled = true
-      statusEl.textContent = '保存中...'
-      const mode = partialRadio.checked ? 'partial' : 'all'
-      try {
-        const body = new URLSearchParams()
-        body.set('mode', mode)
-        if (mode === 'partial') body.set('count', countSelect.value)
-        const res = await fetch('/api/settings/onboarding/set-contract-count', { method: 'POST', body })
-        const data = await res.json()
-        if (!data.success) {
-          statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
-          confirmBtn.disabled = false
-          return
-        }
-        if (mode === 'all') {
-          statusEl.textContent = '確定しました。同期しています...'
-          runOnboardingWizard(area)
-        } else {
-          renderOnboardingSalonPicker(area, hairSalons)
-        }
-      } catch (e) {
-        statusEl.textContent = '通信エラーが発生しました'
-        confirmBtn.disabled = false
-      }
-    })
-
-    area.appendChild(box)
-  }
-
-  function renderOnboardingSalonPicker(area, hairSalons) {
-    area.innerHTML = ''
-    const box = document.createElement('div')
-    box.className = 'bg-yellow-50 border border-yellow-200 rounded-lg p-4 space-y-3'
-
-    const title = document.createElement('p')
-    title.className = 'text-sm font-semibold text-gray-700'
-    title.textContent = '利用するサロンを1件選択してください。'
-    box.appendChild(title)
-
-    const list = document.createElement('div')
-    list.className = 'space-y-2'
-    hairSalons.forEach((salon, i) => {
-      const label = document.createElement('label')
-      label.className = 'flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2 text-sm cursor-pointer'
-      const radio = document.createElement('input')
-      radio.type = 'radio'
-      radio.name = 'onboarding-salon-radio'
-      radio.value = salon.storeId
-      if (i === 0) radio.checked = true
-      label.appendChild(radio)
-      const text = document.createElement('span')
-      text.textContent = salon.name + '（' + salon.storeId + '）'
-      label.appendChild(text)
-      list.appendChild(label)
-    })
-    box.appendChild(list)
-
-    const confirmBtn = document.createElement('button')
-    confirmBtn.type = 'button'
-    confirmBtn.className = 'w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm'
-    confirmBtn.textContent = 'このサロンを使う'
-    box.appendChild(confirmBtn)
-
-    const statusEl = document.createElement('p')
-    statusEl.className = 'text-sm'
-    box.appendChild(statusEl)
-
-    confirmBtn.addEventListener('click', async () => {
-      const checked = list.querySelector('input[name="onboarding-salon-radio"]:checked')
-      if (!checked) return
-      confirmBtn.disabled = true
-      statusEl.textContent = '選択を保存中...'
-      const ok = await selectOnboardingSalon(area, checked.value)
-      if (!ok) {
-        confirmBtn.disabled = false
-      }
-    })
-
-    area.appendChild(box)
-  }
+  // 2026-08-14追記: 複数サロン検出時の「契約する店舗数」「利用するサロンを
+  // 選択」ウィザードUI(renderContractCountStep/renderOnboardingSalonPicker)は
+  // ユーザー指定により撤去した(以降は管理者サイトで運営が設定する運用のため)。
+  // ヘアサロンが実質1件のみの場合の自動確定にはselectOnboardingSalonを
+  // 引き続き使う。
 
   async function selectOnboardingSalon(area, storeId) {
     clearAndAppendText(area, 'text-sm text-gray-500', 'サロンを確定しています...')

@@ -618,6 +618,12 @@ admin.post('/admin/salons/:userId/activate-salon', async (c) => {
     )
       .bind(activeCount, userId)
       .run()
+    // このアカウントにまだ有効なサロンが無かった場合(管理者が最初の1件を
+    // 有効化するケース)、そのままこのサロンを利用中サロン(active_salon_id)にする。
+    // 既に別のサロンが利用中の場合(2件目以降の有効化)は上書きしない。
+    await c.env.DB.prepare('UPDATE users SET active_salon_id = COALESCE(active_salon_id, ?) WHERE id = ?')
+      .bind(salonId, userId)
+      .run()
     await logAdminAction(
       c,
       adminUser.id,
@@ -715,23 +721,28 @@ admin.get('/admin/tool', async (c) => {
     .bind(q, likePattern, likePattern, TOOL_PAGE_SIZE, offset)
     .all<ToolSalonRow>()
 
-  // 契約中(is_active_workspace=1)のサロンIDのみをアカウントごとにまとめて取得する
-  // (/admin/salonsと同じN+1回避パターン)。
+  // 契約中(is_active_workspace=1)のサロンのみをアカウントごとにまとめて取得する
+  // (/admin/salonsと同じN+1回避パターン)。サロンIDとHPB上の実際のサロン名の両方を持つ。
   const toolAccountIds = salons.map((s) => s.id)
   const activeSalonKeysByAccount = new Map<number, string[]>()
+  const activeSalonNamesByAccount = new Map<number, string[]>()
   if (toolAccountIds.length > 0) {
     const placeholders = toolAccountIds.map(() => '?').join(',')
     const { results: activeSalons } = await c.env.DB.prepare(
-      `SELECT user_id, salon_key FROM salonboard_salons
+      `SELECT user_id, salon_key, salon_name FROM salonboard_salons
        WHERE user_id IN (${placeholders}) AND is_active_workspace = 1
        ORDER BY user_id, id`
     )
       .bind(...toolAccountIds)
-      .all<{ user_id: number; salon_key: string | null }>()
+      .all<{ user_id: number; salon_key: string | null; salon_name: string | null }>()
     for (const row of activeSalons || []) {
-      const list = activeSalonKeysByAccount.get(row.user_id) || []
-      if (row.salon_key) list.push(row.salon_key)
-      activeSalonKeysByAccount.set(row.user_id, list)
+      const keyList = activeSalonKeysByAccount.get(row.user_id) || []
+      if (row.salon_key) keyList.push(row.salon_key)
+      activeSalonKeysByAccount.set(row.user_id, keyList)
+
+      const nameList = activeSalonNamesByAccount.get(row.user_id) || []
+      if (row.salon_name) nameList.push(row.salon_name)
+      activeSalonNamesByAccount.set(row.user_id, nameList)
     }
   }
 
@@ -769,6 +780,7 @@ admin.get('/admin/tool', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">No.</th>
                 <th class="px-4 py-3 text-left font-medium">氏名</th>
                 <th class="px-4 py-3 text-left font-medium">サロンID</th>
+                <th class="px-4 py-3 text-left font-medium">サロン名(HPB)</th>
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
@@ -781,6 +793,9 @@ admin.get('/admin/tool', async (c) => {
                   <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
                   <td class="px-4 py-3 font-mono text-xs text-gray-600">
                     {(activeSalonKeysByAccount.get(salon.id) || []).join(', ') || '(未確定)'}
+                  </td>
+                  <td class="px-4 py-3 text-gray-600">
+                    {(activeSalonNamesByAccount.get(salon.id) || []).join(', ') || '(未取得)'}
                   </td>
                   <td class="px-4 py-3">
                     <FeatureToggleForm
@@ -816,7 +831,7 @@ admin.get('/admin/tool', async (c) => {
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
