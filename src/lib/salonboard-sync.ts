@@ -295,12 +295,35 @@ export async function syncSalonInfo(
   log: AutomationLogger
 ): Promise<SyncedSalonInfo | null> {
   log('サロン情報(名前/ID)を取得中...')
-  const info = await fetchSalonInfoFromSalonBoard(page)
+
+  // 単一サロンアカウントは、複数サロンの「サロン一覧」経由(明示的な
+  // クリック+waitForNavigation)とは異なり、ログイン直後にブラウザ側の
+  // 自動遷移(クライアントサイドのリダイレクト等)だけで最終ページに
+  // 到達する。この遷移がPuppeteerのwaitForNavigationで捕捉しきれず、
+  // ヘッダー(li.shop_login_name / input[STORE_ID])がまだレンダリング
+  // されていないタイミングで読み取ってしまうと、salon_keyが確定しない
+  // まま(単一サロンでサロンボード連携が完了しない不具合の原因になり得る)。
+  // 対象要素が出るまで少し待ち、それでも取れなければ一度だけ間隔を置いて
+  // 再試行する。
+  await page.waitForSelector('li.shop_login_name, input[name="STORE_ID"]', { timeout: 10000 }).catch(() => {})
+  let info = await fetchSalonInfoFromSalonBoard(page)
+  if (!info) {
+    log('サロン情報が初回取得できませんでした。少し待って再試行します...')
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+    info = await fetchSalonInfoFromSalonBoard(page)
+  }
+
   if (info) {
     await upsertSalonInfo(env, userId, info)
     log(`サロン情報を同期しました: ${info.salonName} (${info.storeId})`)
   } else {
-    log('サロン情報が取得できませんでした(ヘッダー未検出)')
+    const currentUrl = page.url()
+    const pageTitle = await page.title().catch(() => '(取得失敗)')
+    const pageText = await page
+      .evaluate(() => document.body?.innerText?.slice(0, 300) ?? '')
+      .catch(() => '(画面テキスト取得失敗)')
+    const cleanedText = pageText.replace(/\s+/g, ' ').trim()
+    log(`サロン情報が取得できませんでした(ヘッダー未検出) [診断] url=${currentUrl} title="${pageTitle}" pageText="${cleanedText}"`)
   }
   return info
 }

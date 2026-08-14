@@ -14,7 +14,7 @@ import { hashPassword } from './lib/crypto'
 import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
 import { backfillCompressStyleImages } from './lib/style-image-backfill'
-import { sweepPendingDeletions } from './lib/account-deletion'
+import { sweepPendingAccountDeletions } from './lib/account-deletion'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -201,7 +201,21 @@ const bindings: Bindings = {
     // 条件にしていたが、これだと将来管理者が全サロンを意図的にOFFにした場合、
     // 次回デプロイ・再起動のたびにこの条件が再び成立し、全サロンのSEO機能が
     // 意図せず再ONになってしまう。実施済みかどうかを専用フラグテーブルで
-    // 記録し、二度と再実行されないようにする。
+    // 記録し、二度と再実行されないようにしていた。
+    //
+    // 2026-08-14追記(重大バグ修正): この一括ON補正は列追加直後の既存サロンを
+    // 救済するための「一度限り」の処理だったが、フラグ行が何らかの理由で
+    // 永続化されなかった場合、再起動のたびに全ユーザー(その時点で新規登録
+    // したばかりのユーザーも含む)のseo_enabledが1に巻き戻ってしまうリスクが
+    // あった(新規登録直後にSEO機能がONになっている、という報告の原因)。
+    // 既存サロンの救済は既に完了しているため、このブロックごと削除し、
+    // 今後は列のDEFAULT(0)・新規登録時のINSERT文の明示指定(0)だけに委ねる。
+    // 新機能を追加する際も、既存ユーザーへの個別の救済措置が必要な場合を
+    // 除き、このような一括ON化は行わずデフォルトOFFを維持すること。
+    //
+    // schema_migration_flagsテーブル自体は他の一度限りマイグレーション
+    // (下の複数サロンワークスペース フェーズ0バックフィル等)が引き続き
+    // 使うため、作成だけはここに残す。
     await bindings.DB.prepare(
       `CREATE TABLE IF NOT EXISTS schema_migration_flags (
          flag_key TEXT PRIMARY KEY,
@@ -209,18 +223,6 @@ const bindings: Bindings = {
        )`
     ).run()
     await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS seo_enabled INTEGER NOT NULL DEFAULT 0`).run()
-    const seoBackfillDone = await bindings.DB.prepare(
-      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'seo_enabled_backfill'`
-    ).first()
-    if (!seoBackfillDone) {
-      const totalUsersRow = await bindings.DB.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>()
-      if ((totalUsersRow?.cnt ?? 0) > 0) {
-        await bindings.DB.prepare('UPDATE users SET seo_enabled = 1').run()
-      }
-      await bindings.DB.prepare(
-        `INSERT INTO schema_migration_flags (flag_key) VALUES ('seo_enabled_backfill') ON CONFLICT (flag_key) DO NOTHING`
-      ).run()
-    }
   } catch (err) {
     console.error('起動時マイグレーション(users.is_active等)に失敗しました:', err)
   }
@@ -575,21 +577,23 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(複数サロンワークスペース: user_id→salon_id UNIQUE制約差替)に失敗しました:', err)
   }
   try {
-    // 管理者サイトからのサロン削除は即時実行ではなく、3日間の猶予期間
-    // (deletion_requested_at)を置く(src/lib/account-deletion.ts参照)。
-    // 2026-08-14追記(ユーザー指定): 削除操作はサロン単位に一本化したため、
-    // usersテーブル側の同名カラム(アカウント単位削除用、一時的に追加していた)
-    // は使われなくなったので削除する。
-    await bindings.DB.prepare(`ALTER TABLE users DROP COLUMN IF EXISTS deletion_requested_at`).run()
-    await bindings.DB.prepare(`ALTER TABLE users DROP COLUMN IF EXISTS deletion_requested_by_admin_id`).run()
+    // 管理者サイト(/admin/salons)の「契約」トグルをOFF(契約外)にすると
+    // 即時削除ではなく3日間の猶予期間(deletion_requested_at)を置く
+    // (src/lib/account-deletion.ts参照)。
+    // 2026-08-14追記(ユーザー指定): サロン単位の個別削除ボタンは撤去し、
+    // 既存の「契約」トグル(アカウント単位)に削除操作を一本化したため、
+    // usersテーブル側にカラムを戻し、salonboard_salons側の同名カラム
+    // (サロン単位削除用、一時的に追加していた)は使われなくなったので削除する。
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`).run()
     await bindings.DB.prepare(
-      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
     ).run()
+    await bindings.DB.prepare(`ALTER TABLE salonboard_salons DROP COLUMN IF EXISTS deletion_requested_at`).run()
     await bindings.DB.prepare(
-      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
+      `ALTER TABLE salonboard_salons DROP COLUMN IF EXISTS deletion_requested_by_admin_id`
     ).run()
   } catch (err) {
-    console.error('起動時マイグレーション(サロン削除の猶予期間カラム追加)に失敗しました:', err)
+    console.error('起動時マイグレーション(アカウント削除の猶予期間カラム追加)に失敗しました:', err)
   }
   try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
@@ -621,12 +625,12 @@ const bindings: Bindings = {
     console.error('起動時バックフィル(style_images圧縮)に失敗しました:', err)
   })
 
-  // 管理者サイトからのアカウント/サロン削除は3日間の猶予期間を置く
+  // 管理者サイトの「契約」トグルで契約外にされたアカウントは3日間の猶予期間を置く
   // (src/lib/account-deletion.ts参照)。EventBridgeへの新規スケジュール追加
   // (要terraform apply)を避けるため、アプリ内タイマーで定期チェックする。
   // 起動直後に1回 + 以降1時間毎(3日間隔の猶予には十分すぎる頻度で安全側)。
   const runDeletionSweep = () => {
-    void sweepPendingDeletions(bindings).catch((err) => {
+    void sweepPendingAccountDeletions(bindings).catch((err) => {
       console.error('削除猶予チェックに失敗しました:', err)
     })
   }

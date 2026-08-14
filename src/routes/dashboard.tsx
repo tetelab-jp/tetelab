@@ -79,6 +79,14 @@ dashboard.get('/dashboard', async (c) => {
   const activeSalonCount = activeSalonCountRow?.cnt ?? 0
   const canAddSalon = cred ? user.salon_slot_limit > activeSalonCount : false
 
+  // ダッシュボード最上部に表示する、HPB(サロンボード)連携で取得した実際の
+  // サロン名(users.salon_nameは氏名を保持しているため使わない)。
+  const activeSalonInfo = user.active_salon_id
+    ? await c.env.DB.prepare('SELECT salon_name FROM salonboard_salons WHERE id = ?')
+        .bind(user.active_salon_id)
+        .first<{ salon_name: string | null }>()
+    : null
+
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -88,6 +96,9 @@ dashboard.get('/dashboard', async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
     >
+      {activeSalonInfo?.salon_name && (
+        <h2 class="text-xl font-bold text-gray-900">{activeSalonInfo.salon_name}</h2>
+      )}
       {blockedError && (
         <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-exclamation mr-2"></i>
@@ -598,8 +609,10 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
       .first<{ active_salon_id: number | null }>()
     const activeSalonId = freshUser?.active_salon_id ?? user.active_salon_id
 
-    // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
-    const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
+    // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)。
+    // collectLogに渡すことで、取得失敗時の診断情報(URL/タイトル/画面テキスト)が
+    // エラーレスポンス・CloudWatch Logsの両方に残るようにする。
+    const salonInfo = await syncSalonInfo(page, c.env, user.id, collectLog)
     if (salonInfo?.storeId) {
       // サロンID(STORE_ID)からHPBの公開サロンページを開き、対策エリア(中/小)を自動検出する
       await syncSalonArea(c.env, user.id, `sln${salonInfo.storeId}`, () => {})
