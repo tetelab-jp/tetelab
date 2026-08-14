@@ -22,12 +22,13 @@ export type PrimarySalonArea = {
 }
 
 /**
- * ユーザーの主要サロン(salonboard_salonsの先頭行、無ければusers.salon_nameへ
+ * ユーザーの主要サロン(現在アクティブなワークスペース、無ければusers.salon_nameへ
  * フォールバック)のサロン名・対策エリアを返す。
  */
 export async function getPrimarySalonArea(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   fallbackName: string | null
 ): Promise<PrimarySalonArea | null> {
   type SalonAreaRow = {
@@ -43,18 +44,12 @@ export async function getPrimarySalonArea(
   const AREA_COLUMNS = `salon_name, hpb_sln_id, service_area_cd, middle_area_cd, middle_area_name,
             small_area_cd, small_area_name, area_synced_at`
 
-  // 複数サロンアカウント対応: salon_credentials.target_store_idで選択済みの
-  // サロンがあれば優先する(salon_key=STORE_IDで照合)。未選択(単一サロン
-  // アカウント等、従来通りの大多数のケース)の場合は、これまで通り
-  // 先頭行にフォールバックする。
-  const cred = await env.DB.prepare('SELECT target_store_id FROM salon_credentials WHERE user_id = ?')
-    .bind(userId)
-    .first<{ target_store_id: string | null }>()
-
+  // 複数サロンワークスペース対応: 現在アクティブなサロン(salonId)をそのまま
+  // 参照する。未設定(移行前の異常系)の場合のみ、従来通り先頭行にフォールバックする。
   let row: SalonAreaRow | null = null
-  if (cred?.target_store_id) {
-    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE user_id = ? AND salon_key = ?`)
-      .bind(userId, cred.target_store_id)
+  if (salonId) {
+    row = await env.DB.prepare(`SELECT ${AREA_COLUMNS} FROM salonboard_salons WHERE id = ?`)
+      .bind(salonId)
       .first<SalonAreaRow>()
   }
   if (!row) {
