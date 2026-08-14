@@ -224,6 +224,7 @@ type AccountRow = {
   email: string
   salon_name: string | null
   is_active: number
+  deletion_requested_at: string | null
   seq: number
 }
 
@@ -233,7 +234,6 @@ type SalonSubRow = {
   salon_key: string | null
   salon_name: string | null
   is_active_workspace: number
-  deletion_requested_at: string | null
 }
 
 type FlatSalonRow = {
@@ -242,11 +242,11 @@ type FlatSalonRow = {
   accountSalonName: string | null
   email: string
   isActive: number
+  accountDeletionRequestedAt: string | null
   salonId: number | null
   salonKey: string | null
   salonName: string | null
   isActiveWorkspace: number
-  deletionRequestedAt: string | null
   isFirstOfGroup: boolean
   groupSize: number
 }
@@ -267,6 +267,11 @@ function daysUntilDeletion(deletionRequestedAt: string): number {
   return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
 }
 
+// 2026-08-14追記(ユーザー指定): サロン単位の個別削除ボタンは撤去し、既存の
+// 「契約」トグル(アカウント単位のis_active)に一本化した。契約外にすると
+// 3日後に自動削除される(下のtoggle-activeルート・src/lib/account-deletion.ts参照)。
+// このセルは「有効化する」(未使用の物理サロンをこのアカウントで使えるようにする)
+// 機能のみを残す。
 function SalonOperationCell({ row, page, q }: { row: FlatSalonRow; page: number; q: string }) {
   if (!row.salonId) return <span class="text-xs text-gray-300">-</span>
 
@@ -286,41 +291,7 @@ function SalonOperationCell({ row, page, q }: { row: FlatSalonRow; page: number;
     )
   }
 
-  if (row.deletionRequestedAt) {
-    const days = daysUntilDeletion(row.deletionRequestedAt)
-    return (
-      <div class="flex items-center gap-2 flex-wrap">
-        <span class="text-xs font-semibold text-red-600 whitespace-nowrap">あと{days}日で削除</span>
-        <form method="post" action={`/admin/salons/${row.accountId}/salon/${row.salonId}/cancel-delete`}>
-          <input type="hidden" name="page" value={page} />
-          <input type="hidden" name="q" value={q} />
-          <button
-            type="submit"
-            class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 whitespace-nowrap"
-          >
-            削除を中止する
-          </button>
-        </form>
-      </div>
-    )
-  }
-
-  return (
-    <form
-      method="post"
-      action={`/admin/salons/${row.accountId}/salon/${row.salonId}/request-delete`}
-      onsubmit="return confirm('このサロンを削除しますか？3日間は削除を中止できます。')"
-    >
-      <input type="hidden" name="page" value={page} />
-      <input type="hidden" name="q" value={q} />
-      <button
-        type="submit"
-        class="text-xs font-semibold px-2 py-1 rounded-lg bg-red-50 hover:bg-red-100 text-red-600 whitespace-nowrap"
-      >
-        このサロンを削除
-      </button>
-    </form>
-  )
+  return <span class="text-xs text-gray-400">有効</span>
 }
 
 admin.get('/admin/salons', async (c) => {
@@ -339,7 +310,7 @@ admin.get('/admin/salons', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / SALONS_PAGE_SIZE))
 
   const { results: accounts } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, is_active,
+    `SELECT id, email, salon_name, is_active, deletion_requested_at,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -356,7 +327,7 @@ admin.get('/admin/salons', async (c) => {
   if (accountIds.length > 0) {
     const placeholders = accountIds.map(() => '?').join(',')
     const { results: subSalons } = await c.env.DB.prepare(
-      `SELECT id, user_id, salon_key, salon_name, is_active_workspace, deletion_requested_at
+      `SELECT id, user_id, salon_key, salon_name, is_active_workspace
        FROM salonboard_salons WHERE user_id IN (${placeholders}) ORDER BY user_id, id`
     )
       .bind(...accountIds)
@@ -378,11 +349,11 @@ admin.get('/admin/salons', async (c) => {
         accountSalonName: account.salon_name,
         email: account.email,
         isActive: account.is_active,
+        accountDeletionRequestedAt: account.deletion_requested_at,
         salonId: null,
         salonKey: null,
         salonName: null,
         isActiveWorkspace: 0,
-        deletionRequestedAt: null,
         isFirstOfGroup: true,
         groupSize: 1
       })
@@ -395,11 +366,11 @@ admin.get('/admin/salons', async (c) => {
         accountSalonName: account.salon_name,
         email: account.email,
         isActive: account.is_active,
+        accountDeletionRequestedAt: account.deletion_requested_at,
         salonId: sub.id,
         salonKey: sub.salon_key,
         salonName: sub.salon_name,
         isActiveWorkspace: sub.is_active_workspace,
-        deletionRequestedAt: sub.deletion_requested_at,
         isFirstOfGroup: i === 0,
         groupSize: subs.length
       })
@@ -443,7 +414,7 @@ admin.get('/admin/salons', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">サロンID</th>
                 <th class="px-4 py-3 text-left font-medium">サロン名(HPB)</th>
                 <th class="px-4 py-3 text-left font-medium">ログイン</th>
-                <th class="px-4 py-3 text-left font-medium">このサロンを削除</th>
+                <th class="px-4 py-3 text-left font-medium">有効化</th>
                 <th class="px-4 py-3 text-left font-medium">契約</th>
               </tr>
             </thead>
@@ -505,6 +476,11 @@ admin.get('/admin/salons', async (c) => {
                         </span>
                       </label>
                     </form>
+                    {row.isActive === 0 && row.accountDeletionRequestedAt && (
+                      <p class="text-xs text-red-600 mt-1 whitespace-nowrap">
+                        あと{daysUntilDeletion(row.accountDeletionRequestedAt)}日で削除されます
+                      </p>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -546,6 +522,11 @@ admin.get('/admin/salons', async (c) => {
   )
 })
 
+// 2026-08-14追記(ユーザー指定): サロン単位の個別削除ボタンは撤去し、この
+// 「契約」トグルに削除操作を一本化した。契約中→契約外にした瞬間に
+// deletion_requested_atを記録し、3日間操作がなければ自動的にアカウント
+// (紐づく全サロン)を削除する(src/lib/account-deletion.ts参照)。
+// 契約外→契約中に戻せば削除は自動的にキャンセルされる(中止ボタン不要)。
 admin.post('/admin/salons/:id/toggle-active', async (c) => {
   const adminUser = c.get('admin')
   const targetId = Number(c.req.param('id'))
@@ -558,16 +539,29 @@ admin.post('/admin/salons/:id/toggle-active', async (c) => {
     .first<{ id: number; email: string; is_active: number }>()
   if (target) {
     const nextActive = target.is_active === 1 ? 0 : 1
-    await c.env.DB.prepare('UPDATE users SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(nextActive, targetId)
-      .run()
+    if (nextActive === 0) {
+      await c.env.DB.prepare(
+        `UPDATE users SET is_active = 0, deletion_requested_at = CURRENT_TIMESTAMP,
+           deletion_requested_by_admin_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(adminUser.id, targetId)
+        .run()
+    } else {
+      await c.env.DB.prepare(
+        `UPDATE users SET is_active = 1, deletion_requested_at = NULL,
+           deletion_requested_by_admin_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(targetId)
+        .run()
+    }
     await logAdminAction(
       c,
       adminUser.id,
       'toggle_salon_active',
       'user',
       targetId,
-      `${target.email}: is_active ${target.is_active} -> ${nextActive}`
+      `${target.email}: is_active ${target.is_active} -> ${nextActive}` +
+        (nextActive === 0 ? ' (3日後に自動削除)' : ' (削除キャンセル)')
     )
   }
 
@@ -588,71 +582,6 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
   await logAdminAction(c, adminUser.id, 'impersonate_login', 'user', targetId, target.email)
   await impersonateSalonSession(c, target.id, target.email)
   return c.redirect('/dashboard')
-})
-
-// 複数サロン対応: サロン(ワークスペース)単位の削除予約/中止。
-// (2026-08-14追記: 以前あった「有効サロンが1件しか無い場合は拒否する」制限、
-// および別建てだった「アカウントを削除する」ボタンは、ユーザー指定により撤廃。
-// 削除操作はサロン単位に一本化する。)
-admin.post('/admin/salons/:userId/salon/:salonId/request-delete', async (c) => {
-  const adminUser = c.get('admin')
-  const userId = Number(c.req.param('userId'))
-  const salonId = Number(c.req.param('salonId'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const salon = await c.env.DB.prepare('SELECT id, salon_key FROM salonboard_salons WHERE id = ? AND user_id = ?')
-    .bind(salonId, userId)
-    .first<{ id: number; salon_key: string | null }>()
-
-  if (salon) {
-    await c.env.DB.prepare(
-      `UPDATE salonboard_salons SET deletion_requested_at = CURRENT_TIMESTAMP, deletion_requested_by_admin_id = ? WHERE id = ?`
-    )
-      .bind(adminUser.id, salonId)
-      .run()
-    await logAdminAction(
-      c,
-      adminUser.id,
-      'request_salon_deletion',
-      'salonboard_salon',
-      salonId,
-      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
-    )
-  }
-
-  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
-})
-
-admin.post('/admin/salons/:userId/salon/:salonId/cancel-delete', async (c) => {
-  const adminUser = c.get('admin')
-  const userId = Number(c.req.param('userId'))
-  const salonId = Number(c.req.param('salonId'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const salon = await c.env.DB.prepare('SELECT id, salon_key FROM salonboard_salons WHERE id = ? AND user_id = ?')
-    .bind(salonId, userId)
-    .first<{ id: number; salon_key: string | null }>()
-  if (salon) {
-    await c.env.DB.prepare(
-      `UPDATE salonboard_salons SET deletion_requested_at = NULL, deletion_requested_by_admin_id = NULL WHERE id = ?`
-    )
-      .bind(salonId)
-      .run()
-    await logAdminAction(
-      c,
-      adminUser.id,
-      'cancel_salon_deletion',
-      'salonboard_salon',
-      salonId,
-      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
-    )
-  }
-
-  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
 })
 
 // 複数サロン対応: 管理者が「どの物理サロンを追加するか」を直接サロンIDで
