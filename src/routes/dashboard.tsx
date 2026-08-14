@@ -60,26 +60,26 @@ dashboard.get('/dashboard', async (c) => {
   }
 
   const blogArticlesRow = await c.env.DB.prepare(
-    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ?"
+    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ? AND salon_id = ?"
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ total: number; approved: number }>()
 
-  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ?')
-    .bind(user.id)
+  const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
     .first<{ total: number }>()
 
   const styleSelectedRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) as selected FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1'
+    'SELECT COUNT(*) as selected FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ selected: number }>()
 
-  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ?')
-    .bind(user.id)
+  const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
-  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ?')
-    .bind(user.id)
+  const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
 
   return c.render(
