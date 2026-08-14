@@ -69,17 +69,17 @@ function buildFooterText(salonName: string | null, profile: SalonProfileRow | nu
   const sep = (profile.footer_separator || '＊').repeat(16)
   const lines = [sep, salonName || '']
   if (profile.address || profile.nearest_station) {
-    lines.push('【アクセス】')
+    lines.push('', '【アクセス】')
     if (profile.address) lines.push(profile.address)
     if (profile.nearest_station) lines.push(`${profile.nearest_station}${profile.walk_minutes ? ` 徒歩${profile.walk_minutes}` : ''}`)
   }
   if (profile.business_hours || profile.closing_days) {
-    lines.push('【営業時間】')
+    lines.push('', '【営業時間】')
     if (profile.business_hours) lines.push(profile.business_hours)
     if (profile.closing_days) lines.push(`※定休：${profile.closing_days}`)
   }
   const keywords: string[] = JSON.parse(profile.footer_keywords_json || '[]')
-  if (keywords.length > 0) lines.push(`[${keywords.join('/')}]`)
+  if (keywords.length > 0) lines.push('', `[${keywords.join('/')}]`)
   return lines.join('\n')
 }
 
