@@ -141,8 +141,8 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
-  const profile = await getSalonProfile(c, user)
-  const footerText = buildFooterText(user.salon_name, profile)
+  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
+  const footerText = buildFooterText(salon?.salon_name || null, profile)
   const footerLines = footerText ? footerText.split('\n').length : 0
 
   return c.render(
@@ -779,8 +779,8 @@ blog.get('/blog/article/:id/image', async (c) => {
 })
 
 async function computeBodyMaxChars(c: AppContext, user: AppUser): Promise<number> {
-  const profile = await getSalonProfile(c, user)
-  const footerText = buildFooterText(user.salon_name, profile)
+  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
+  const footerText = buildFooterText(salon?.salon_name || null, profile)
   return Math.max(300, 1000 - footerText.length)
 }
 
@@ -1355,7 +1355,7 @@ blog.get('/api/blog/articles/:id', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const [article, categories, stylists, coupons, profile, salonUser] = await Promise.all([
+  const [article, categories, stylists, coupons, profile, salon] = await Promise.all([
     c.env.DB.prepare(
       `SELECT id, category_id, title, body, image_description, coupon_id, stylist_id, month_tags_json, status
        FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?`
@@ -1382,7 +1382,7 @@ blog.get('/api/blog/articles/:id', async (c) => {
       .bind(user.id, user.active_salon_id)
       .all<{ id: number; name: string }>(),
     getSalonProfile(c, user),
-    c.env.DB.prepare('SELECT salon_name FROM users WHERE id = ?').bind(user.id).first<{ salon_name: string | null }>()
+    getSalonForProfile(c, user)
   ])
 
   if (!article) return c.json({ error: '記事が見つかりません' }, 404)
@@ -1393,7 +1393,7 @@ blog.get('/api/blog/articles/:id', async (c) => {
     categories: categories.results || [],
     stylists: stylists.results || [],
     coupons: coupons.results || [],
-    footer: buildFooterText(salonUser?.salon_name || null, profile)
+    footer: buildFooterText(salon?.salon_name || null, profile)
   })
 })
 

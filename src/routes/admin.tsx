@@ -409,7 +409,7 @@ admin.get('/admin/salons', async (c) => {
           type="text"
           name="q"
           value={q}
-          placeholder="サロン名・メールアドレスで検索"
+          placeholder="氏名・メールアドレスで検索"
           class="flex-1 max-w-sm rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
         />
         <button
@@ -434,7 +434,7 @@ admin.get('/admin/salons', async (c) => {
             <thead class="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th class="px-4 py-3 text-left font-medium">No.</th>
-                <th class="px-4 py-3 text-left font-medium">サロン名</th>
+                <th class="px-4 py-3 text-left font-medium">氏名</th>
                 <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
                 <th class="px-4 py-3 text-left font-medium">サロンID</th>
                 <th class="px-4 py-3 text-left font-medium">ログイン</th>
