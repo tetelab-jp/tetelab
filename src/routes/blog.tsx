@@ -33,6 +33,22 @@ blog.use('/api/blog/*', requireBlogEnabled)
 // Phase 2で実装するため、このPhase 1では「記事を作って承認する」ところまで。
 // ============================================
 
+// SALON BOARDのブログ投稿フォーム(カテゴリ選択select#blogCategoryCd)に
+// 実際に存在する11件のカテゴリ(固定enum)。表示順もSALON BOARD側と一致させる。
+const HPB_BLOG_CATEGORY_OPTIONS = [
+  'こだわりの仕事道具',
+  'おすすめスタイル',
+  'サロンのNEWS',
+  'おすすめメニュー',
+  '仕事の出来事',
+  'プライベート',
+  'マイペット',
+  'お気に入りアイテム',
+  '趣味・マイブーム',
+  'ビューティー',
+  'その他'
+] as const
+
 type SalonProfileRow = {
   concept: string | null
   target_customer: string | null
@@ -474,7 +490,12 @@ blog.get('/blog/template', async (c) => {
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">HPBブログカテゴリ</label>
-                    <input type="text" name="hpb_category_value" value={selected.hpb_category_value || ''} placeholder="例）ヘアケア" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                    <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                      <option value="">選択しない</option>
+                      {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
+                        <option value={opt} selected={selected.hpb_category_value === opt}>{opt}</option>
+                      ))}
+                    </select>
                   </div>
                   <div>
                     <label class="block text-sm font-medium text-gray-700 mb-1">デフォルト投稿者</label>
