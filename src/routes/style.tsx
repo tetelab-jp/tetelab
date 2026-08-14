@@ -239,10 +239,10 @@ async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<Style
      FROM styles s
      LEFT JOIN stylists st ON st.id = s.stylist_id
      LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
-     WHERE s.user_id = ?
+     WHERE s.user_id = ? AND s.salon_id = ?
      ORDER BY s.sort_order ASC, s.id DESC`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<StyleListRow>()
   return results || []
 }
@@ -252,9 +252,11 @@ async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<Style
 // 同点になり、id DESCの同点判定で先頭付近に割り込んでしまう(「最後尾に
 // 追加されるべきものが先頭に来る」不具合)。新規作成時は必ずこの関数で
 // 現在の最大sort_order+1を採番し、リストの最後尾に追加されるようにする。
-async function getNextSortOrder(c: AppContext, userId: number): Promise<number> {
-  const row = await c.env.DB.prepare('SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ?')
-    .bind(userId)
+async function getNextSortOrder(c: AppContext, userId: number, salonId: number | null): Promise<number> {
+  const row = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(userId, salonId)
     .first<{ next_order: number }>()
   return row?.next_order ?? 0
 }
@@ -495,9 +497,9 @@ style.get('/style/image/:id', async (c) => {
   const owned = await c.env.DB.prepare(
     `SELECT si.r2_key FROM style_images si
      JOIN styles s ON s.id = si.style_id
-     WHERE s.user_id = ? AND si.id = ?`
+     WHERE s.user_id = ? AND s.salon_id = ? AND si.id = ?`
   )
-    .bind(user.id, id)
+    .bind(user.id, user.active_salon_id, id)
     .first<{ r2_key: string }>()
   if (!owned) return c.notFound()
 
@@ -665,11 +667,15 @@ style.post('/api/style/import/execute', async (c) => {
 
 async function loadFormMasters(c: AppContext, user: AppUser) {
   const [stylists, coupons] = await Promise.all([
-    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
-      .bind(user.id)
+    c.env.DB.prepare(
+      'SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
+    )
+      .bind(user.id, user.active_salon_id)
       .all<{ id: number; name: string }>(),
-    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND is_active = 1 ORDER BY sort_order ASC')
-      .bind(user.id)
+    c.env.DB.prepare(
+      'SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
+    )
+      .bind(user.id, user.active_salon_id)
       .all<{ id: number; name: string }>()
   ])
   return { stylists: stylists.results || [], coupons: coupons.results || [] }
@@ -694,9 +700,9 @@ async function loadActiveTemplates(c: AppContext, user: AppUser) {
   const { results } = await c.env.DB.prepare(
     `SELECT id, template_name, title_template, comment_template, category_value, length_value,
             menu_values_json, menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json
-     FROM templates WHERE user_id = ? AND active_flag = 1 ORDER BY id DESC`
+     FROM templates WHERE user_id = ? AND salon_id = ? AND active_flag = 1 ORDER BY id DESC`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<TemplateForAutofill>()
   return results || []
 }
@@ -1050,17 +1056,18 @@ style.post('/style/new', async (c) => {
 
   const hasImageUpload = body.image instanceof File && (body.image as File).size > 0
   const internalStatus = computeInternalSaveStatus(parsed, hasImageUpload)
-  const nextSortOrder = await getNextSortOrder(c, user.id)
+  const nextSortOrder = await getNextSortOrder(c, user.id, user.active_salon_id)
 
   const insert = await c.env.DB.prepare(
     `INSERT INTO styles (
-       user_id, stylist_id, coupon_id, source_type, title, comment, category_value, length_value,
+       user_id, salon_id, stylist_id, coupon_id, source_type, title, comment, category_value, length_value,
        menu_values_json, menu_detail_text, hashtags_json, model_attributes_json, auto_post_enabled_flag, internal_save_status,
        sort_order
-     ) VALUES (?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     ) VALUES (?, ?, ?, ?, 'manual', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
+      user.active_salon_id,
       parsed.stylistId,
       parsed.couponId,
       parsed.title,
@@ -1103,9 +1110,9 @@ style.get('/style/:id/edit', async (c) => {
             si.id AS front_style_image_id
      FROM styles s
      LEFT JOIN style_images si ON si.style_id = s.id AND si.image_role = 'FRONT'
-     WHERE s.id = ? AND s.user_id = ?`
+     WHERE s.id = ? AND s.user_id = ? AND s.salon_id = ?`
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<StyleDetailRow>()
 
   if (!detail) return c.notFound()
@@ -1139,8 +1146,8 @@ style.post('/style/:id/edit', async (c) => {
   const body = await c.req.parseBody()
   const parsed = parseStyleForm(body)
 
-  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (!owned) return c.notFound()
 
@@ -1163,7 +1170,7 @@ style.post('/style/:id/edit', async (c) => {
        stylist_id = ?, coupon_id = ?, title = ?, comment = ?, category_value = ?, length_value = ?,
        menu_values_json = ?, menu_detail_text = ?, hashtags_json = ?, model_attributes_json = ?,
        auto_post_enabled_flag = ?, internal_save_status = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ?`
+     WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
     .bind(
       parsed.stylistId,
@@ -1179,7 +1186,8 @@ style.post('/style/:id/edit', async (c) => {
       parsed.autoPostEnabled ? 1 : 0,
       internalStatus,
       id,
-      user.id
+      user.id,
+      user.active_salon_id
     )
     .run()
 
@@ -1195,8 +1203,8 @@ style.post('/style/:id/delete', async (c) => {
   // 削除できてしまっていた(DB行自体はuser_id条件で守られていたが、
   // 画像だけが孤立して消える実害があった)。まずstyles.user_idで所有権を
   // 確認してから画像削除に進む。
-  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (!owned) return c.redirect('/style/library?deleted=1')
 
@@ -1205,7 +1213,9 @@ style.post('/style/:id/delete', async (c) => {
     await c.env.STYLE_IMAGES.delete(img.r2_key).catch(() => {})
   }
 
-  await c.env.DB.prepare('DELETE FROM styles WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  await c.env.DB.prepare('DELETE FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
   return c.redirect('/style/library?deleted=1')
 })
 
@@ -1215,12 +1225,16 @@ style.post('/api/style/toggle', async (c) => {
   const user = c.get('user')
   const { imageId, selected } = await c.req.json<{ imageId: number; selected: boolean }>()
 
-  await c.env.DB.prepare('UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-    .bind(selected ? 1 : 0, imageId, user.id)
+  await c.env.DB.prepare(
+    'UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+  )
+    .bind(selected ? 1 : 0, imageId, user.id, user.active_salon_id)
     .run()
 
-  const row = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1')
-    .bind(user.id)
+  const row = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
 
   return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
@@ -1233,9 +1247,9 @@ style.post('/api/style/reorder', async (c) => {
   const { styleId, newPosition } = await c.req.json<{ styleId: number; newPosition: number }>()
 
   const { results } = await c.env.DB.prepare(
-    'SELECT id FROM styles WHERE user_id = ? ORDER BY sort_order ASC, id DESC'
+    'SELECT id FROM styles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id DESC'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{ id: number }>()
 
   const ids = (results || []).map((r) => r.id)
@@ -1249,8 +1263,10 @@ style.post('/api/style/reorder', async (c) => {
   ids.splice(targetIndex, 0, styleId)
 
   for (let i = 0; i < ids.length; i++) {
-    await c.env.DB.prepare('UPDATE styles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
-      .bind(i, ids[i], user.id)
+    await c.env.DB.prepare(
+      'UPDATE styles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
+    )
+      .bind(i, ids[i], user.id, user.active_salon_id)
       .run()
   }
 
@@ -1261,12 +1277,16 @@ style.post('/api/style/bulk-select', async (c) => {
   const user = c.get('user')
   const { selected } = await c.req.json<{ selected: boolean }>()
 
-  await c.env.DB.prepare('UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
-    .bind(selected ? 1 : 0, user.id)
+  await c.env.DB.prepare(
+    'UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(selected ? 1 : 0, user.id, user.active_salon_id)
     .run()
 
-  const row = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1')
-    .bind(user.id)
+  const row = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
+  )
+    .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
 
   return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
@@ -1293,9 +1313,9 @@ style.post('/api/style/bulk-apply-template', async (c) => {
   const template = await c.env.DB.prepare(
     `SELECT id, comment_template, category_value, length_value, menu_values_json,
             menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json
-     FROM templates WHERE id = ? AND user_id = ?`
+     FROM templates WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
-    .bind(templateId, user.id)
+    .bind(templateId, user.id, user.active_salon_id)
     .first<TemplateForAutofill>()
 
   if (!template) return c.json({ success: false, error: 'テンプレートが見つかりません' }, 404)
@@ -1305,8 +1325,10 @@ style.post('/api/style/bulk-apply-template', async (c) => {
 
   for (const styleId of styleIds) {
     try {
-      const owned = await c.env.DB.prepare('SELECT id, title, stylist_id FROM styles WHERE id = ? AND user_id = ?')
-        .bind(styleId, user.id)
+      const owned = await c.env.DB.prepare(
+        'SELECT id, title, stylist_id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?'
+      )
+        .bind(styleId, user.id, user.active_salon_id)
         .first<{ id: number; title: string | null; stylist_id: number | null }>()
       if (!owned) {
         errors.push(`ID ${styleId}: 見つかりません`)
@@ -1322,7 +1344,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
            comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
            menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
            updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ?`
+         WHERE id = ? AND user_id = ? AND salon_id = ?`
       )
         .bind(
           template.comment_template,
@@ -1335,7 +1357,8 @@ style.post('/api/style/bulk-apply-template', async (c) => {
           template.hashtags_json,
           template.model_attributes_json,
           styleId,
-          user.id
+          user.id,
+          user.active_salon_id
         )
         .run()
 
@@ -1366,10 +1389,18 @@ style.post('/api/style/bulk-apply-template', async (c) => {
   const resultStatus = errors.length === 0 ? 'success' : appliedCount > 0 ? 'partial' : 'failed'
 
   await c.env.DB.prepare(
-    `INSERT INTO batch_template_apply_logs (user_id, template_id, applied_count, target_style_ids_json, result_status, error_message)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO batch_template_apply_logs (user_id, salon_id, template_id, applied_count, target_style_ids_json, result_status, error_message)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   )
-    .bind(user.id, templateId, appliedCount, JSON.stringify(styleIds), resultStatus, errors.length > 0 ? errors.join(' / ').slice(0, 1000) : null)
+    .bind(
+      user.id,
+      user.active_salon_id,
+      templateId,
+      appliedCount,
+      JSON.stringify(styleIds),
+      resultStatus,
+      errors.length > 0 ? errors.join(' / ').slice(0, 1000) : null
+    )
     .run()
 
   return c.json({ success: resultStatus !== 'failed', appliedCount, totalCount: styleIds.length, errors })
@@ -1379,8 +1410,8 @@ style.post('/style/library/delete/:id', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ?')
-    .bind(id, user.id)
+  const owned = await c.env.DB.prepare('SELECT id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (!owned) return c.json({ error: 'not found' }, 404)
 
@@ -1388,7 +1419,9 @@ style.post('/style/library/delete/:id', async (c) => {
   for (const img of images.results || []) {
     await c.env.STYLE_IMAGES.delete(img.r2_key).catch(() => {})
   }
-  await c.env.DB.prepare('DELETE FROM styles WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  await c.env.DB.prepare('DELETE FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
 
   return c.json({ success: true })
 })
@@ -1408,9 +1441,9 @@ style.get('/style/schedule', async (c) => {
   const clearedCount = c.req.query('cleared')
 
   const schedule = await c.env.DB.prepare(
-    'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ?'
+    'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ? AND salon_id = ?'
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ enabled: number; burst_remaining: number; paused_until: string | null }>()
 
   const enabled = schedule?.enabled === 1
@@ -1418,9 +1451,9 @@ style.get('/style/schedule', async (c) => {
   const isBursting = enabled && (schedule?.burst_remaining ?? 0) > 0
 
   const selectedRow = await c.env.DB.prepare(
-    "SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND auto_post_enabled_flag = 1 AND internal_save_status = 'ready'"
+    "SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1 AND internal_save_status = 'ready'"
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
   const selectedCount = selectedRow?.cnt ?? 0
 
@@ -1541,8 +1574,8 @@ style.post('/style/schedule', async (c) => {
 
   const enabled = body.enabled === 'on' || body.enabled === 'true'
 
-  const existing = await c.env.DB.prepare('SELECT id, enabled FROM style_post_schedules WHERE user_id = ?')
-    .bind(user.id)
+  const existing = await c.env.DB.prepare('SELECT id, enabled FROM style_post_schedules WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number; enabled: number }>()
 
   // 2026-08-13追記(ユーザー指定ルール): OFF→ONに切り替えた瞬間(既存レコードが
@@ -1555,20 +1588,22 @@ style.post('/style/schedule', async (c) => {
       await c.env.DB.prepare(
         `UPDATE style_post_schedules
          SET enabled = 1, burst_remaining = ?, next_cursor_style_id = NULL, updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ?`
+         WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(INITIAL_BURST_COUNT, user.id)
+        .bind(INITIAL_BURST_COUNT, user.id, user.active_salon_id)
         .run()
     } else {
       await c.env.DB.prepare(
-        `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+        `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
       )
-        .bind(enabled ? 1 : 0, user.id)
+        .bind(enabled ? 1 : 0, user.id, user.active_salon_id)
         .run()
     }
   } else {
-    await c.env.DB.prepare(`INSERT INTO style_post_schedules (user_id, enabled, burst_remaining) VALUES (?, ?, ?)`)
-      .bind(user.id, enabled ? 1 : 0, enabled ? INITIAL_BURST_COUNT : 0)
+    await c.env.DB.prepare(
+      `INSERT INTO style_post_schedules (user_id, salon_id, enabled, burst_remaining) VALUES (?, ?, ?, ?)`
+    )
+      .bind(user.id, user.active_salon_id, enabled ? 1 : 0, enabled ? INITIAL_BURST_COUNT : 0)
       .run()
   }
 
@@ -1582,9 +1617,9 @@ style.post('/style/schedule', async (c) => {
 style.post('/style/schedule/clear-pause', async (c) => {
   const user = c.get('user')
   await c.env.DB.prepare(
-    `UPDATE style_post_schedules SET paused_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+    `UPDATE style_post_schedules SET paused_until = NULL, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .run()
   await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
   return c.redirect('/style/schedule?saved=1')
@@ -1616,9 +1651,9 @@ style.get('/style/template', async (c) => {
 
   const [{ results }, styles] = await Promise.all([
     c.env.DB.prepare(
-      'SELECT id, template_name, title_template, active_flag FROM templates WHERE user_id = ? ORDER BY id DESC'
+      'SELECT id, template_name, title_template, active_flag FROM templates WHERE user_id = ? AND salon_id = ? ORDER BY id DESC'
     )
-      .bind(user.id)
+      .bind(user.id, user.active_salon_id)
       .all<TemplateListRow>(),
     loadStyleListForUser(c, user)
   ])
@@ -1959,12 +1994,13 @@ style.post('/style/template/new', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO templates (
-       user_id, template_name, title_template, comment_template, category_value, length_value,
+       user_id, salon_id, template_name, title_template, comment_template, category_value, length_value,
        menu_values_json, menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json, active_flag
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       user.id,
+      user.active_salon_id,
       parsed.templateName,
       parsed.titleTemplate,
       parsed.commentTemplate,
@@ -1990,9 +2026,9 @@ style.get('/style/template/:id/edit', async (c) => {
   const detail = await c.env.DB.prepare(
     `SELECT id, template_name, title_template, comment_template, category_value, length_value, menu_values_json,
             menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json, active_flag
-     FROM templates WHERE id = ? AND user_id = ?`
+     FROM templates WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
-    .bind(id, user.id)
+    .bind(id, user.id, user.active_salon_id)
     .first<TemplateDetailRow>()
 
   if (!detail) return c.notFound()
@@ -2028,7 +2064,7 @@ style.post('/style/template/:id/edit', async (c) => {
        template_name = ?, title_template = ?, comment_template = ?, category_value = ?, length_value = ?,
        menu_values_json = ?, menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
        active_flag = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ?`
+     WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
     .bind(
       parsed.templateName,
@@ -2044,7 +2080,8 @@ style.post('/style/template/:id/edit', async (c) => {
       JSON.stringify(parsed.modelAttributes),
       parsed.active ? 1 : 0,
       id,
-      user.id
+      user.id,
+      user.active_salon_id
     )
     .run()
 
@@ -2054,7 +2091,9 @@ style.post('/style/template/:id/edit', async (c) => {
 style.post('/style/template/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  await c.env.DB.prepare('DELETE FROM templates WHERE id = ? AND user_id = ?').bind(id, user.id).run()
+  await c.env.DB.prepare('DELETE FROM templates WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
   return c.redirect('/style/template?deleted=1')
 })
 
