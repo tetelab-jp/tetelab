@@ -45,7 +45,7 @@ type SalonProfileRow = {
   closing_days: string | null
   strengths: string | null
   price_range: string | null
-  mimic_past_tone: number
+  reference_text: string | null
   first_person: string | null
   sentence_ending: string | null
   footer_separator: string | null
@@ -56,7 +56,7 @@ type SalonProfileRow = {
 async function getSalonProfile(c: AppContext, userId: number): Promise<SalonProfileRow | null> {
   return c.env.DB.prepare(
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
-            business_hours, closing_days, strengths, price_range, mimic_past_tone, first_person,
+            business_hours, closing_days, strengths, price_range, reference_text, first_person,
             sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at
      FROM salon_profiles WHERE user_id = ?`
   )
@@ -102,7 +102,8 @@ async function getSalonProfileForGeneration(c: AppContext, userId: number): Prom
     writing_tone: profile.writing_tone,
     first_person: profile.first_person,
     sentence_ending: profile.sentence_ending,
-    ng_words: profile.ng_words
+    ng_words: profile.ng_words,
+    reference_text: profile.reference_text
   }
 }
 
@@ -196,10 +197,12 @@ blog.get('/blog/salon', async (c) => {
           <p class="font-semibold mb-3">
             <i class="fas fa-pen mr-2 text-pink-500"></i>書き方
           </p>
-          <label class="flex items-start gap-3 mb-4 cursor-pointer">
-            <input type="checkbox" name="mimic_past_tone" checked={profile?.mimic_past_tone !== 0} class="mt-1 accent-pink-500" />
-            <span class="text-sm text-gray-700">これまでのブログの書き方に寄せる</span>
-          </label>
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              参考文章<span class="text-xs text-gray-400 ml-2">生成テンプレートで「参考文章を参照」を選んだ場合に使われます</span>
+            </label>
+            <textarea name="reference_text" rows={4} placeholder="お手本にしたい過去のブログ記事などを貼り付けてください" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.reference_text || ''}</textarea>
+          </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">一人称</label>
@@ -272,7 +275,7 @@ blog.post('/blog/salon', async (c) => {
     strengths: String(body.strengths || '').trim(),
     target_customer: String(body.target_customer || '').trim(),
     price_range: String(body.price_range || '').trim(),
-    mimic_past_tone: body.mimic_past_tone === 'on' ? 1 : 0,
+    reference_text: String(body.reference_text || '').trim(),
     first_person: String(body.first_person || '').trim(),
     sentence_ending: String(body.sentence_ending || '').trim(),
     writing_tone: String(body.writing_tone || '').trim(),
@@ -291,14 +294,14 @@ blog.post('/blog/salon', async (c) => {
     await c.env.DB.prepare(
       `UPDATE salon_profiles SET
          address=?, nearest_station=?, walk_minutes=?, business_hours=?, closing_days=?,
-         concept=?, strengths=?, target_customer=?, price_range=?, mimic_past_tone=?,
+         concept=?, strengths=?, target_customer=?, price_range=?, reference_text=?,
          first_person=?, sentence_ending=?, writing_tone=?, ng_words=?,
          footer_separator=?, footer_keywords_json=?, updated_at=CURRENT_TIMESTAMP
        WHERE user_id=?`
     )
       .bind(
         fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
-        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.mimic_past_tone,
+        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
         fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
         fields.footer_separator, fields.footer_keywords_json, user.id
       )
@@ -307,13 +310,13 @@ blog.post('/blog/salon', async (c) => {
     await c.env.DB.prepare(
       `INSERT INTO salon_profiles (
          user_id, address, nearest_station, walk_minutes, business_hours, closing_days,
-         concept, strengths, target_customer, price_range, mimic_past_tone,
+         concept, strengths, target_customer, price_range, reference_text,
          first_person, sentence_ending, writing_tone, ng_words, footer_separator, footer_keywords_json
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         user.id, fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
-        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.mimic_past_tone,
+        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
         fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
         fields.footer_separator, fields.footer_keywords_json
       )
@@ -350,6 +353,13 @@ type CategoryRow = {
   key_message: string | null
   title_prompt: string | null
   body_prompt: string | null
+  style_mode: string | null
+}
+
+const STYLE_MODE_LABEL: Record<string, string> = {
+  scraped: '過去のブログ記事を参照（未実装のため、当面はパラメータのみで生成されます）',
+  reference: '参考文章を参照（サロン基本情報の「参考文章」）',
+  params: '文体パラメータのみを使用（一人称・語尾・文体・トーン）'
 }
 
 const ARTICLE_STATUS_LABEL: Record<string, string> = {
@@ -364,7 +374,7 @@ blog.get('/blog/template', async (c) => {
   const user = c.get('user')
 
   const { results: categories } = await c.env.DB.prepare(
-    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt
+    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode
      FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC`
   )
     .bind(user.id)
@@ -456,6 +466,16 @@ blog.get('/blog/template', async (c) => {
                       ))}
                     </select>
                   </div>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">文章スタイル</label>
+                  <select name="style_mode" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                    {(['params', 'reference', 'scraped'] as const).map((mode) => (
+                      <option value={mode} selected={(selected.style_mode || 'params') === mode}>
+                        {STYLE_MODE_LABEL[mode]}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -593,8 +613,9 @@ blog.post('/blog/template/categories/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.parseBody()
 
+  const styleMode = ['params', 'reference', 'scraped'].includes(String(body.style_mode)) ? String(body.style_mode) : 'params'
   await c.env.DB.prepare(
-    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?
+    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, style_mode=?
      WHERE id=? AND user_id=?`
   )
     .bind(
@@ -603,6 +624,7 @@ blog.post('/blog/template/categories/:id', async (c) => {
       body.default_stylist_id ? Number(body.default_stylist_id) : null,
       String(body.key_message || '').trim() || null,
       String(body.body_prompt || '').trim() || null,
+      styleMode,
       id,
       user.id
     )
@@ -720,7 +742,8 @@ async function generateOneArticle(
     stylistName: stylistRow?.name || null,
     couponName: null,
     bodyMaxChars,
-    profile
+    profile,
+    styleMode: (category.style_mode as any) || 'params'
   })
 
   await c.env.DB.prepare(
@@ -734,7 +757,7 @@ blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
   )
     .bind(id, user.id)
     .first<CategoryRow>()
@@ -761,7 +784,8 @@ blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
       stylistName: stylistRow?.name || null,
       couponName: null,
       bodyMaxChars,
-      profile
+      profile,
+      styleMode: (category.style_mode as any) || 'params'
     })
     return c.json({ success: true, ...result })
   } catch (err: any) {
@@ -773,7 +797,7 @@ blog.post('/api/blog/categories/:id/generate-batch', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
   )
     .bind(id, user.id)
     .first<CategoryRow>()
@@ -1306,7 +1330,7 @@ blog.post('/api/blog/articles/:id/regenerate-body', async (c) => {
   if (!article.category_id) return c.json({ error: 'カテゴリが設定されていません' }, 400)
 
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id FROM blog_categories WHERE id = ? AND user_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ?'
   )
     .bind(article.category_id, user.id)
     .first<CategoryRow>()

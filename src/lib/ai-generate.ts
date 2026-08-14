@@ -25,7 +25,14 @@ export type SalonProfileForGeneration = {
   first_person: string | null
   sentence_ending: string | null
   ng_words: string | null
+  reference_text: string | null
 } | null
+
+// カテゴリごとの「文章スタイル」設定。
+// scraped: サロンボードの過去ブログ記事を参照する(未実装、現時点ではparamsと同じ扱い)
+// reference: サロン基本情報に入力した参考文章を参照する
+// params: 一人称・語尾・文体などのパラメータのみを使用する(デフォルト)
+export type BlogStyleMode = 'scraped' | 'reference' | 'params'
 
 function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   const lines: string[] = []
@@ -105,6 +112,7 @@ export type ArticleGenerationInput = {
   couponName: string | null
   bodyMaxChars: number
   profile: SalonProfileForGeneration
+  styleMode: BlogStyleMode | null
 }
 
 export interface GeneratedArticle {
@@ -144,9 +152,21 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     'あなたは美容サロン（美容室）のブログ記事を書く専門ライターです。',
     'ホットペッパービューティーのサロンブログに掲載する記事を作成します。',
     ...buildSalonPersonaLines(input.profile),
-    'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。',
-    '必ず指定されたJSON形式のみで出力してください。'
+    'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。'
   ]
+
+  // 文章スタイル: reference選択時のみ、サロン基本情報の参考文章を文体の
+  // お手本として渡す(scrapedは未実装のためparamsと同じ扱いにフォールバックする)。
+  if (input.styleMode === 'reference' && input.profile?.reference_text) {
+    systemLines.push(
+      '以下は参考文章です。この文章の口調・言い回し・雰囲気に近づけて書いてください(内容そのものを引用・流用しないこと):',
+      '---',
+      input.profile.reference_text.slice(0, 2000),
+      '---'
+    )
+  }
+
+  systemLines.push('必ず指定されたJSON形式のみで出力してください。')
 
   const bodyInstruction = fillPromptVariables(input.bodyPrompt || DEFAULT_BODY_PROMPT, input)
   const userPrompt = `${bodyInstruction}
