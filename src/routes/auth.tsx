@@ -43,13 +43,23 @@ auth.get('/signup', (c) => {
       <ErrorBanner message={error} />
       <form method="post" action="/signup" class="space-y-4">
         <div>
-          <label class="block text-sm font-medium text-gray-700 mb-1">サロン名</label>
-          <input
-            type="text"
-            name="salon_name"
-            placeholder="例）サロンパラダイス渋谷店"
-            class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-          />
+          <label class="block text-sm font-medium text-gray-700 mb-1">氏名（代表者または管理者）</label>
+          <div class="grid grid-cols-2 gap-2">
+            <input
+              required
+              type="text"
+              name="last_name"
+              placeholder="姓"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+            <input
+              required
+              type="text"
+              name="first_name"
+              placeholder="名"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
         </div>
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
@@ -94,10 +104,21 @@ auth.post('/signup', async (c) => {
   const body = await c.req.parseBody()
   const email = String(body.email || '').trim().toLowerCase()
   const password = String(body.password || '')
-  const salonName = String(body.salon_name || '').trim() || null
+  const lastName = String(body.last_name || '').trim()
+  const firstName = String(body.first_name || '').trim()
+  // 2026-08-14追記(ユーザー指定): 「サロン名」だった項目を「氏名(代表者
+  // または管理者)」に変更し、姓・名を分けて入力してもらう。DB上は既存の
+  // usersテーブルのsalon_name列に「姓 名」の形で結合して保存する(この列の
+  // 用途をサロン名から代表者氏名へ切り替える。実際のサロン名はsalonboard_
+  // salons.salon_nameで別管理されているため、ブログ記事フッター等の顧客に
+  // 見える箇所はそちらを参照するようblog.tsx側を修正済み)。
+  const salonName = lastName && firstName ? `${lastName} ${firstName}` : null
 
   if (!email || password.length < 8) {
     return c.redirect('/signup?error=' + encodeURIComponent('メールアドレスと8文字以上のパスワードを入力してください'))
+  }
+  if (!lastName || !firstName) {
+    return c.redirect('/signup?error=' + encodeURIComponent('氏名（姓・名）を入力してください'))
   }
 
   const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first()
