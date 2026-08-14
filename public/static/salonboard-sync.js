@@ -113,4 +113,104 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   btn.addEventListener('click', runSync)
+
+  // 複数サロンワークスペース対応 フェーズ4: 追加サロン選択
+  const fetchAvailableBtn = document.getElementById('fetch-available-salons-btn')
+  const fetchAvailableStatusEl = document.getElementById('fetch-available-salons-status')
+  const additionalArea = document.getElementById('additional-salon-area')
+
+  if (fetchAvailableBtn && additionalArea) {
+    const fetchOriginalText = fetchAvailableBtn.textContent
+
+    function renderAdditionalSalonSelect(salons) {
+      additionalArea.innerHTML = ''
+      if (salons.length === 0) {
+        const p = document.createElement('p')
+        p.className = 'text-sm text-gray-500'
+        p.textContent = '追加できるサロンが見つかりませんでした(既に全て利用中の可能性があります)'
+        additionalArea.appendChild(p)
+        return
+      }
+
+      const box = document.createElement('div')
+      box.className = 'bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-3'
+
+      const list = document.createElement('div')
+      list.className = 'space-y-2'
+      salons.forEach((salon, i) => {
+        const label = document.createElement('label')
+        label.className =
+          'flex items-center gap-2 bg-white rounded-lg border border-gray-200 px-3 py-2 text-sm cursor-pointer'
+        const radio = document.createElement('input')
+        radio.type = 'radio'
+        radio.name = 'additional-salon-radio'
+        radio.value = salon.storeId
+        if (i === 0) radio.checked = true
+        label.appendChild(radio)
+        const text = document.createElement('span')
+        text.textContent = salon.name + '（' + salonTypeLabel(salon.type) + ' / ' + salon.storeId + '）'
+        label.appendChild(text)
+        list.appendChild(label)
+      })
+      box.appendChild(list)
+
+      const confirmBtn = document.createElement('button')
+      confirmBtn.type = 'button'
+      confirmBtn.className = 'w-full md:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm'
+      confirmBtn.textContent = 'このサロンを追加する'
+      box.appendChild(confirmBtn)
+
+      const confirmStatusEl = document.createElement('p')
+      confirmStatusEl.className = 'text-sm'
+      box.appendChild(confirmStatusEl)
+
+      confirmBtn.addEventListener('click', async () => {
+        const checked = list.querySelector('input[name="additional-salon-radio"]:checked')
+        if (!checked) return
+        confirmBtn.disabled = true
+        confirmStatusEl.textContent = '追加中...'
+        try {
+          const body = new URLSearchParams()
+          body.set('storeId', checked.value)
+          const res = await fetch('/api/settings/activate-additional-salon', { method: 'POST', body })
+          const data = await res.json()
+          if (data.success) {
+            confirmStatusEl.textContent = '追加しました。反映のためページを更新します...'
+            setTimeout(() => {
+              window.location.reload()
+            }, 1200)
+          } else {
+            confirmStatusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
+            confirmBtn.disabled = false
+          }
+        } catch (e) {
+          confirmStatusEl.textContent = '通信エラーが発生しました'
+          confirmBtn.disabled = false
+        }
+      })
+
+      additionalArea.appendChild(box)
+    }
+
+    fetchAvailableBtn.addEventListener('click', async () => {
+      fetchAvailableBtn.disabled = true
+      fetchAvailableBtn.textContent = 'サロンボードを確認中...'
+      fetchAvailableStatusEl.textContent = 'サロンボードを確認中...（1分ほどかかる場合があります）'
+      try {
+        const res = await fetch('/api/settings/fetch-available-salons', { method: 'POST' })
+        const data = await res.json()
+        if (data.success) {
+          fetchAvailableStatusEl.textContent = '追加できるサロンを選択してください'
+          renderAdditionalSalonSelect(data.salons || [])
+        } else {
+          fetchAvailableStatusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
+        }
+      } catch (e) {
+        fetchAvailableStatusEl.textContent = '通信エラーが発生しました'
+      } finally {
+        fetchAvailableBtn.disabled = false
+        fetchAvailableBtn.textContent = fetchOriginalText
+      }
+    })
+  }
 })

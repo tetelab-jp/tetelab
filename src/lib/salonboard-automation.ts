@@ -404,17 +404,8 @@ export type GroupTopResult =
   | { status: 'needs_selection'; salons: SalonListEntry[] }
   | { status: 'target_not_found'; salons: SalonListEntry[] }
 
-export async function handleGroupTopIfPresent(
-  page: Page,
-  targetStoreId: string | null | undefined,
-  log: AutomationLogger
-): Promise<GroupTopResult> {
-  if (!page.url().includes('/CNC/groupTop/')) {
-    return { status: 'not_on_group_top' }
-  }
-  log('複数サロンアカウントの「サロン一覧」画面を検知しました')
-
-  const salons: SalonListEntry[] = await page.evaluate(() => {
+async function scrapeGroupTopSalons(page: Page): Promise<SalonListEntry[]> {
+  return page.evaluate(() => {
     const rows: { storeId: string; name: string; type: 'hair' | 'kirei' }[] = []
     const extractRows = (table: Element | null, type: 'hair' | 'kirei') => {
       if (!table) return
@@ -439,6 +430,35 @@ export async function handleGroupTopIfPresent(
 
     return rows
   })
+}
+
+/**
+ * 追加サロン選択(複数サロンワークスペース対応フェーズ4)専用。ログイン直後の
+ * 「サロン一覧」中間ページからサロン一覧だけを取得し、確定クリックは一切
+ * 行わない(handleGroupTopIfPresentは1件のみの場合に自動クリック確定して
+ * しまうため、既存の選択フローと挙動を変えないよう専用関数として分離する)。
+ * 中間ページが出ていなければnullを返す。
+ */
+export async function listGroupTopSalons(page: Page, log: AutomationLogger): Promise<SalonListEntry[] | null> {
+  if (!page.url().includes('/CNC/groupTop/')) {
+    return null
+  }
+  const salons = await scrapeGroupTopSalons(page)
+  log(`サロン一覧(追加サロン選択用): ${salons.map((s) => `${s.type}:${s.storeId}(${s.name})`).join(', ') || '(取得できませんでした)'}`)
+  return salons
+}
+
+export async function handleGroupTopIfPresent(
+  page: Page,
+  targetStoreId: string | null | undefined,
+  log: AutomationLogger
+): Promise<GroupTopResult> {
+  if (!page.url().includes('/CNC/groupTop/')) {
+    return { status: 'not_on_group_top' }
+  }
+  log('複数サロンアカウントの「サロン一覧」画面を検知しました')
+
+  const salons = await scrapeGroupTopSalons(page)
 
   log(`サロン一覧: ${salons.map((s) => `${s.type}:${s.storeId}(${s.name})`).join(', ') || '(取得できませんでした)'}`)
 

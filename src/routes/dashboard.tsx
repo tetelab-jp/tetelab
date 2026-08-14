@@ -7,6 +7,7 @@ import {
   newAutomationPage,
   loginToSalonBoard,
   handleGroupTopIfPresent,
+  listGroupTopSalons,
   type SalonListEntry
 } from '../lib/salonboard-automation'
 import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea, upsertSalonInfo } from '../lib/salonboard-sync'
@@ -82,6 +83,16 @@ dashboard.get('/dashboard', async (c) => {
     .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
 
+  // 複数サロンワークスペース対応: 契約枠に余裕があれば「追加サロンを利用する」
+  // 導線を表示する(単一サロンのままの大多数のアカウントには表示されない)。
+  const activeSalonCountRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1'
+  )
+    .bind(user.id)
+    .first<{ cnt: number }>()
+  const activeSalonCount = activeSalonCountRow?.cnt ?? 0
+  const canAddSalon = cred ? user.salon_slot_limit > activeSalonCount : false
+
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -134,6 +145,25 @@ dashboard.get('/dashboard', async (c) => {
           </div>
           <p id="sync-stylists-coupons-status" class="text-sm"></p>
           <div id="salon-select-area"></div>
+        </div>
+      )}
+
+      {canAddSalon && (
+        <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+          <p class="font-semibold"><i class="fas fa-store mr-2 text-pink-500"></i>追加サロンを利用する</p>
+          <p class="text-sm text-gray-500 leading-relaxed">
+            現在{activeSalonCount}/{user.salon_slot_limit}サロンをご利用中です。同じサロンボードログインに紐づく
+            他のサロンを追加で利用できます。
+          </p>
+          <button
+            id="fetch-available-salons-btn"
+            type="button"
+            class="w-full md:w-auto bg-white border border-pink-400 text-pink-600 hover:bg-pink-50 font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            追加サロンを選択する
+          </button>
+          <p id="fetch-available-salons-status" class="text-sm"></p>
+          <div id="additional-salon-area"></div>
         </div>
       )}
 
@@ -521,12 +551,41 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
       })
     }
     if (groupTopResult.status === 'resolved') {
+      // 複数サロンワークスペース対応: 新規登録時に作られたプレースホルダー行
+      // (salon_key未設定、is_active_workspace=1)がこのユーザーの実質1個目の
+      // ワークスペースを表している場合、実際に解決したSTORE_IDへ転用する
+      // (新規行を増やさない。src/index.tsxのフェーズ0バックフィルと同じ考え方)。
+      await c.env.DB.prepare(
+        `UPDATE salonboard_salons SET salon_key = ?
+         WHERE user_id = ? AND salon_key IS NULL AND is_active_workspace = 1
+           AND NOT EXISTS (SELECT 1 FROM salonboard_salons WHERE user_id = ? AND salon_key = ?)`
+      )
+        .bind(groupTopResult.storeId, user.id, user.id, groupTopResult.storeId)
+        .run()
+
       await upsertSalonListFromGroupTop(c.env, user.id, groupTopResult.salons)
       if (!cred.target_store_id) {
         await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
           .bind(groupTopResult.storeId, user.id)
           .run()
       }
+
+      // 有効化(is_active_workspace)とactive_salon_idを確定させる。
+      // 既に有効化・確定済みの場合は何も変わらない(冪等)。
+      await c.env.DB.prepare(
+        `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)
+         WHERE user_id = ? AND salon_key = ?`
+      )
+        .bind(user.id, groupTopResult.storeId)
+        .run()
+      await c.env.DB.prepare(
+        `UPDATE users u SET active_salon_id = s.id
+         FROM salonboard_salons s
+         WHERE u.id = ? AND s.user_id = ? AND s.salon_key = ? AND u.active_salon_id IS NULL`
+      )
+        .bind(user.id, user.id, groupTopResult.storeId)
+        .run()
+
       const resolvedSalon = groupTopResult.salons.find((s) => s.storeId === groupTopResult.storeId)
       if (resolvedSalon?.type === 'kirei') {
         // キレイサロン(ネイル/まつげ等)にはスタイル機能が存在しないため無効化する
@@ -536,14 +595,22 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
       }
     }
 
+    // 複数サロンワークスペース対応: 上記の解決処理でactive_salon_idが今回
+    // 初めて確定した可能性があるため(requireAuthで読み込んだuser.active_salon_id
+    // は古い値のまま)、同期先を確定させるために改めて読み直す。
+    const freshUser = await c.env.DB.prepare('SELECT active_salon_id FROM users WHERE id = ?')
+      .bind(user.id)
+      .first<{ active_salon_id: number | null }>()
+    const activeSalonId = freshUser?.active_salon_id ?? user.active_salon_id
+
     // ログイン直後のヘッダーからサロン名/サロンIDを取得して保存(フリーワード対策で利用)
     const salonInfo = await syncSalonInfo(page, c.env, user.id, () => {})
     if (salonInfo?.storeId) {
       // サロンID(STORE_ID)からHPBの公開サロンページを開き、対策エリア(中/小)を自動検出する
       await syncSalonArea(c.env, user.id, `sln${salonInfo.storeId}`, () => {})
     }
-    const stylistCount = await syncStylists(page, c.env, user.id, () => {})
-    const couponCount = await syncCoupons(page, c.env, user.id, () => {})
+    const stylistCount = await syncStylists(page, c.env, user.id, activeSalonId, () => {})
+    const couponCount = await syncCoupons(page, c.env, user.id, activeSalonId, () => {})
     console.log(
       `[sync-stylists-coupons] user=${user.id} 完了 salon=${salonInfo?.storeId || '-'} stylists=${stylistCount} coupons=${couponCount}`
     )
@@ -565,6 +632,8 @@ async function upsertSalonListFromGroupTop(env: Bindings, userId: number, salons
   }
 }
 
+// 最初の1サロン目を選ぶフロー(複数サロン検出時に必ず1件選ぶ必要がある)。
+// 追加サロン(2件目以降)の選択は/api/settings/activate-additional-salonで行う。
 dashboard.post('/api/settings/select-salon', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
@@ -572,21 +641,180 @@ dashboard.post('/api/settings/select-salon', async (c) => {
   if (!storeId) return c.json({ success: false, error: 'storeIdが指定されていません' }, 400)
 
   const salon = await c.env.DB.prepare(
-    'SELECT salon_type FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
+    'SELECT id, salon_type FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
   )
     .bind(user.id, storeId)
-    .first<{ salon_type: string | null }>()
+    .first<{ id: number; salon_type: string | null }>()
   if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
 
   await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
     .bind(storeId, user.id)
     .run()
+
+  // 新規登録時に作られたプレースホルダー行(salon_key未設定)がこのユーザーの
+  // 実質1個目のワークスペースを表している場合、選んだサロンへ転用する
+  // (新規行を増やさない)。
+  await c.env.DB.prepare(
+    `UPDATE salonboard_salons SET salon_key = ?
+     WHERE user_id = ? AND salon_key IS NULL AND is_active_workspace = 1
+       AND NOT EXISTS (SELECT 1 FROM salonboard_salons WHERE user_id = ? AND salon_key = ?)`
+  )
+    .bind(storeId, user.id, user.id, storeId)
+    .run()
+
+  await c.env.DB.prepare(
+    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)
+     WHERE user_id = ? AND salon_key = ?`
+  )
+    .bind(user.id, storeId)
+    .run()
+  await c.env.DB.prepare(
+    `UPDATE users u SET active_salon_id = s.id
+     FROM salonboard_salons s
+     WHERE u.id = ? AND s.user_id = ? AND s.salon_key = ?`
+  )
+    .bind(user.id, user.id, storeId)
+    .run()
+
   if (salon.salon_type === 'kirei') {
     await c.env.DB.prepare('UPDATE users SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
       .bind(user.id)
       .run()
   }
 
+  return c.json({ success: true })
+})
+
+// 複数サロンワークスペース対応 フェーズ4: 追加サロン選択。
+// salon_slot_limitに余裕があるユーザーが、まだ有効化していない物理サロンを
+// 一覧取得する。確定クリックは行わない(listGroupTopSalons)。
+dashboard.post('/api/settings/fetch-available-salons', async (c) => {
+  const user = c.get('user')
+
+  const slotRow = await c.env.DB.prepare(
+    `SELECT salon_slot_limit,
+       (SELECT COUNT(*) FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1) AS active_count
+     FROM users WHERE id = ?`
+  )
+    .bind(user.id, user.id)
+    .first<{ salon_slot_limit: number; active_count: number }>()
+  if (!slotRow || slotRow.active_count >= slotRow.salon_slot_limit) {
+    return c.json({ success: false, error: '追加できるサロンの枠がありません。管理者にお問い合わせください' }, 400)
+  }
+
+  const cred = await c.env.DB.prepare(
+    'SELECT salonboard_login_id_enc, salonboard_password_enc FROM salon_credentials WHERE user_id = ?'
+  )
+    .bind(user.id)
+    .first<{ salonboard_login_id_enc: string; salonboard_password_enc: string }>()
+  if (!cred) return c.json({ success: false, error: 'サロンボードのログイン情報が未登録です' }, 400)
+  if (!c.env.ENCRYPTION_KEY) return c.json({ success: false, error: 'ENCRYPTION_KEYが未設定です' }, 500)
+
+  let browser: Awaited<ReturnType<typeof launchBrowser>> | null = null
+  try {
+    const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+    const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+    browser = await launchBrowser()
+    const page = await newAutomationPage(browser)
+    await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
+
+    const allSalons = await listGroupTopSalons(page, () => {})
+    if (!allSalons) {
+      return c.json({ success: false, error: 'このアカウントには追加できるサロンがありません' }, 400)
+    }
+
+    await upsertSalonListFromGroupTop(c.env, user.id, allSalons)
+
+    const { results: activeRows } = await c.env.DB.prepare(
+      `SELECT salon_key FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1`
+    )
+      .bind(user.id)
+      .all<{ salon_key: string | null }>()
+    const activeKeys = new Set((activeRows || []).map((r) => r.salon_key))
+
+    const available = allSalons.filter((s) => !activeKeys.has(s.storeId))
+    return c.json({ success: true, salons: available })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err).slice(0, 2000) }, 400)
+  } finally {
+    if (browser) await browser.close().catch(() => {})
+  }
+})
+
+// 複数サロンワークスペース対応 フェーズ4: 選ばれた追加サロンを有効化する。
+// active_salon_idは変更しない(選んだだけではまだ切り替わらず、別途
+// サロン切り替えボタンで切り替える)。
+dashboard.post('/api/settings/activate-additional-salon', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const storeId = String(body.storeId || '').trim()
+  if (!storeId) return c.json({ success: false, error: 'storeIdが指定されていません' }, 400)
+
+  const slotRow = await c.env.DB.prepare(
+    `SELECT salon_slot_limit,
+       (SELECT COUNT(*) FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1) AS active_count
+     FROM users WHERE id = ?`
+  )
+    .bind(user.id, user.id)
+    .first<{ salon_slot_limit: number; active_count: number }>()
+  if (!slotRow || slotRow.active_count >= slotRow.salon_slot_limit) {
+    return c.json({ success: false, error: '追加できるサロンの枠がありません。管理者にお問い合わせください' }, 400)
+  }
+
+  const salon = await c.env.DB.prepare(
+    'SELECT id, is_active_workspace FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
+  )
+    .bind(user.id, storeId)
+    .first<{ id: number; is_active_workspace: number }>()
+  if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
+  if (salon.is_active_workspace === 1) {
+    return c.json({ success: false, error: 'このサロンは既に有効化されています' }, 400)
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  )
+    .bind(salon.id)
+    .run()
+
+  return c.json({ success: true })
+})
+
+// 複数サロンワークスペース対応 フェーズ4: サロン切り替え。
+// 複数サロンワークスペース対応 フェーズ4: サイドバーのサロン切り替えUIが
+// 使う軽量API。有効化済みワークスペースが1件以下(大多数のアカウント)の
+// 場合は空配列を返し、クライアント側は何も描画しない。
+dashboard.get('/api/settings/active-salons', async (c) => {
+  const user = c.get('user')
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, salon_name, salon_type FROM salonboard_salons
+     WHERE user_id = ? AND is_active_workspace = 1 ORDER BY id ASC`
+  )
+    .bind(user.id)
+    .all<{ id: number; salon_name: string; salon_type: string | null }>()
+
+  return c.json({
+    success: true,
+    activeSalonId: user.active_salon_id,
+    salons: (results || []).map((s) => ({ id: s.id, name: s.salon_name, type: s.salon_type || 'hair' }))
+  })
+})
+
+dashboard.post('/api/settings/switch-salon', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const salonId = Number(body.salonId)
+  if (!Number.isFinite(salonId)) return c.json({ success: false, error: 'salonIdが指定されていません' }, 400)
+
+  const salon = await c.env.DB.prepare(
+    'SELECT id FROM salonboard_salons WHERE id = ? AND user_id = ? AND is_active_workspace = 1'
+  )
+    .bind(salonId, user.id)
+    .first<{ id: number }>()
+  if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
+
+  await c.env.DB.prepare('UPDATE users SET active_salon_id = ? WHERE id = ?').bind(salonId, user.id).run()
   return c.json({ success: true })
 })
 
