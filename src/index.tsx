@@ -14,6 +14,7 @@ import { hashPassword } from './lib/crypto'
 import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
 import { backfillCompressStyleImages } from './lib/style-image-backfill'
+import { sweepPendingDeletions } from './lib/account-deletion'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -574,6 +575,22 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(複数サロンワークスペース: user_id→salon_id UNIQUE制約差替)に失敗しました:', err)
   }
   try {
+    // 管理者サイトからのアカウント/サロン削除は即時実行ではなく、3日間の
+    // 猶予期間(deletion_requested_at)を置く(src/lib/account-deletion.ts参照)。
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(アカウント/サロン削除の猶予期間カラム追加)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
@@ -602,6 +619,18 @@ const bindings: Bindings = {
   void backfillCompressStyleImages(bindings).catch((err) => {
     console.error('起動時バックフィル(style_images圧縮)に失敗しました:', err)
   })
+
+  // 管理者サイトからのアカウント/サロン削除は3日間の猶予期間を置く
+  // (src/lib/account-deletion.ts参照)。EventBridgeへの新規スケジュール追加
+  // (要terraform apply)を避けるため、アプリ内タイマーで定期チェックする。
+  // 起動直後に1回 + 以降1時間毎(3日間隔の猶予には十分すぎる頻度で安全側)。
+  const runDeletionSweep = () => {
+    void sweepPendingDeletions(bindings).catch((err) => {
+      console.error('削除猶予チェックに失敗しました:', err)
+    })
+  }
+  runDeletionSweep()
+  setInterval(runDeletionSweep, 60 * 60 * 1000)
 })
 
 app.use('*', async (c, next) => {
