@@ -575,12 +575,13 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(複数サロンワークスペース: user_id→salon_id UNIQUE制約差替)に失敗しました:', err)
   }
   try {
-    // 管理者サイトからのアカウント/サロン削除は即時実行ではなく、3日間の
-    // 猶予期間(deletion_requested_at)を置く(src/lib/account-deletion.ts参照)。
-    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`).run()
-    await bindings.DB.prepare(
-      `ALTER TABLE users ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
-    ).run()
+    // 管理者サイトからのサロン削除は即時実行ではなく、3日間の猶予期間
+    // (deletion_requested_at)を置く(src/lib/account-deletion.ts参照)。
+    // 2026-08-14追記(ユーザー指定): 削除操作はサロン単位に一本化したため、
+    // usersテーブル側の同名カラム(アカウント単位削除用、一時的に追加していた)
+    // は使われなくなったので削除する。
+    await bindings.DB.prepare(`ALTER TABLE users DROP COLUMN IF EXISTS deletion_requested_at`).run()
+    await bindings.DB.prepare(`ALTER TABLE users DROP COLUMN IF EXISTS deletion_requested_by_admin_id`).run()
     await bindings.DB.prepare(
       `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_at TIMESTAMP`
     ).run()
@@ -588,7 +589,7 @@ const bindings: Bindings = {
       `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS deletion_requested_by_admin_id INTEGER REFERENCES admin_users(id) ON DELETE SET NULL`
     ).run()
   } catch (err) {
-    console.error('起動時マイグレーション(アカウント/サロン削除の猶予期間カラム追加)に失敗しました:', err)
+    console.error('起動時マイグレーション(サロン削除の猶予期間カラム追加)に失敗しました:', err)
   }
   try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
