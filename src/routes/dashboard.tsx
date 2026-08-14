@@ -548,6 +548,21 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
     // 対象サロンを確定させる(未確定かつ2件以上ある場合はユーザーに選択してもらう)
     const groupTopResult = await handleGroupTopIfPresent(page, cred.target_store_id, collectLog)
     if (groupTopResult.status === 'needs_selection' || groupTopResult.status === 'target_not_found') {
+      // 2026-08-14追記(ユーザー指定): 複数サロン検出時、以前はここでウィザードが
+      // 顧客に店舗選択させ、確定した1件をそのまま新規登録時のプレースホルダー行
+      // (salon_key未設定、is_active_workspace=1)に転用していたが、以降は
+      // 「どのサロンを有効化するか」を管理者サイト側で運営が決める運用に変更した。
+      // upsertSalonListFromGroupTop()をそのまま呼ぶと(placeholder-adoption
+      // フォールバックにより)検出順で先頭のサロンが意図せず自動的に有効化
+      // されてしまうため、先にプレースホルダー行を削除しておき(users.active_salon_id
+      // はON DELETE SET NULLのため自動的にNULLへ戻る)、検出した全サロンを
+      // is_active_workspace=0のまま新規登録させる(管理者が/admin/salonsの
+      // 「有効化する」から明示的に選ぶまで、どのサロンも有効化されない状態にする)。
+      await c.env.DB.prepare(
+        `DELETE FROM salonboard_salons WHERE user_id = ? AND salon_key IS NULL AND is_active_workspace = 1`
+      )
+        .bind(user.id)
+        .run()
       await upsertSalonListFromGroupTop(c.env, user.id, groupTopResult.salons)
       return c.json({
         success: false,
@@ -693,62 +708,6 @@ dashboard.post('/api/settings/select-salon', async (c) => {
       .run()
   }
 
-  return c.json({ success: true })
-})
-
-// 複数サロン対応: オンボーディング・ウィザードの「契約する店舗数」確定。
-// sync-stylists-couponsがneedsSalonSelectionを返した直後(=ヘアサロンが
-// 2件以上検出された)場合にのみクライアントから呼ばれる。キレイサロンの
-// 専用ダッシュボードは当面用意しないため、対象は常にヘアサロンのみ。
-//   mode='all'   : 検出済みの全ヘアサロンを一括で有効化し、salon_slot_limitを
-//                  ヘア件数に確定して登録完了とする(最初の1件をactive_salon_idにする)。
-//   mode='partial': salon_slot_limitだけを確定する(有効化は行わない。この後
-//                  クライアントは既存の/api/settings/select-salonで1件だけ選んでもらう)。
-dashboard.post('/api/settings/onboarding/set-contract-count', async (c) => {
-  const user = c.get('user')
-  const body = await c.req.parseBody()
-  const mode = String(body.mode || '')
-  if (mode !== 'all' && mode !== 'partial') {
-    return c.json({ success: false, error: 'modeが不正です' }, 400)
-  }
-
-  const { results: hairSalons } = await c.env.DB.prepare(
-    `SELECT id, salon_key FROM salonboard_salons
-     WHERE user_id = ? AND is_active_workspace = 0 AND (salon_type IS NULL OR salon_type != 'kirei')
-     ORDER BY id ASC`
-  )
-    .bind(user.id)
-    .all<{ id: number; salon_key: string | null }>()
-  const candidates = hairSalons || []
-  if (candidates.length === 0) {
-    return c.json({ success: false, error: '対象となるヘアサロンが見つかりませんでした' }, 400)
-  }
-
-  if (mode === 'all') {
-    for (const salon of candidates) {
-      await c.env.DB.prepare(
-        `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
-      )
-        .bind(salon.id)
-        .run()
-    }
-    const first = candidates[0]
-    await c.env.DB.prepare('UPDATE users SET salon_slot_limit = ?, active_salon_id = ? WHERE id = ?')
-      .bind(candidates.length, first.id, user.id)
-      .run()
-    if (first.salon_key) {
-      await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
-        .bind(first.salon_key, user.id)
-        .run()
-    }
-    return c.json({ success: true, primaryStoreId: first.salon_key })
-  }
-
-  const count = Math.trunc(Number(body.count))
-  if (!Number.isFinite(count) || count < 1 || count > candidates.length) {
-    return c.json({ success: false, error: '契約する店舗数が不正です' }, 400)
-  }
-  await c.env.DB.prepare('UPDATE users SET salon_slot_limit = ? WHERE id = ?').bind(count, user.id).run()
   return c.json({ success: true })
 })
 
