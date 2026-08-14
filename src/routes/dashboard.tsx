@@ -32,7 +32,7 @@ dashboard.get('/dashboard', async (c) => {
   const user = c.get('user')
   const blockedError = c.req.query('error')
   const cred = await c.env.DB.prepare(
-    'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, salonboard_login_id_enc, last_error FROM salon_credentials WHERE user_id = ?'
+    'SELECT id, consent_given, updated_at, connection_status, last_stylist_synced_at, last_coupon_synced_at, last_error FROM salon_credentials WHERE user_id = ?'
   )
     .bind(user.id)
     .first<{
@@ -42,23 +42,9 @@ dashboard.get('/dashboard', async (c) => {
       connection_status: string
       last_stylist_synced_at: string | null
       last_coupon_synced_at: string | null
-      salonboard_login_id_enc: string
       last_error: string | null
     }>()
   const isConnected = cred?.connection_status === 'success'
-
-  let maskedLoginId = ''
-  if (cred) {
-    const encKey = c.env.ENCRYPTION_KEY
-    if (encKey) {
-      try {
-        const loginId = await decryptSecret(cred.salonboard_login_id_enc, encKey)
-        maskedLoginId = maskLoginId(loginId)
-      } catch {
-        maskedLoginId = '(復号エラー: ENCRYPTION_KEYが変更された可能性があります)'
-      }
-    }
-  }
 
   const blogArticlesRow = await c.env.DB.prepare(
     "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ? AND salon_id = ?"
@@ -241,78 +227,18 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      <div class="max-w-2xl space-y-6">
-        <p class="font-semibold">
-          <i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定
-        </p>
-
-        {cred && (
-          <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
-            <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
-            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
-              {cred.connection_status === 'success' ? (
-                <p class="text-sm font-semibold text-green-600">
-                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
-                </p>
-              ) : cred.connection_status === 'failed' ? (
-                <div>
-                  <p class="text-sm font-semibold text-red-600">
-                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
-                  </p>
-                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
-                </div>
-              ) : (
-                <p class="text-sm font-semibold text-gray-500">
-                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
-                </p>
-              )}
-              <p class="text-xs text-gray-400 mt-1">
-                上の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
-              </p>
-            </div>
+      {cred && (
+        <div class="max-w-2xl">
+          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-2">
+            <p class="font-semibold"><i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定</p>
+            <p class="text-xs text-gray-400">
+              サロンID・ログインID・パスワードの確認/更新は
+              <a href="/settings/salonboard" class="text-pink-600 font-medium hover:underline">連携設定ページ</a>
+              から行えます。
+            </p>
           </div>
-        )}
-
-        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
-            <input
-              required
-              type="text"
-              name="salonboard_login_id"
-              autocomplete="off"
-              placeholder="サロンボードのログインIDを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
-            <input
-              required
-              type="password"
-              name="salonboard_password"
-              autocomplete="new-password"
-              placeholder="サロンボードのパスワードを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <label class="flex items-start gap-2 text-sm text-gray-600">
-            <input required type="checkbox" name="consent" class="mt-1" />
-            <span>
-              本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
-            </span>
-          </label>
-          <button
-            type="submit"
-            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
-          >
-            {cred ? '更新する' : '登録する'}
-          </button>
-        </form>
-      </div>
+        </div>
+      )}
 
       {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
@@ -352,6 +278,16 @@ dashboard.get('/settings/salonboard', async (c) => {
     }
   }
 
+  // 複数サロン対応: 「サロンID」はサロンボードのID/パスワードだけでなく重要な
+  // 識別情報になるため表示する(現在アクティブなワークスペースの物理サロンID)。
+  let activeSalonKey: string | null = null
+  if (cred && user.active_salon_id) {
+    const activeSalon = await c.env.DB.prepare('SELECT salon_key FROM salonboard_salons WHERE id = ?')
+      .bind(user.active_salon_id)
+      .first<{ salon_key: string | null }>()
+    activeSalonKey = activeSalon?.salon_key ?? null
+  }
+
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -384,73 +320,120 @@ dashboard.get('/settings/salonboard', async (c) => {
           </p>
         </div>
 
-        {cred && (
-          <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <p class="text-xs text-gray-400 mb-1">現在登録されているログインID</p>
-            <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
-            <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
-            <div class="mt-3 pt-3 border-t border-gray-100">
-              <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
-              {cred.connection_status === 'success' ? (
-                <p class="text-sm font-semibold text-green-600">
-                  <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
-                </p>
-              ) : cred.connection_status === 'failed' ? (
-                <div>
-                  <p class="text-sm font-semibold text-red-600">
-                    <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+        {cred ? (
+          <>
+            <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
+              <div>
+                <p class="text-xs text-gray-400 mb-1">サロンID</p>
+                <p class="font-mono text-sm text-gray-700">{activeSalonKey || '（未確定）'}</p>
+              </div>
+              <div class="pt-3 border-t border-gray-100">
+                <p class="text-xs text-gray-400 mb-1">サロンボード ログインID</p>
+                <p class="font-mono text-sm text-gray-700">{maskedLoginId || '（未設定）'}</p>
+                <p class="text-xs text-gray-400 mt-2">最終更新: {formatJstDateTime(cred.updated_at)}</p>
+              </div>
+              <div class="pt-3 border-t border-gray-100">
+                <p class="text-xs text-gray-400 mb-1">連携ステータス（実際にログインできたかの確認結果）</p>
+                {cred.connection_status === 'success' ? (
+                  <p class="text-sm font-semibold text-green-600">
+                    <i class="fas fa-circle-check mr-1"></i>連携確認済み（サロンボードへのログインに成功しています）
                   </p>
-                  {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
-                </div>
-              ) : (
-                <p class="text-sm font-semibold text-gray-500">
-                  <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                ) : cred.connection_status === 'failed' ? (
+                  <div>
+                    <p class="text-sm font-semibold text-red-600">
+                      <i class="fas fa-circle-exclamation mr-1"></i>連携失敗（サロンボードへのログインに失敗しています）
+                    </p>
+                    {cred.last_error && <p class="text-xs text-red-500 mt-1 break-all">{cred.last_error}</p>}
+                  </div>
+                ) : (
+                  <p class="text-sm font-semibold text-gray-500">
+                    <i class="fas fa-circle-question mr-1"></i>未確認（まだログインを試したことがありません）
+                  </p>
+                )}
+                <p class="text-xs text-gray-400 mt-1">
+                  <a href="/dashboard" class="text-pink-600 hover:underline">ダッシュボード</a>の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
                 </p>
-              )}
-              <p class="text-xs text-gray-400 mt-1">
-                <a href="/dashboard" class="text-pink-600 hover:underline">ダッシュボード</a>の「サロンボードと同期する」ボタンを押すと、実際にログインを試して最新の状態に更新します。
-              </p>
+              </div>
             </div>
-          </div>
+
+            <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+              <p class="text-xs text-gray-500 leading-relaxed">
+                サロンID・ログインIDはサロンボード連携時に確定した固定情報のため変更できません。
+                サロンボード側でパスワードを変更した場合は、こちらで最新のパスワードに更新してください。
+              </p>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
+                <input
+                  required
+                  type="password"
+                  name="salonboard_password"
+                  autocomplete="new-password"
+                  placeholder="新しいパスワードを入力"
+                  class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+                />
+              </div>
+              <button
+                type="submit"
+                class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+              >
+                パスワードを更新する
+              </button>
+            </form>
+          </>
+        ) : (
+          <form
+            method="post"
+            action="/settings/salonboard"
+            autocomplete="off"
+            class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
+          >
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
+              <input
+                required
+                type="text"
+                name="salonboard_login_id"
+                autocomplete="off"
+                placeholder="サロンボードのログインIDを入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
+              <input
+                required
+                type="password"
+                name="salonboard_password"
+                autocomplete="new-password"
+                placeholder="サロンボードのパスワードを入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <label class="flex items-start gap-2 text-sm text-gray-600">
+              <input required type="checkbox" name="consent" class="mt-1" />
+              <span>
+                本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
+              </span>
+            </label>
+            <button
+              type="submit"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+            >
+              登録する
+            </button>
+          </form>
         )}
 
-        <form method="post" action="/settings/salonboard" autocomplete="off" class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード ログインID</label>
-            <input
-              required
-              type="text"
-              name="salonboard_login_id"
-              autocomplete="off"
-              placeholder="サロンボードのログインIDを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">サロンボード パスワード</label>
-            <input
-              required
-              type="password"
-              name="salonboard_password"
-              autocomplete="new-password"
-              placeholder="サロンボードのパスワードを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <label class="flex items-start gap-2 text-sm text-gray-600">
-            <input required type="checkbox" name="consent" class="mt-1" />
-            <span>
-              本サービスがサロンボードへの自動ログイン・自動投稿のためにID/パスワードを保存・利用することに同意します。
-            </span>
-          </label>
-          <button
-            type="submit"
-            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
-          >
-            {cred ? '更新する' : '登録する'}
-          </button>
-        </form>
+        {cred && (
+          <div
+            id="salonboard-onboarding-area"
+            data-autorun={!activeSalonKey ? '1' : ''}
+            class="space-y-3"
+          ></div>
+        )}
       </div>
+
+      <script src="/static/salonboard-sync.js"></script>
     </PageLayout>,
     { title: 'サロンボード連携設定' }
   )
@@ -459,9 +442,7 @@ dashboard.get('/settings/salonboard', async (c) => {
 dashboard.post('/settings/salonboard', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
-  const loginId = String(body.salonboard_login_id || '').trim()
   const password = String(body.salonboard_password || '')
-  const consent = body.consent === 'on' || body.consent === 'true'
 
   const encKey = c.env.ENCRYPTION_KEY
   if (!encKey) {
@@ -471,6 +452,28 @@ dashboard.post('/settings/salonboard', async (c) => {
     )
   }
 
+  const existing = await c.env.DB.prepare('SELECT id FROM salon_credentials WHERE user_id = ?')
+    .bind(user.id)
+    .first<{ id: number }>()
+
+  if (existing) {
+    // 連携済みアカウントの更新: パスワードのみ受け付ける(サロンID・ログインIDは
+    // 連携時に確定済みの固定情報のため、この画面からは変更できない)。
+    if (!password) {
+      return c.redirect('/settings/salonboard?error=' + encodeURIComponent('新しいパスワードを入力してください'))
+    }
+    const passwordEnc = await encryptSecret(password, encKey)
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET salonboard_password_enc = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+    )
+      .bind(passwordEnc, user.id)
+      .run()
+    return c.redirect('/settings/salonboard?saved=1')
+  }
+
+  // 初回連携: ログインID・パスワード・同意チェックが必須。
+  const loginId = String(body.salonboard_login_id || '').trim()
+  const consent = body.consent === 'on' || body.consent === 'true'
   if (!loginId || !password || !consent) {
     return c.redirect(
       '/settings/salonboard?error=' + encodeURIComponent('ログインID・パスワード・同意チェックはすべて必須です')
@@ -479,27 +482,12 @@ dashboard.post('/settings/salonboard', async (c) => {
 
   const loginIdEnc = await encryptSecret(loginId, encKey)
   const passwordEnc = await encryptSecret(password, encKey)
-
-  const existing = await c.env.DB.prepare('SELECT id FROM salon_credentials WHERE user_id = ?')
-    .bind(user.id)
-    .first<{ id: number }>()
-
-  if (existing) {
-    await c.env.DB.prepare(
-      `UPDATE salon_credentials
-       SET salonboard_login_id_enc = ?, salonboard_password_enc = ?, consent_given = 1, consent_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE user_id = ?`
-    )
-      .bind(loginIdEnc, passwordEnc, user.id)
-      .run()
-  } else {
-    await c.env.DB.prepare(
-      `INSERT INTO salon_credentials (user_id, salonboard_login_id_enc, salonboard_password_enc, consent_given, consent_at)
-       VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)`
-    )
-      .bind(user.id, loginIdEnc, passwordEnc)
-      .run()
-  }
+  await c.env.DB.prepare(
+    `INSERT INTO salon_credentials (user_id, salonboard_login_id_enc, salonboard_password_enc, consent_given, consent_at)
+     VALUES (?, ?, ?, 1, CURRENT_TIMESTAMP)`
+  )
+    .bind(user.id, loginIdEnc, passwordEnc)
+    .run()
 
   return c.redirect('/settings/salonboard?saved=1')
 })
@@ -685,6 +673,62 @@ dashboard.post('/api/settings/select-salon', async (c) => {
   return c.json({ success: true })
 })
 
+// 複数サロン対応: オンボーディング・ウィザードの「契約する店舗数」確定。
+// sync-stylists-couponsがneedsSalonSelectionを返した直後(=ヘアサロンが
+// 2件以上検出された)場合にのみクライアントから呼ばれる。キレイサロンの
+// 専用ダッシュボードは当面用意しないため、対象は常にヘアサロンのみ。
+//   mode='all'   : 検出済みの全ヘアサロンを一括で有効化し、salon_slot_limitを
+//                  ヘア件数に確定して登録完了とする(最初の1件をactive_salon_idにする)。
+//   mode='partial': salon_slot_limitだけを確定する(有効化は行わない。この後
+//                  クライアントは既存の/api/settings/select-salonで1件だけ選んでもらう)。
+dashboard.post('/api/settings/onboarding/set-contract-count', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const mode = String(body.mode || '')
+  if (mode !== 'all' && mode !== 'partial') {
+    return c.json({ success: false, error: 'modeが不正です' }, 400)
+  }
+
+  const { results: hairSalons } = await c.env.DB.prepare(
+    `SELECT id, salon_key FROM salonboard_salons
+     WHERE user_id = ? AND is_active_workspace = 0 AND (salon_type IS NULL OR salon_type != 'kirei')
+     ORDER BY id ASC`
+  )
+    .bind(user.id)
+    .all<{ id: number; salon_key: string | null }>()
+  const candidates = hairSalons || []
+  if (candidates.length === 0) {
+    return c.json({ success: false, error: '対象となるヘアサロンが見つかりませんでした' }, 400)
+  }
+
+  if (mode === 'all') {
+    for (const salon of candidates) {
+      await c.env.DB.prepare(
+        `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(salon.id)
+        .run()
+    }
+    const first = candidates[0]
+    await c.env.DB.prepare('UPDATE users SET salon_slot_limit = ?, active_salon_id = ? WHERE id = ?')
+      .bind(candidates.length, first.id, user.id)
+      .run()
+    if (first.salon_key) {
+      await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
+        .bind(first.salon_key, user.id)
+        .run()
+    }
+    return c.json({ success: true, primaryStoreId: first.salon_key })
+  }
+
+  const count = Math.trunc(Number(body.count))
+  if (!Number.isFinite(count) || count < 1 || count > candidates.length) {
+    return c.json({ success: false, error: '契約する店舗数が不正です' }, 400)
+  }
+  await c.env.DB.prepare('UPDATE users SET salon_slot_limit = ? WHERE id = ?').bind(count, user.id).run()
+  return c.json({ success: true })
+})
+
 // 複数サロンワークスペース対応 フェーズ4: 追加サロン選択。
 // salon_slot_limitに余裕があるユーザーが、まだ有効化していない物理サロンを
 // 一覧取得する。確定クリックは行わない(listGroupTopSalons)。
@@ -733,7 +777,8 @@ dashboard.post('/api/settings/fetch-available-salons', async (c) => {
       .all<{ salon_key: string | null }>()
     const activeKeys = new Set((activeRows || []).map((r) => r.salon_key))
 
-    const available = allSalons.filter((s) => !activeKeys.has(s.storeId))
+    // キレイサロン向けダッシュボードは現時点で未対応のため、追加候補には出さない。
+    const available = allSalons.filter((s) => !activeKeys.has(s.storeId) && s.type !== 'kirei')
     return c.json({ success: true, salons: available })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err).slice(0, 2000) }, 400)
@@ -808,13 +853,21 @@ dashboard.post('/api/settings/switch-salon', async (c) => {
   if (!Number.isFinite(salonId)) return c.json({ success: false, error: 'salonIdが指定されていません' }, 400)
 
   const salon = await c.env.DB.prepare(
-    'SELECT id FROM salonboard_salons WHERE id = ? AND user_id = ? AND is_active_workspace = 1'
+    'SELECT id, salon_key FROM salonboard_salons WHERE id = ? AND user_id = ? AND is_active_workspace = 1'
   )
     .bind(salonId, user.id)
-    .first<{ id: number }>()
+    .first<{ id: number; salon_key: string | null }>()
   if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
 
   await c.env.DB.prepare('UPDATE users SET active_salon_id = ? WHERE id = ?').bind(salonId, user.id).run()
+  // 重大バグ修正: target_store_idをactive_salon_idに追随させないと、次回の
+  // 「サロンボードと同期する」実行時にブラウザが切り替え前のサロンへログイン
+  // し続けてしまい、切り替え後のサロンに他サロンのデータが同期されてしまう。
+  if (salon.salon_key) {
+    await c.env.DB.prepare('UPDATE salon_credentials SET target_store_id = ? WHERE user_id = ?')
+      .bind(salon.salon_key, user.id)
+      .run()
+  }
   return c.json({ success: true })
 })
 

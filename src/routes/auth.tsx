@@ -135,7 +135,10 @@ auth.post('/signup', async (c) => {
     .run()
 
   await setSession(c, userId, email)
-  return c.redirect('/dashboard')
+  // 複数サロン対応: 登録直後はサロンボード連携ウィザード(/settings/salonboard)へ
+  // 進んでもらう(そのままダッシュボードに出しても未連携バナーから同じ場所へ
+  // 誘導されるだけなので、最初から一体化した導線にする)。
+  return c.redirect('/settings/salonboard')
 })
 
 // ---------- Login ----------
@@ -174,7 +177,12 @@ auth.get('/login', (c) => {
           ログイン
         </button>
       </form>
-      <p class="text-sm text-gray-500 mt-6 text-center">
+      <p class="text-sm text-gray-500 mt-4 text-center">
+        <a href="/forgot-password" class="text-gray-400 hover:text-gray-600 hover:underline">
+          パスワードをお忘れの方はこちら
+        </a>
+      </p>
+      <p class="text-sm text-gray-500 mt-2 text-center">
         アカウントをお持ちでない方は{' '}
         <a href="/signup" class="text-pink-600 font-medium hover:underline">
           新規登録
@@ -182,6 +190,29 @@ auth.get('/login', (c) => {
       </p>
     </AuthLayout>,
     { title: 'ログイン' }
+  )
+})
+
+// ---------- Forgot password ----------
+// 2026-08-14追記: メール送信基盤(SES等)を持たないため、本格的な自動リセット
+// フローではなく、サポート窓口への問い合わせ案内のみを表示する簡易ページ。
+auth.get('/forgot-password', (c) => {
+  return c.render(
+    <AuthLayout>
+      <h2 class="text-lg font-bold mb-4">パスワードをお忘れの方</h2>
+      <p class="text-sm text-gray-600 leading-relaxed">
+        大変お手数ですが、現在パスワードの自動再設定には対応しておりません。
+        <br />
+        ご登録のメールアドレスを添えて、サポート窓口までお問い合わせください。
+        パスワードの再設定を代行いたします。
+      </p>
+      <p class="text-sm text-gray-500 mt-6 text-center">
+        <a href="/login" class="text-pink-600 font-medium hover:underline">
+          ログイン画面に戻る
+        </a>
+      </p>
+    </AuthLayout>,
+    { title: 'パスワードをお忘れの方' }
   )
 })
 

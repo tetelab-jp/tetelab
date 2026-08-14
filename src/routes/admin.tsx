@@ -494,6 +494,7 @@ type ToolSalonRow = {
   seo_enabled: number
   salon_slot_limit: number
   active_salon_count: number
+  total_salon_count: number
   seq: number
 }
 
@@ -510,33 +511,34 @@ function SalonSlotLimitForm({
   page,
   q,
   salonSlotLimit,
-  activeSalonCount
+  activeSalonCount,
+  totalSalonCount
 }: {
   userId: number
   page: number
   q: string
   salonSlotLimit: number
   activeSalonCount: number
+  totalSalonCount: number
 }) {
+  const canAdd = salonSlotLimit < totalSalonCount
   return (
-    <form method="post" action={`/admin/tool/${userId}/update-salon-slot-limit`} class="flex items-center gap-2">
-      <input type="hidden" name="page" value={page} />
-      <input type="hidden" name="q" value={q} />
-      <input
-        type="number"
-        name="salon_slot_limit"
-        min="1"
-        max="10"
-        value={salonSlotLimit}
-        class="w-16 rounded-lg border border-gray-300 px-2 py-1 text-sm text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-      />
-      <button type="submit" class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700">
-        変更
-      </button>
-      <span class="text-xs text-gray-400 whitespace-nowrap">
-        使用中: {activeSalonCount}
+    <div class="flex items-center gap-2">
+      <span class="text-sm text-gray-700 whitespace-nowrap font-medium">
+        {activeSalonCount}/{salonSlotLimit}店舗
       </span>
-    </form>
+      <form method="post" action={`/admin/tool/${userId}/add-salon-slot`}>
+        <input type="hidden" name="page" value={page} />
+        <input type="hidden" name="q" value={q} />
+        <button
+          type="submit"
+          disabled={!canAdd}
+          class="text-xs font-semibold px-2 py-1 rounded-lg bg-gray-100 hover:bg-gray-200 text-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          サロンを追加する
+        </button>
+      </form>
+    </div>
   )
 }
 
@@ -591,6 +593,7 @@ admin.get('/admin/tool', async (c) => {
   const { results: salons } = await c.env.DB.prepare(
     `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled, salon_slot_limit,
        (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND s.is_active_workspace = 1) AS active_salon_count,
+       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -637,7 +640,7 @@ admin.get('/admin/tool', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
-                <th class="px-4 py-3 text-left font-medium">サロン利用枠数</th>
+                <th class="px-4 py-3 text-left font-medium">契約サロン数</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -683,6 +686,7 @@ admin.get('/admin/tool', async (c) => {
                       q={q}
                       salonSlotLimit={salon.salon_slot_limit}
                       activeSalonCount={salon.active_salon_count}
+                      totalSalonCount={salon.total_salon_count}
                     />
                   </td>
                 </tr>
@@ -761,46 +765,39 @@ admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_e
 admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
 admin.post('/admin/tool/:id/toggle-seo', (c) => toggleSalonFeature(c, 'seo_enabled', 'toggle_salon_seo_enabled'))
 
-// 複数サロンワークスペース対応: 契約に応じて使えるサロン数(salon_slot_limit)を
-// 管理者が操作する。「何店舗まで使えるか」という契約条件だけを管理し、実際に
-// どの物理サロンを追加するかはユーザー自身が設定画面で選ぶ(既存の
+// 複数サロン対応: 顧客が追加契約した際に、管理者が「契約サロン数」を1増やす。
+// 実際にどの物理サロンを追加するかはユーザー自身が設定画面で選ぶ(既存の
 // toggleSalonFeatureと同じ「監査ログ→一覧へリダイレクト」の骨格を踏襲)。
-admin.post('/admin/tool/:id/update-salon-slot-limit', async (c) => {
+// 増やせる上限は、そのユーザーのサロンボードログインで実際に検出済みの
+// ヘアサロン総数まで(それ以上は物理的に存在しないため追加できない)。
+admin.post('/admin/tool/:id/add-salon-slot', async (c) => {
   const adminUser = c.get('admin')
   const targetId = Number(c.req.param('id'))
   const body = await c.req.parseBody()
   const page = String(body.page || '1')
   const q = String(body.q || '')
-  const nextLimit = Math.trunc(Number(body.salon_slot_limit))
-
-  if (!Number.isFinite(nextLimit) || nextLimit < 1 || nextLimit > 10) {
-    return c.redirect(buildToolListUrl(Number(page) || 1, q))
-  }
 
   const target = (await c.env.DB.prepare(
     `SELECT id, email, salon_slot_limit,
-       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND s.is_active_workspace = 1) AS active_salon_count
+       (SELECT COUNT(*) FROM salonboard_salons s WHERE s.user_id = users.id AND (s.salon_type IS NULL OR s.salon_type != 'kirei')) AS total_salon_count
      FROM users WHERE id = ?`
   )
     .bind(targetId)
-    .first()) as { id: number; email: string; salon_slot_limit: number; active_salon_count: number } | null
+    .first()) as { id: number; email: string; salon_slot_limit: number; total_salon_count: number } | null
 
-  if (target) {
-    // 既に有効化済みのワークスペース数を下回る値には縮小できないようにする
-    // (縮小によるデータ整理は本機能のスコープ外、既存データを宙に浮かせない)。
-    if (nextLimit >= target.active_salon_count) {
-      await c.env.DB.prepare(`UPDATE users SET salon_slot_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-        .bind(nextLimit, targetId)
-        .run()
-      await logAdminAction(
-        c,
-        adminUser.id,
-        'update_salon_slot_limit',
-        'user',
-        targetId,
-        `${target.email}: salon_slot_limit ${target.salon_slot_limit} -> ${nextLimit}`
-      )
-    }
+  if (target && target.salon_slot_limit < target.total_salon_count) {
+    const nextLimit = target.salon_slot_limit + 1
+    await c.env.DB.prepare(`UPDATE users SET salon_slot_limit = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(nextLimit, targetId)
+      .run()
+    await logAdminAction(
+      c,
+      adminUser.id,
+      'add_salon_slot',
+      'user',
+      targetId,
+      `${target.email}: salon_slot_limit ${target.salon_slot_limit} -> ${nextLimit}`
+    )
   }
 
   return c.redirect(buildToolListUrl(Number(page) || 1, q))
