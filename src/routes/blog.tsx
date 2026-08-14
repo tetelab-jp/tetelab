@@ -203,6 +203,7 @@ blog.get('/blog/salon', async (c) => {
             </label>
             <textarea name="reference_text" rows={4} placeholder="お手本にしたい過去のブログ記事などを貼り付けてください" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.reference_text || ''}</textarea>
           </div>
+          <p class="text-sm font-medium text-gray-700 mb-2">文体パラメータ</p>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">一人称</label>
@@ -238,7 +239,7 @@ blog.get('/blog/salon', async (c) => {
                 type="text"
                 name="footer_keywords"
                 value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
-                placeholder="例）あびこ駅, 縮毛矯正, 髪質改善"
+                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
                 class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
