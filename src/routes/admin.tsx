@@ -378,7 +378,7 @@ admin.get('/admin/salons', async (c) => {
   }
 
   return c.render(
-    <AdminPageLayout active="admin-salons" adminEmail={adminUser.email} title="サロン一覧">
+    <AdminPageLayout active="admin-salons" adminEmail={adminUser.email} title="契約サロン一覧">
       <form method="get" action="/admin/salons" class="flex gap-2">
         <input
           type="text"
@@ -518,7 +518,7 @@ admin.get('/admin/salons', async (c) => {
         </div>
       </div>
     </AdminPageLayout>,
-    { title: 'サロン一覧' }
+    { title: '契約サロン一覧' }
   )
 })
 
@@ -747,7 +747,7 @@ admin.get('/admin/tool', async (c) => {
   }
 
   return c.render(
-    <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="契約設定">
+    <AdminPageLayout active="admin-tool" adminEmail={adminUser.email} title="機能設定">
       <form method="get" action="/admin/tool" class="flex gap-2">
         <input
           type="text"
@@ -863,7 +863,7 @@ admin.get('/admin/tool', async (c) => {
         </div>
       </div>
     </AdminPageLayout>,
-    { title: '契約設定' }
+    { title: '機能設定' }
   )
 })
 

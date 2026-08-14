@@ -4,6 +4,7 @@
 export type NavKey =
   | 'dashboard'
   | 'settings'
+  | 'settings-account'
   | 'style-library'
   | 'style-import'
   | 'style-schedule'
@@ -35,7 +36,8 @@ const NAV_ITEMS: {
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
   { key: 'ranking-schedule', href: '/seo/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
-  { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' }
+  { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' },
+  { key: 'settings-account', href: '/settings/account', icon: 'fa-user-gear', label: 'アカウント設定', group: 'settings' }
 ]
 
 const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' | 'ranking' }[] = [

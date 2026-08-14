@@ -1,6 +1,6 @@
 import { Hono } from 'hono'
 import { requireAuth } from '../lib/auth-middleware'
-import { encryptSecret, decryptSecret } from '../lib/crypto'
+import { encryptSecret, decryptSecret, hashPassword, verifyPasswordConstantTime } from '../lib/crypto'
 import { PageLayout } from '../components/layout'
 import {
   launchBrowser,
@@ -511,6 +511,136 @@ dashboard.post('/settings/salonboard', async (c) => {
     .run()
 
   return c.redirect('/settings/salonboard?saved=1')
+})
+
+// ---------- アカウント設定(メールアドレス・パスワード変更) ----------
+
+dashboard.get('/settings/account', async (c) => {
+  const user = c.get('user')
+  const saved = c.req.query('saved')
+  const error = c.req.query('error')
+
+  return c.render(
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      active="settings-account"
+      salonName={user.salon_name}
+      title="アカウント設定"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
+      {saved && (
+        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+      {error && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-exclamation mr-2"></i>{error}
+        </div>
+      )}
+
+      <div class="max-w-2xl">
+        <form
+          method="post"
+          action="/settings/account"
+          autocomplete="off"
+          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
+        >
+          <p class="font-semibold">
+            <i class="fas fa-user-gear mr-2 text-pink-500"></i>メールアドレス・パスワードの変更
+          </p>
+          <p class="text-xs text-gray-500 leading-relaxed">
+            変更を保存するには、確認のため現在のパスワードの入力が必要です。
+            メールアドレス・新しいパスワードは、変更したい項目だけ入力してください。
+          </p>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス（現在: {user.email}）</label>
+            <input
+              type="email"
+              name="new_email"
+              placeholder="変更する場合のみ入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
+            <input
+              type="password"
+              name="new_password"
+              autocomplete="new-password"
+              placeholder="変更する場合のみ入力（8文字以上）"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div class="pt-3 border-t border-gray-100">
+            <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
+            <input
+              required
+              type="password"
+              name="current_password"
+              autocomplete="current-password"
+              placeholder="現在お使いのパスワードを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            保存する
+          </button>
+        </form>
+      </div>
+    </PageLayout>,
+    { title: 'アカウント設定' }
+  )
+})
+
+dashboard.post('/settings/account', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const newEmail = String(body.new_email || '').trim().toLowerCase()
+  const newPassword = String(body.new_password || '')
+  const currentPassword = String(body.current_password || '')
+
+  const redirectError = (message: string) => c.redirect('/settings/account?error=' + encodeURIComponent(message))
+
+  if (!newEmail && !newPassword) {
+    return redirectError('メールアドレスまたはパスワードのどちらか一方は入力してください')
+  }
+  if (newPassword && newPassword.length < 8) {
+    return redirectError('新しいパスワードは8文字以上で入力してください')
+  }
+
+  const current = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+    .bind(user.id)
+    .first<{ password_hash: string }>()
+  const passwordOk = await verifyPasswordConstantTime(currentPassword, current?.password_hash ?? null)
+  if (!passwordOk) {
+    return redirectError('現在のパスワードが正しくありません')
+  }
+
+  if (newEmail && newEmail !== user.email) {
+    const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?')
+      .bind(newEmail, user.id)
+      .first<{ id: number }>()
+    if (existing) {
+      return redirectError('このメールアドレスは既に使用されています')
+    }
+    await c.env.DB.prepare('UPDATE users SET email = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(newEmail, user.id)
+      .run()
+  }
+
+  if (newPassword) {
+    const passwordHash = await hashPassword(newPassword)
+    await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+      .bind(passwordHash, user.id)
+      .run()
+  }
+
+  return c.redirect('/settings/account?saved=1')
 })
 
 // ---------- スタイリスト・クーポン同期 ----------
