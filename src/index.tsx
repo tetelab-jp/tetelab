@@ -285,6 +285,23 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(再トライルール撤廃・旧列削除)に失敗しました:', err)
   }
   try {
+    // 2026-08-14再追記(ユーザー指定ルール、詳細はmigrations-pg/0018_*.sql参照):
+    // 60分おきの自動巡回で投稿に失敗したスタイルを、次の自動投稿タイミングに
+    // 1回だけ再トライする機能を再導入する(前回の「次のスタイルの次に再トライ」
+    // 版より単純化し、待ち枠(wait_slots)は廃止して即・次回に再トライする)。
+    // is_auto_cycleは60分おきの自動巡回由来のジョブかを記録し、手動投稿
+    // (テスト実行・個別再実行)の失敗からは再トライを予約しないようにする。
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_schedules ADD COLUMN IF NOT EXISTS retry_pending_style_id INTEGER`
+    ).run()
+    await bindings.DB.prepare(`ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS is_retry INTEGER NOT NULL DEFAULT 0`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE style_post_jobs ADD COLUMN IF NOT EXISTS is_auto_cycle INTEGER NOT NULL DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(自動巡回の再トライ機能再導入)に失敗しました:', err)
+  }
+  try {
     // 2026-08-14追記(重大バグ修正、詳細はmigrations-pg/0015_*.sql参照): 「1つの
     // スタイルに進行中(pending/running)ジョブは同時に1件まで」という制約は
     // これまでアプリ側のSELECT→INSERTという非アトミックなチェックのみに
