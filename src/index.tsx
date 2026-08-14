@@ -328,7 +328,6 @@ const bindings: Bindings = {
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS closing_days TEXT`,
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS strengths TEXT`,
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS price_range TEXT`,
-      `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS mimic_past_tone INTEGER NOT NULL DEFAULT 1`,
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS first_person TEXT`,
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS sentence_ending TEXT`,
       `ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS emoji_style TEXT`,
@@ -356,6 +355,20 @@ const bindings: Bindings = {
     }
   } catch (err) {
     console.error('起動時マイグレーション(blog_categoriesブログ拡張列)に失敗しました:', err)
+  }
+  try {
+    // 2026-08-14再追記(ユーザー指定): 「これまでのブログの書き方に寄せる」
+    // チェックボックス(mimic_past_tone)は、実際には何も参照していなかったため
+    // 撤廃する。代わりに、カテゴリ単位で「文章スタイル」(過去記事参照=未実装/
+    // 参考文章参照/パラメータのみ)を選べるようにし、参考文章参照の材料として
+    // salon_profiles.reference_textを追加する(詳細はmigrations-pg/0019_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS reference_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles DROP COLUMN IF EXISTS mimic_past_tone`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS style_mode TEXT NOT NULL DEFAULT 'params'`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(ブログ文章スタイル選択機能)に失敗しました:', err)
   }
   try {
     // blog_articles: 新設。汎用のpostsテーブルは画像・承認・カテゴリ関連のFKが無く
