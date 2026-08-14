@@ -20,6 +20,12 @@ document.addEventListener('DOMContentLoaded', () => {
     title.textContent = 'このアカウントには複数のサロンが登録されています。使用するサロンを選択してください。'
     box.appendChild(title)
 
+    const warning = document.createElement('p')
+    warning.className = 'text-xs text-red-600 leading-relaxed'
+    warning.textContent =
+      '※サロンの選択は最初の一回のみです。一度選択すると、以降このアカウントではスタイル投稿・ブログ・順位測定など全ての機能で選択したサロンのみが使用されます。後から他のサロンに切り替えることはできませんので、必ず正しいサロンを選択してください。'
+    box.appendChild(warning)
+
     const list = document.createElement('div')
     list.className = 'space-y-2'
     salons.forEach((salon, i) => {
