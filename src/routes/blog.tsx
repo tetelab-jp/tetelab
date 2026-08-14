@@ -998,6 +998,13 @@ blog.get('/blog/articles', async (c) => {
       </div>
 
       <div data-tab-panel="list">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <button type="button" id="blog-rearrange-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600">
+            <i class="fas fa-shuffle mr-1"></i>まとまりの順番に並び替える
+          </button>
+          <span class="text-xs text-gray-400">まとまり1→2→3→…の順に1記事ずつ交互に並び替えます</span>
+        </div>
+
         <div id="blog-bulk-bar" class="hidden bg-gray-800 text-white rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap mb-4">
           <span><b id="blog-selected-count">0</b>件を選択中</span>
           <button type="button" id="blog-bulk-approve-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">まとめて承認する</button>
@@ -1017,7 +1024,7 @@ blog.get('/blog/articles', async (c) => {
               <input type="checkbox" class="blog-article-checkbox mt-1 accent-pink-500" data-article-id={a.id} />
               <input
                 type="number"
-                class="blog-order-input w-14 rounded border border-gray-200 px-1.5 py-1 text-xs text-center"
+                class="blog-order-input w-14 rounded border border-gray-200 px-1.5 py-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 data-article-id={a.id}
                 value={a.no}
                 min={1}
@@ -1158,6 +1165,54 @@ blog.post('/api/blog/articles/reorder', async (c) => {
   for (let i = 0; i < ids.length; i++) {
     await c.env.DB.prepare('UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
       .bind(i, ids[i], user.id)
+      .run()
+  }
+  return c.json({ success: true })
+})
+
+// 「まとまり」(カテゴリ)を1記事ずつ順番に交互させる並び替え。カテゴリの
+// sort_order順にローテーションし、各カテゴリの中では現在のsort_order順を
+// キューとして先頭から1件ずつ取り出す。カテゴリ未設定の記事は最後の
+// 1グループとしてローテーションに混ぜる。ボタン押下時のみ実行され、
+// 記事の生成・承認時に自動では走らない(手動での並び替えを上書きしないため)。
+blog.post('/api/blog/articles/rearrange-by-category', async (c) => {
+  const user = c.get('user')
+
+  const { results: categories } = await c.env.DB.prepare(
+    'SELECT id FROM blog_categories WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id)
+    .all<{ id: number }>()
+
+  const { results: articles } = await c.env.DB.prepare(
+    'SELECT id, category_id FROM blog_articles WHERE user_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id)
+    .all<{ id: number; category_id: number | null }>()
+
+  const queues = new Map<number | null, number[]>()
+  for (const a of articles || []) {
+    const key = a.category_id
+    if (!queues.has(key)) queues.set(key, [])
+    queues.get(key)!.push(a.id)
+  }
+
+  const groupOrder: (number | null)[] = [...(categories || []).map((cat) => cat.id), null]
+  const orderedIds: number[] = []
+  let remaining = (articles || []).length
+  while (remaining > 0) {
+    for (const key of groupOrder) {
+      const queue = queues.get(key)
+      if (queue && queue.length > 0) {
+        orderedIds.push(queue.shift()!)
+        remaining--
+      }
+    }
+  }
+
+  for (let i = 0; i < orderedIds.length; i++) {
+    await c.env.DB.prepare('UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
+      .bind(i, orderedIds[i], user.id)
       .run()
   }
   return c.json({ success: true })

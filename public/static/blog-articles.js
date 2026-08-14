@@ -17,6 +17,29 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   })
 
+  // まとまり(カテゴリ)の順番に1記事ずつ交互に並び替える
+  const rearrangeBtn = document.getElementById('blog-rearrange-btn')
+  if (rearrangeBtn) {
+    rearrangeBtn.addEventListener('click', async () => {
+      if (!confirm('現在の並び順を、まとまりの順番に1記事ずつ交互に並び替えます。よろしいですか？')) return
+      rearrangeBtn.disabled = true
+      try {
+        const res = await fetch('/api/blog/articles/rearrange-by-category', { method: 'POST' })
+        const data = await res.json()
+        if (!data.success) {
+          alert('並び替えに失敗しました: ' + (data.error || '不明なエラー'))
+          rearrangeBtn.disabled = false
+          return
+        }
+      } catch (e) {
+        alert('通信エラーが発生しました')
+        rearrangeBtn.disabled = false
+        return
+      }
+      location.reload()
+    })
+  }
+
   // 一括操作バーの選択状態管理
   const bulkBar = document.getElementById('blog-bulk-bar')
   const selectedCountEl = document.getElementById('blog-selected-count')

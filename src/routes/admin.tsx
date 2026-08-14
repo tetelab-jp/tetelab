@@ -283,7 +283,7 @@ admin.get('/admin/salons', async (c) => {
       </form>
 
       <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
-        <div class="overflow-x-auto">
+        <div class="hidden md:block overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="bg-gray-50 text-gray-500 text-xs">
               <tr>
@@ -353,6 +353,58 @@ admin.get('/admin/salons', async (c) => {
               )}
             </tbody>
           </table>
+        </div>
+
+        <div class="md:hidden divide-y divide-gray-50">
+          {salons.map((salon) => (
+            <div class="p-4 space-y-2">
+              <div class="flex items-center justify-between gap-2">
+                <span class="text-xs text-gray-400">No.{salon.seq}</span>
+                <form method="post" action={`/admin/salons/${salon.id}/toggle-active`}>
+                  <input type="hidden" name="page" value={page} />
+                  <input type="hidden" name="q" value={q} />
+                  <label class="flex items-center gap-2 cursor-pointer w-fit">
+                    <span class="relative inline-flex items-center flex-shrink-0">
+                      <input
+                        type="checkbox"
+                        checked={salon.is_active === 1}
+                        onchange="this.form.submit()"
+                        class="sr-only peer"
+                      />
+                      <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                      <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+                    </span>
+                    <span
+                      class={
+                        'text-xs font-semibold ' + (salon.is_active === 1 ? 'text-pink-600' : 'text-gray-400')
+                      }
+                    >
+                      {salon.is_active === 1 ? '契約中' : '契約外'}
+                    </span>
+                  </label>
+                </form>
+              </div>
+              <p class="font-medium text-gray-800">{salon.salon_name || '(未設定)'}</p>
+              <p class="text-xs text-gray-500">{salon.email}</p>
+              <p class="text-xs text-gray-400">登録日: {String(salon.created_at).slice(0, 10)}</p>
+              <form
+                method="post"
+                action={`/admin/salons/${salon.id}/impersonate`}
+                target="_blank"
+                onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
+              >
+                <button
+                  type="submit"
+                  class="w-full px-3 py-2 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition"
+                >
+                  <i class="fas fa-right-to-bracket mr-1"></i>なりすましログイン
+                </button>
+              </form>
+            </div>
+          ))}
+          {salons.length === 0 && (
+            <p class="px-4 py-8 text-center text-sm text-gray-400">該当するサロンがありません</p>
+          )}
         </div>
       </div>
 
