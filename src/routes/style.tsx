@@ -338,7 +338,7 @@ function StyleListSection({
                   type="number"
                   min="1"
                   value={idx + 1}
-                  class="style-order-input hidden md:block w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5"
+                  class="style-order-input hidden md:block w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   data-image-id={s.id}
                 />
                 <input
