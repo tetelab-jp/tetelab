@@ -34,7 +34,7 @@ export async function requireAuth(
 
   // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled FROM users WHERE id = ?'
+    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled, active_salon_id, salon_slot_limit FROM users WHERE id = ?'
   )
     .bind(payload.sub)
     .first<AppUser>()

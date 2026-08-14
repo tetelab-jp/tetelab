@@ -116,6 +116,24 @@ auth.post('/signup', async (c) => {
     .run()
 
   const userId = result.meta.last_row_id as number
+
+  // 複数サロンワークスペース対応 フェーズ1: 新規登録時点で「1つ目のサロン
+  // ワークスペース」をプレースホルダーとして作成し、active_salon_idを確定
+  // させる。salon_key=NULLのため、後日サロンボード連携を実際に同期すると
+  // upsertSalonInfo()の「salon_key一致→無ければsalon_name一致」フォール
+  // バックでこの行にUPDATEされる(新規行は増えない、既存のsrc/index.tsx
+  // フェーズ0バックフィルと同じロジック)。
+  const placeholderSalon = await c.env.DB.prepare(
+    `INSERT INTO salonboard_salons (user_id, salon_key, salon_name, is_active_workspace, activated_at)
+     VALUES (?, NULL, ?, 1, CURRENT_TIMESTAMP)`
+  )
+    .bind(userId, salonName || '(未設定)')
+    .run()
+  const placeholderSalonId = placeholderSalon.meta.last_row_id as number
+  await c.env.DB.prepare('UPDATE users SET active_salon_id = ? WHERE id = ?')
+    .bind(placeholderSalonId, userId)
+    .run()
+
   await setSession(c, userId, email)
   return c.redirect('/dashboard')
 })
