@@ -1630,7 +1630,7 @@ style.post('/style/schedule/clear-pause', async (c) => {
 // 判断で今すぐ復旧できるようにする(sweepStaleJobsの15分を待たない)。
 style.post('/style/schedule/reset-stuck-jobs', async (c) => {
   const user = c.get('user')
-  const clearedCount = await resetStuckJobsForUser(c.env, user.id)
+  const clearedCount = await resetStuckJobsForUser(c.env, user.id, user.active_salon_id)
   return c.redirect(`/style/schedule?cleared=${clearedCount}`)
 })
 

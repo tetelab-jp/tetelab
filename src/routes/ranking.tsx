@@ -23,14 +23,15 @@ const MEASURE_MAX_PAGES = 5
 async function runTemplates(
   env: Bindings,
   userId: number,
+  salonId: number | null,
   runId: number,
   queryIds?: number[]
 ): Promise<void> {
   try {
     let sql =
       `SELECT id, salon_name, service_area_cd, middle_area_cd, small_area_cd, area_label
-       FROM ranking_queries WHERE user_id = ? AND is_active = 1`
-    const binds: unknown[] = [userId]
+       FROM ranking_queries WHERE user_id = ? AND salon_id = ? AND is_active = 1`
+    const binds: unknown[] = [userId, salonId]
     if (queryIds && queryIds.length > 0) {
       sql += ` AND id IN (${queryIds.map(() => '?').join(',')})`
       binds.push(...queryIds)
@@ -63,12 +64,13 @@ async function runTemplates(
       ) => {
         await env.DB.prepare(
           `INSERT INTO ranking_results
-            (user_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
+            (user_id, salon_id, run_id, query_id, salon_name, area_label, service_area_cd, middle_area_cd, small_area_cd,
              area_scope, keyword, rank, result_count, pages_scanned, matched_sln_id, status, error_message)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             userId,
+            salonId,
             runId,
             q.id,
             q.salon_name,
@@ -130,13 +132,13 @@ async function runTemplates(
 }
 
 /** 定期測定: あるユーザーの有効な全テンプレートを1runでまとめて計測 */
-async function runScheduledForUser(env: Bindings, userId: number): Promise<void> {
+async function runScheduledForUser(env: Bindings, userId: number, salonId: number | null): Promise<void> {
   const run = await env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'scheduled', 'running')`
+    `INSERT INTO ranking_runs (user_id, salon_id, trigger, status) VALUES (?, ?, 'scheduled', 'running')`
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .run()
-  await runTemplates(env, userId, run.meta.last_row_id as number)
+  await runTemplates(env, userId, salonId, run.meta.last_row_id as number)
 }
 
 /** UTCの "YYYY-MM-DD HH:MM:SS" 文字列を JST の Date に変換 */
@@ -555,15 +557,10 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
     keywordsList = results.map((r) => r.keyword)
   }
 
-  // 2026-08-14追記: ranking_runs/ranking_resultsはrunTemplates()(定期/手動測定の
-  // 実行エンジン)のみが書き込む。同エンジンのsalon_id対応はフェーズ5でまとめて
-  // 行うため、それまではこの2テーブルへのuser_id以外の絞り込みを追加しない
-  // (salon_id未設定の新規行が絞り込みで一致しなくなり、測定結果が消えて
-  // 見える不具合を防ぐため)。
   const runningRun = await c.env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND status = 'running'`
+    `SELECT COUNT(*) AS n FROM ranking_runs WHERE user_id = ? AND salon_id = ? AND status = 'running'`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ n: number }>()
   const hasRunning = (runningRun?.n || 0) > 0
 
@@ -738,20 +735,20 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
   // (結果の重複・HPBへの過剰アクセスにつながる)。既に実行中のrunが
   // あれば新規開始を拒否する。
   const runningRun = await c.env.DB.prepare(
-    `SELECT id FROM ranking_runs WHERE user_id = ? AND status = 'running' LIMIT 1`
+    `SELECT id FROM ranking_runs WHERE user_id = ? AND salon_id = ? AND status = 'running' LIMIT 1`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .first<{ id: number }>()
   if (runningRun) {
     return c.json({ success: false, error: '既に計測が実行中です。完了までお待ちください' }, 409)
   }
 
   const run = await c.env.DB.prepare(
-    `INSERT INTO ranking_runs (user_id, trigger, status) VALUES (?, 'manual', 'running')`
+    `INSERT INTO ranking_runs (user_id, salon_id, trigger, status) VALUES (?, ?, 'manual', 'running')`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .run()
-  void runTemplates(c.env, user.id, run.meta.last_row_id as number, [primaryQuery.id])
+  void runTemplates(c.env, user.id, user.active_salon_id, run.meta.last_row_id as number, [primaryQuery.id])
 
   return c.json({ success: true })
 })
@@ -1178,11 +1175,18 @@ ranking.post('/api/cron/run-ranking', async (c) => {
   // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(seo_enabled=0)にされた
   // サロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT s.user_id, s.frequency, s.run_time, s.last_run_at
+    `SELECT s.user_id, s.salon_id, s.frequency, s.run_time, s.last_run_at
      FROM ranking_schedules s
      JOIN users u ON u.id = s.user_id
-     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1`
-  ).all<{ user_id: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
+     JOIN salonboard_salons sb ON sb.id = s.salon_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1 AND sb.is_active_workspace = 1`
+  ).all<{
+    user_id: number
+    salon_id: number
+    frequency: string
+    run_time: string | null
+    last_run_at: string | null
+  }>()
 
   const triggered: number[] = []
   for (const s of schedules) {
@@ -1200,11 +1204,13 @@ ranking.post('/api/cron/run-ranking', async (c) => {
     }
 
     await c.env.DB.prepare(
-      `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+      `UPDATE ranking_schedules SET last_run_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(s.user_id)
+      .bind(s.user_id, s.salon_id)
       .run()
-    void runScheduledForUser(c.env, s.user_id).catch((e) => console.error('runScheduledForUser failed:', e))
+    void runScheduledForUser(c.env, s.user_id, s.salon_id).catch((e) =>
+      console.error('runScheduledForUser failed:', e)
+    )
     triggered.push(s.user_id)
   }
 

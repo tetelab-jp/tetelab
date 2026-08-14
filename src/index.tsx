@@ -554,6 +554,26 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(複数サロンワークスペース フェーズ0: バックフィル)に失敗しました:', err)
   }
   try {
+    // 複数サロンワークスペース対応 フェーズ5仕上げ: salon_profiles / style_post_schedules /
+    // ranking_schedules は元々「1 user_id = 1行」前提のUNIQUE(user_id)制約を持っていた。
+    // 2サロン目を有効化しても、アプリ側の(user_id, salon_id)存在チェック後のINSERTが
+    // この制約に阻まれて失敗する(2サロン目のプロフィール/スケジュール保存が常に
+    // 失敗するバグ)ため、バックフィル完了後の今、UNIQUE(user_id)をUNIQUE(salon_id)へ
+    // 差し替える(1物理サロンにつき1行、という制約に置き換わるだけで意味は保たれる)。
+    const uniqueSalonIdTables = ['salon_profiles', 'style_post_schedules', 'ranking_schedules']
+    for (const table of uniqueSalonIdTables) {
+      await bindings.DB.prepare(`ALTER TABLE ${table} DROP CONSTRAINT IF EXISTS ${table}_user_id_key`).run()
+      await bindings.DB.prepare(
+        `DO $$ BEGIN
+           ALTER TABLE ${table} ADD CONSTRAINT ${table}_salon_id_key UNIQUE (salon_id);
+         EXCEPTION WHEN duplicate_object OR duplicate_table THEN NULL;
+         END $$;`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(複数サロンワークスペース: user_id→salon_id UNIQUE制約差替)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

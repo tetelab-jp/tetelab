@@ -196,9 +196,9 @@ automation.get('/style/test-run', requireAuth, async (c) => {
      FROM execution_logs l
      LEFT JOIN styles s ON s.id = l.style_id
      LEFT JOIN posts p ON p.id = l.post_id
-     WHERE l.user_id = ? ORDER BY l.id DESC LIMIT 30`
+     WHERE l.user_id = ? AND l.salon_id = ? ORDER BY l.id DESC LIMIT 30`
   )
-    .bind(user.id)
+    .bind(user.id, user.active_salon_id)
     .all<{
       id: number
       status: string
@@ -368,7 +368,7 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, async (c) => {
   const user = c.get('user')
   try {
-    const summary = await runStyleAutomationForUser(c.env, user.id, 'manual-test')
+    const summary = await runStyleAutomationForUser(c.env, user.id, user.active_salon_id, 'manual-test')
     return c.json({
       success: summary.dispatchedCount > 0,
       dispatchedCount: summary.dispatchedCount,
@@ -388,7 +388,7 @@ automation.post('/api/style/:id/retry', requireAuth, requireStyleEnabled, async 
   const user = c.get('user')
   const styleId = Number(c.req.param('id'))
   try {
-    const result = await retryStylePost(c.env, user.id, styleId)
+    const result = await retryStylePost(c.env, user.id, user.active_salon_id, styleId)
     return c.json({ success: result.outcome === 'dispatched', outcome: result.outcome })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
@@ -404,10 +404,10 @@ automation.get('/api/automation/jobs/:id', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, salon_id, job_token, status FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; style_id: number; user_id: number; job_token: string; status: string }>()
+    .first<{ id: number; style_id: number; user_id: number; salon_id: number | null; job_token: string; status: string }>()
 
   if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
@@ -429,6 +429,19 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     }>()
   if (!cred || !c.env.ENCRYPTION_KEY) {
     return c.json({ error: 'credentials not available' }, 500)
+  }
+
+  // 複数サロンワークスペース対応: ジョブが属するワークスペース(job.salon_id)の
+  // STORE_IDを使う(salon_credentials.target_store_idは1ユーザーにつき1件しか
+  // 持てないため、2サロン目のジョブに対して使うと誤ったサロンに投稿してしまう)。
+  // salon_idが無い(移行前の異常系)場合のみ、従来通りcred.target_store_idに
+  // フォールバックする。
+  let targetStoreId = cred.target_store_id || null
+  if (job.salon_id) {
+    const salon = await c.env.DB.prepare('SELECT salon_key FROM salonboard_salons WHERE id = ?')
+      .bind(job.salon_id)
+      .first<{ salon_key: string | null }>()
+    if (salon?.salon_key) targetStoreId = salon.salon_key
   }
 
   const row = await getStyleRowForJob(c.env, job.style_id)
@@ -462,7 +475,7 @@ automation.get('/api/automation/jobs/:id', async (c) => {
     loginId,
     password,
     proxySessionCandidates,
-    targetStoreId: cred.target_store_id || null,
+    targetStoreId,
     style: {
       styleImageId: row.id,
       imageBase64: arrayBufferToBase64(imageBuffer),
@@ -496,13 +509,14 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, style_id, user_id, job_token, status, run_id, is_retry, is_auto_cycle FROM style_post_jobs WHERE id = ?`
+    `SELECT id, style_id, user_id, salon_id, job_token, status, run_id, is_retry, is_auto_cycle FROM style_post_jobs WHERE id = ?`
   )
     .bind(jobId)
     .first<{
       id: number
       style_id: number
       user_id: number
+      salon_id: number | null
       job_token: string
       status: string
       run_id: number | null
@@ -521,14 +535,14 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   const body = await c.req.json<JobResultBody>().catch(() => null)
   if (!body) return c.json({ error: 'invalid body' }, 400)
 
-  const { style_id: styleId, user_id: userId } = job
+  const { style_id: styleId, user_id: userId, salon_id: salonId } = job
   const diagnostics = body.logs && body.logs.length > 0 ? ` / 投稿ログ: ${body.logs.join(' | ')}` : ''
   const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
   // 2026-08-13追記(ユーザー指定): 成功時も、完了までの経過(ログイン〜各工程の
   // ログ)を「投稿ログ」として残す(従来は固定文言のみで経過が分からなかった)。
   const registerSuccessMessage = ('スタイル登録成功' + diagnostics).slice(0, 10000)
   const reflectSuccessMessage = ('反映申請成功' + diagnostics).slice(0, 10000)
-  const styleNo = await getStyleNo(c.env, userId, styleId)
+  const styleNo = await getStyleNo(c.env, userId, salonId, styleId)
 
   // ログイン成否をsalon_credentials.connection_statusへ反映(ダッシュボードの連携ステータス表示用)
   if (body.step === 'login' && !body.success) {
@@ -552,16 +566,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo, registerSuccessMessage)
+      .bind(userId, salonId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'request_reflection', 'success', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'request_reflection', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo, reflectSuccessMessage)
+      .bind(userId, salonId, styleId, styleNo, reflectSuccessMessage)
       .run()
     jobStatus = 'success'
   } else if (body.step === 'reflect') {
@@ -574,16 +588,16 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(reflectStatus, messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'success', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'register_style', 'success', ?)`
     )
-      .bind(userId, styleId, styleNo, registerSuccessMessage)
+      .bind(userId, salonId, styleId, styleNo, registerSuccessMessage)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'request_reflection', ?, ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'request_reflection', ?, ?)`
     )
-      .bind(userId, styleId, styleNo, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
+      .bind(userId, salonId, styleId, styleNo, body.blocked ? 'blocked' : 'failure', `反映申請${body.blocked ? 'ブロック' : '失敗'}: ${messageWithDiagnostics}`)
       .run()
     jobStatus = reflectStatus
   } else {
@@ -597,10 +611,10 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .bind(messageWithDiagnostics, styleId)
       .run()
     await c.env.DB.prepare(
-      `INSERT INTO execution_logs (post_id, user_id, style_id, style_no, execution_type, status, message)
-       VALUES (NULL, ?, ?, ?, 'register_style', 'failure', ?)`
+      `INSERT INTO execution_logs (post_id, user_id, salon_id, style_id, style_no, execution_type, status, message)
+       VALUES (NULL, ?, ?, ?, ?, 'register_style', 'failure', ?)`
     )
-      .bind(userId, styleId, styleNo, `スタイル登録失敗: ${messageWithDiagnostics}`)
+      .bind(userId, salonId, styleId, styleNo, `スタイル登録失敗: ${messageWithDiagnostics}`)
       .run()
     jobStatus = 'failed'
   }
@@ -640,9 +654,9 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
     await c.env.DB
       .prepare(
         `UPDATE style_post_schedules SET retry_pending_style_id = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ? AND retry_pending_style_id IS NULL`
+         WHERE user_id = ? AND salon_id = ? AND retry_pending_style_id IS NULL`
       )
-      .bind(styleId, userId)
+      .bind(styleId, userId, job.salon_id)
       .run()
       .catch(() => {})
   }
@@ -690,20 +704,25 @@ automation.post('/api/cron/run-style-posts', async (c) => {
   // をrunNextStyleForUser()内で判定し、タイミングであれば1件だけ処理する。
   // 管理者サイトで契約OFF(is_active=0)またはスタイル機能OFF(style_enabled=0)に
   // されたサロンはcronの対象から除外する。
+  // 複数サロンワークスペース対応: 1ユーザーが複数のサロンワークスペースを
+  // 持つ場合、それぞれ独立して「今が投稿タイミングか」を判定・処理する
+  // (1ユーザー1件ではなく1ワークスペース1件のループに変更)。salon_idが
+  // 無い(移行直後で稀に起こりうる異常系)の行は対象外にする。
   const { results: schedules } = await c.env.DB.prepare(
-    `SELECT s.user_id FROM style_post_schedules s
+    `SELECT s.user_id, s.salon_id FROM style_post_schedules s
      JOIN users u ON u.id = s.user_id
-     WHERE s.enabled = 1 AND u.is_active = 1 AND u.style_enabled = 1`
-  ).all<{ user_id: number }>()
+     JOIN salonboard_salons sb ON sb.id = s.salon_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.style_enabled = 1 AND sb.is_active_workspace = 1`
+  ).all<{ user_id: number; salon_id: number }>()
 
   const targets = schedules || []
 
   const outcomes: any[] = []
   for (const t of targets) {
     try {
-      const summary = await runNextStyleForUser(c.env, t.user_id, nowLabel)
+      const summary = await runNextStyleForUser(c.env, t.user_id, t.salon_id, nowLabel)
       if (summary) {
-        outcomes.push({ userId: t.user_id, ...summary })
+        outcomes.push({ userId: t.user_id, salonId: t.salon_id, ...summary })
       } else {
         outcomes.push({ userId: t.user_id, skipped: true })
       }
