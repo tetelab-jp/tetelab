@@ -306,6 +306,19 @@ function StyleListSection({
           >
             全解除
           </button>
+          {!isTemplateMode && (
+            <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
+              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">
+                すべて
+              </button>
+              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">
+                ONのみ
+              </button>
+              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">
+                OFFのみ
+              </button>
+            </div>
+          )}
           {showCreateLink && (
             <a
               href="/style/new"
@@ -325,6 +338,7 @@ function StyleListSection({
         ) : (
           <>
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
+              <span class="w-5 flex-shrink-0"></span>
               <span class="w-10 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0"></span>
               <span class="w-20 flex-shrink-0">画像</span>
@@ -333,12 +347,21 @@ function StyleListSection({
             </div>
             <div id="style-list" class="divide-y divide-gray-100">
             {styles.map((s, idx) => (
-              <div class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3" data-image-id={s.id}>
+              <div
+                class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3"
+                data-image-id={s.id}
+                data-auto-post={s.auto_post_enabled_flag === 1 ? '1' : '0'}
+              >
+                {!isTemplateMode && (
+                  <span class="style-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 px-1" data-image-id={s.id}>
+                    <i class="fas fa-grip-lines"></i>
+                  </span>
+                )}
                 <input
                   type="number"
                   min="1"
                   value={idx + 1}
-                  class="style-order-input hidden md:block w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                  class="style-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                   data-image-id={s.id}
                 />
                 <input

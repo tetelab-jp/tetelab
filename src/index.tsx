@@ -403,6 +403,15 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_articles)に失敗しました:', err)
   }
   try {
+    // 2026-08-14再追記(ユーザー指定): スタイルのauto_post_enabled_flagと同様、
+    // 記事単位で自動投稿の対象/対象外を切り替えられるようにする。
+    await bindings.DB.prepare(
+      `ALTER TABLE blog_articles ADD COLUMN IF NOT EXISTS auto_post_enabled_flag INTEGER NOT NULL DEFAULT 1`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_articles.auto_post_enabled_flag)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

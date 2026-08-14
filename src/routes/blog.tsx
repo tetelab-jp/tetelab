@@ -880,6 +880,7 @@ type ArticleListRow = {
   month_tags_json: string
   last_posted_at: string | null
   post_count: number
+  auto_post_enabled_flag: number
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -901,6 +902,7 @@ blog.get('/blog/articles', async (c) => {
     `SELECT
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.status, a.month_tags_json, a.last_posted_at, a.post_count,
+       a.auto_post_enabled_flag,
        bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
      LEFT JOIN blog_categories bc ON bc.id = a.category_id
@@ -937,6 +939,8 @@ blog.get('/blog/articles', async (c) => {
     const monthTags: number[] = JSON.parse(candidate.month_tags_json || '[]')
     if (candidate.status !== 'approved') {
       calendarDays.push({ dateLabel, article: candidate, skipReason: '未承認のためスキップ' })
+    } else if (candidate.auto_post_enabled_flag !== 1) {
+      calendarDays.push({ dateLabel, article: candidate, skipReason: '自動投稿OFFのためスキップ' })
     } else if (monthTags.length > 0 && !monthTags.includes(d.getMonth() + 1)) {
       calendarDays.push({ dateLabel, article: candidate, skipReason: '月タグ不一致のためスキップ' })
     } else {
@@ -999,9 +1003,16 @@ blog.get('/blog/articles', async (c) => {
 
       <div data-tab-panel="list">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <button type="button" id="blog-rearrange-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600">
-            <i class="fas fa-shuffle mr-1"></i>まとまりの順番に並び替える
-          </button>
+          <div class="flex items-center gap-2 flex-wrap">
+            <button type="button" id="blog-rearrange-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600">
+              <i class="fas fa-shuffle mr-1"></i>まとまりの順番に並び替える
+            </button>
+            <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
+              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">すべて</button>
+              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
+              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
+            </div>
+          </div>
           <span class="text-xs text-gray-400">まとまり1→2→3→…の順に1記事ずつ交互に並び替えます</span>
         </div>
 
@@ -1017,10 +1028,13 @@ blog.get('/blog/articles', async (c) => {
           <button type="button" id="blog-bulk-coupon-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">設定</button>
         </div>
 
-        <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+        <div id="blog-article-list" class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
           {articles.length === 0 && <p class="text-sm text-gray-400 p-6">まだ記事がありません。生成テンプレートから写真をアップロードしてください。</p>}
           {articles.map((a) => (
-            <div class="flex items-start gap-3 p-4">
+            <div class="flex items-start gap-3 p-4" data-article-id={a.id} data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}>
+              <span class="blog-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-none mt-1 px-1" data-article-id={a.id}>
+                <i class="fas fa-grip-lines"></i>
+              </span>
               <input type="checkbox" class="blog-article-checkbox mt-1 accent-pink-500" data-article-id={a.id} />
               <input
                 type="number"
@@ -1029,6 +1043,15 @@ blog.get('/blog/articles', async (c) => {
                 value={a.no}
                 min={1}
               />
+              <label class="flex flex-col items-center mt-1 flex-none" title="自動投稿の対象">
+                <input
+                  type="checkbox"
+                  class="blog-auto-post-toggle accent-pink-500"
+                  data-article-id={a.id}
+                  checked={a.auto_post_enabled_flag === 1}
+                />
+                <span class="text-[10px] text-gray-400 mt-0.5">自動投稿</span>
+              </label>
               {a.image_r2_key ? (
                 <img src={`/blog/article/${a.id}/image`} class="w-14 h-14 rounded-lg object-cover bg-gray-50 flex-none" />
               ) : (
@@ -1145,6 +1168,17 @@ blog.get('/blog/articles', async (c) => {
     </PageLayout>,
     { title: '投稿記事一覧' }
   )
+})
+
+blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
+  const user = c.get('user')
+  const { articleId, enabled } = await c.req.json<{ articleId: number; enabled: boolean }>()
+
+  await c.env.DB.prepare('UPDATE blog_articles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ?')
+    .bind(enabled ? 1 : 0, articleId, user.id)
+    .run()
+
+  return c.json({ success: true })
 })
 
 blog.post('/api/blog/articles/reorder', async (c) => {
