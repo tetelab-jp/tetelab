@@ -360,19 +360,20 @@ function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) 
   return <span class={`${cls} text-gray-700 whitespace-nowrap`}>{cell.resultCount}店舗中</span>
 }
 
-// 最新列専用: 順位バッジの下に店舗数を改行して表示する(中エリア/小エリア
-// それぞれ1列)。過去列(1行のみ)と行の高さが揃うと、この列の順位バッジは
-// 2行ブロックの上寄りに来てしまい過去列の順位より高い位置にずれるため、
-// 順位の上にも店舗数と同じ高さの非表示スペーサーを置いてブロックを
-// 上下対称にし、順位バッジ自体が行の高さの中心に来るようにしている。
+// 最新列専用: 順位バッジの下に店舗数を表示する(中エリア/小エリアそれぞれ
+// 1列)。2026-08-15追記(ユーザー指定): 対策キーワード列・過去列・最新列の
+// 順位の高さをすべて対策キーワード列の高さに合わせる必要があるため、店舗数を
+// 通常のレイアウトの流れに乗せて2行分の高さを取らせるのはNG(行全体が
+// 対策キーワード列より高くなってしまう)。店舗数をposition:absoluteで
+// 順位バッジの下に重ねて配置し、通常の高さ計算(=行の高さ)には影響させない
+// ことで、順位バッジ自体は対策キーワード・過去列と全く同じ高さに揃う。
 function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
   return (
-    <span class="inline-flex flex-col items-center gap-0.5">
-      <span class="invisible" aria-hidden="true">
+    <span class="relative inline-flex items-center justify-center">
+      <RankPivotCell current={current} prev={prev} size={size} />
+      <span class="absolute top-full left-1/2 -translate-x-1/2 pt-0.5">
         <StoreCountCell cell={current} size={size} />
       </span>
-      <RankPivotCell current={current} prev={prev} size={size} />
-      <StoreCountCell cell={current} size={size} />
     </span>
   )
 }
