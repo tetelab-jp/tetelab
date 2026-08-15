@@ -265,6 +265,29 @@ document.addEventListener('DOMContentLoaded', () => {
       '<option value="">未設定</option>' +
       data.categories.map((c) => `<option value="${c.id}"${c.id === a.category_id ? ' selected' : ''}>${c.name}</option>`).join('')
 
+    // HPBブログカテゴリ(SALON BOARD投稿の必須項目)は記事カテゴリ単位で
+    // 生成テンプレート画面から設定するため、このモーダルの「カテゴリ」欄
+    // (記事カテゴリの選択)とは別物であることが分かりづらい。選択中の
+    // 記事カテゴリのHPBブログカテゴリ設定状況をヒントとして表示する。
+    const hpbHint = document.getElementById('rv-hpb-category-hint')
+    function updateHpbHint() {
+      const selectedId = Number(categorySelect.value) || null
+      const cat = data.categories.find((c) => c.id === selectedId)
+      if (!selectedId) {
+        hpbHint.textContent = ''
+        return
+      }
+      if (cat && cat.hpb_category_value) {
+        hpbHint.textContent = 'HPBブログカテゴリ: ' + cat.hpb_category_value
+        hpbHint.className = 'text-xs mt-1 text-gray-400'
+      } else {
+        hpbHint.innerHTML = 'HPBブログカテゴリ未設定(<a href="/blog/template?category=' + selectedId + '" class="underline">生成テンプレートで設定</a>)'
+        hpbHint.className = 'text-xs mt-1 text-red-500'
+      }
+    }
+    categorySelect.onchange = updateHpbHint
+    updateHpbHint()
+
     const stylistSelect = document.getElementById('rv-stylist')
     stylistSelect.innerHTML =
       '<option value="">未設定</option>' +
