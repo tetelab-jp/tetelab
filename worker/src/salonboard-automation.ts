@@ -1247,10 +1247,20 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     throw new Error('「確認する」ボタン(#confirm)が見つかりませんでした')
   }
   const urlBeforeConfirm = page.url()
-  await Promise.all([
-    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
-    confirmHandle.click()
-  ])
+  await confirmHandle.click()
+
+  // 2026-08-15追記(診断強化): クリック直後に一瞬だけ表示され、その後
+  // 自動的に消えるトースト等のバリデーション警告を捕捉するため、ページ
+  // 遷移を待つ前に短い遅延を挟んでスナップショットを取っておく。従来は
+  // waitForNavigation(最大30秒)→waitForSelector('#reflect')(最大15秒)の
+  // 完了を待ってから初めてページ内容を読み取っていたため、クリック直後
+  // に出て数秒で消えるメッセージを取りこぼしていた可能性がある(HTML5
+  // バリデーションにも[class*="error"]要素にも引っかからない失敗が
+  // 実機ログで確認されたため)。
+  await new Promise((resolve) => setTimeout(resolve, 1200))
+  const earlySnapshot = await page.evaluate(() => document.body.innerText.slice(0, 1500)).catch(() => null)
+
+  await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 28000 }).catch(() => null)
 
   const reflectHandle = await page.waitForSelector('#reflect', { timeout: 15000 }).catch(() => null)
   if (!reflectHandle) {
@@ -1276,7 +1286,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
       .catch(() => null)
     const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 2000)).catch(() => '(取得失敗)')
     throw new Error(
-      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'} / 確認ボタン押下後に画面遷移=${navigated ? 'あり' : 'なし'} / HTML5バリデーションエラー=${validationInfo?.invalidSummary || 'なし'} / エラー表示要素=${validationInfo?.errorTexts || 'なし'})。url=${currentUrl} 画面内容=${bodySnippet}`
+      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'} / 確認ボタン押下後に画面遷移=${navigated ? 'あり' : 'なし'} / HTML5バリデーションエラー=${validationInfo?.invalidSummary || 'なし'} / エラー表示要素=${validationInfo?.errorTexts || 'なし'})。url=${currentUrl} クリック約1.2秒後の画面内容=${earlySnapshot ?? '(取得失敗)'} 画面内容=${bodySnippet}`
     )
   }
 
