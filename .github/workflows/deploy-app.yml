@@ -225,6 +225,31 @@ jobs:
           ' task-definition.json > task-definition.fixed.json
           mv task-definition.fixed.json task-definition.json
 
+      # Add admin secrets if missingと同じ理由・同じパターン。ブログ記事のAI
+      # 自動生成(src/lib/ai-generate.ts)用のOPENAI_API_KEY。
+      - name: Add OpenAI API key secret if missing
+        run: |
+          OPENAI_API_KEY_ARN=$(aws secretsmanager describe-secret --secret-id "salonboard-worker/openai-api-key" --query ARN --output text 2>/dev/null || echo "")
+          if [ -z "$OPENAI_API_KEY_ARN" ]; then
+            echo "openai-api-keyシークレットが未作成のためスキップします(terraform apply後に反映されます)"
+            exit 0
+          fi
+          jq --arg name "$ECS_CONTAINER_NAME" --arg arn "$OPENAI_API_KEY_ARN" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .secrets = (
+                  (.secrets // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  (if ($names | index("OPENAI_API_KEY"))
+                    then ($existing | map(if .name == "OPENAI_API_KEY" then .valueFrom = $arn else . end))
+                    else $existing + [{name: "OPENAI_API_KEY", valueFrom: $arn}]
+                  end)
+                )
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
       - name: Render new task definition with the built image
         id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1

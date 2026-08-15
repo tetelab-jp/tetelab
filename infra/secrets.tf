@@ -74,6 +74,14 @@ resource "aws_secretsmanager_secret_version" "admin_initial_password" {
   secret_string = var.admin_initial_password
 }
 
+resource "aws_secretsmanager_secret" "openai_api_key" {
+  name = "${var.project_name}/openai-api-key"
+}
+resource "aws_secretsmanager_secret_version" "openai_api_key" {
+  secret_id     = aws_secretsmanager_secret.openai_api_key.id
+  secret_string = var.openai_api_key
+}
+
 # 2026-08-13追記(監査指摘の是正): aws-ecs.ts/sns-alert.tsがECS RunTask/SNS
 # Publishを呼ぶための長期静的アクセスキー(aws_access_key_id/aws_secret_access_key)
 # は、アプリ自身のECSタスクロール(app_task)のアンビエント認証情報に置き換え
@@ -91,7 +99,8 @@ data "aws_iam_policy_document" "task_execution_secrets" {
       aws_secretsmanager_secret.encryption_key.arn,
       aws_secretsmanager_secret.cron_secret.arn,
       aws_secretsmanager_secret.admin_jwt_secret.arn,
-      aws_secretsmanager_secret.admin_initial_password.arn
+      aws_secretsmanager_secret.admin_initial_password.arn,
+      aws_secretsmanager_secret.openai_api_key.arn
     ]
   }
 }

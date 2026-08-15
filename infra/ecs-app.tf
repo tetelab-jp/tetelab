@@ -140,7 +140,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "ENCRYPTION_KEY", valueFrom = aws_secretsmanager_secret.encryption_key.arn },
         { name = "CRON_SECRET", valueFrom = aws_secretsmanager_secret.cron_secret.arn },
         { name = "ADMIN_JWT_SECRET", valueFrom = aws_secretsmanager_secret.admin_jwt_secret.arn },
-        { name = "ADMIN_INITIAL_PASSWORD", valueFrom = aws_secretsmanager_secret.admin_initial_password.arn }
+        { name = "ADMIN_INITIAL_PASSWORD", valueFrom = aws_secretsmanager_secret.admin_initial_password.arn },
+        { name = "OPENAI_API_KEY", valueFrom = aws_secretsmanager_secret.openai_api_key.arn }
       ]
       logConfiguration = {
         logDriver = "awslogs"
