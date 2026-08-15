@@ -1301,22 +1301,40 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   }
   const urlBeforeConfirm = page.url()
 
-  // 2026-08-15追記(診断強化): クリックしても画面が一切反応しない(遷移も
-  // 無ければエラー表示も無い)障害が実機で複数回再現した。画像アップロード
-  // モーダルを閉じた後も透明なオーバーレイ等がボタンの上に残っていて
-  // クリックを奪っている可能性を切り分けるため、ボタン中心の座標で実際に
-  // クリックを受け取る要素が#confirm自身かどうかを事前に確認しておく。
-  const confirmObstruction = await page
-    .evaluate(() => {
-      const btn = document.getElementById('confirm')
-      if (!btn) return null
-      const rect = btn.getBoundingClientRect()
-      const topEl = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
-      if (!topEl) return '(elementFromPointがnull)'
-      if (topEl === btn || btn.contains(topEl)) return null
-      return `${topEl.tagName}${topEl.id ? '#' + topEl.id : ''}${topEl.className ? '.' + String(topEl.className).replace(/\s+/g, '.') : ''}`
-    })
-    .catch(() => '(取得失敗)')
+  // 2026-08-15追記(実機で原因確定・対処): クリックしても画面が一切反応しない
+  // (遷移も無ければエラー表示も無い)障害が実機ログで確認され、原因は画像
+  // アップロードモーダル(.imageUploaderModal)がクローズボタン押下後も
+  // 残留し、#confirmの上に重なってクリックを奪っていたことだと判明した
+  // (警告ログに「DIV.imageUploaderModal.jscImageUploaderModal」が実際に
+  // 記録された)。ボタン中心の座標で実際にクリックを受け取る要素を確認し、
+  // #confirm以外であれば、残留モーダルのクローズボタンを再度クリックする
+  // (無ければEscapeキー)ことで退かしてから確認ボタンを押す。
+  const clearConfirmObstruction = async (): Promise<string | null> => {
+    return page
+      .evaluate(() => {
+        const btn = document.getElementById('confirm')
+        if (!btn) return null
+        const rect = btn.getBoundingClientRect()
+        const topEl = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+        if (!topEl) return '(elementFromPointがnull)'
+        if (topEl === btn || btn.contains(topEl)) return null
+        return `${topEl.tagName}${topEl.id ? '#' + topEl.id : ''}${topEl.className ? '.' + String(topEl.className).replace(/\s+/g, '.') : ''}`
+      })
+      .catch(() => '(取得失敗)')
+  }
+
+  let confirmObstruction = await clearConfirmObstruction()
+  for (let attempt = 0; confirmObstruction && attempt < 3; attempt++) {
+    log(`警告: 「確認する」ボタンの位置に別の要素(${confirmObstruction})が重なっています。退かしてから再試行します...`)
+    const modalCloseBtn = await page.$('.imageUploaderModalTopCloseButton')
+    if (modalCloseBtn) {
+      await modalCloseBtn.click().catch(() => {})
+    } else {
+      await page.keyboard.press('Escape').catch(() => {})
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    confirmObstruction = await clearConfirmObstruction()
+  }
   if (confirmObstruction) {
     log(`警告: 「確認する」ボタンの位置に別の要素(${confirmObstruction})が重なっている可能性があります`)
   }
