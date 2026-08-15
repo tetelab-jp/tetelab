@@ -297,10 +297,15 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
   // 2026-08-13変更: 背景付きバッジ(ピンクグラデーション+白文字)は数字が
   // 見づらいという指摘があったため、背景無し・ピンク文字のみのシンプルな
   // 表示に変更した。
+  // 2026-08-15追記(ユーザー指定): 順位の文字サイズを大きくした際、行の高さが
+  // 対策キーワード列(text-sm/text-xs)の行の高さより高くなってしまっていた
+  // (表のサイズは変えない、という指示に反する)。文字サイズはそのままに、
+  // line-heightだけを対策キーワード列と同じ値(text-sm=leading-5,
+  // text-xs=leading-4)に固定し、行の高さは変えずに文字だけ大きく見せる。
   const badgeCls =
     size === 'lg'
-      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-xl'
-      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-lg'
+      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-xl leading-5'
+      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-lg leading-4'
 
   if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
   if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
