@@ -1059,7 +1059,17 @@ export type BlogPostResult = {
  * 提供のHTMLで確認済みだが、完了判定用の要素(imagePath1)はスタイル側の
  * #FRONT_IMG_ID_IDとは異なる構造のため、こちらは実機で未検証。
  */
-async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
+// フォーム上部の「※全角1000文字以下 ※改行80回以下 ※画像4枚以下」に対応する
+// 3つのライブカウンタ(例:「253.5/1000 0/80 0/4」)を読み取る。画像アップロードが
+// 本当にメインフォームへ反映されたかを検証するための唯一の信頼できる手がかり。
+async function readFormCounters(page: Page): Promise<{ bodyCount: number; lineBreaks: number; images: number } | null> {
+  const text = await page.evaluate(() => document.body.innerText).catch(() => '')
+  const match = text.match(/([\d.]+)\/1000\s+(\d+)\/80\s+(\d+)\/4/)
+  if (!match) return null
+  return { bodyCount: Number(match[1]), lineBreaks: Number(match[2]), images: Number(match[3]) }
+}
+
+async function uploadBlogImageOnce(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
   log('ブログ画像アップロードモーダルを開いています...')
   await page.waitForSelector('#upload', { timeout: 15000 })
   await page.click('#upload')
@@ -1114,6 +1124,30 @@ async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: s
   if (closeBtn) {
     await closeBtn.click().catch(() => {})
     await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+}
+
+// 2026-08-15追記(診断結果に基づく修正): 実機の投稿失敗ログで、
+// 「画像アップロードが完了しました」のログが出た後もメインフォームの
+// 画像カウンタが常に「0/4」のままで、その状態で確認ボタン(#confirm)を
+// 押しても画面が一切反応しない(クリック約1.2秒後の時点で既にクリック前と
+// 完全に同一の画面内容)という不具合が複数回・複数プロキシセッションに
+// わたって再現した。#imagePath1の値取得やモーダル内サムネイル件数による
+// 完了判定が、実際にはメインフォームへ反映されていない状態を「完了」と
+// 誤検知している可能性が高いため、モーダルを閉じた後にメインフォーム上の
+// 実際の画像カウンタ(「n/4」)を読み取って検証し、0のままなら最大1回まで
+// アップロードをやり直す。
+async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
+  await uploadBlogImageOnce(page, imageBuffer, fileName, log)
+
+  let counters = await readFormCounters(page)
+  log(`アップロード後のフォーム画像カウンタ: ${counters ? `${counters.images}/4` : '(取得失敗)'}`)
+
+  if (counters && counters.images === 0) {
+    log('警告: アップロード完了を検知したにもかかわらずフォームの画像カウンタが0のままです。アップロードをもう一度やり直します...')
+    await uploadBlogImageOnce(page, imageBuffer, fileName, log)
+    counters = await readFormCounters(page)
+    log(`再アップロード後のフォーム画像カウンタ: ${counters ? `${counters.images}/4` : '(取得失敗)'}`)
   }
 }
 
@@ -1247,6 +1281,27 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     throw new Error('「確認する」ボタン(#confirm)が見つかりませんでした')
   }
   const urlBeforeConfirm = page.url()
+
+  // 2026-08-15追記(診断強化): クリックしても画面が一切反応しない(遷移も
+  // 無ければエラー表示も無い)障害が実機で複数回再現した。画像アップロード
+  // モーダルを閉じた後も透明なオーバーレイ等がボタンの上に残っていて
+  // クリックを奪っている可能性を切り分けるため、ボタン中心の座標で実際に
+  // クリックを受け取る要素が#confirm自身かどうかを事前に確認しておく。
+  const confirmObstruction = await page
+    .evaluate(() => {
+      const btn = document.getElementById('confirm')
+      if (!btn) return null
+      const rect = btn.getBoundingClientRect()
+      const topEl = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2)
+      if (!topEl) return '(elementFromPointがnull)'
+      if (topEl === btn || btn.contains(topEl)) return null
+      return `${topEl.tagName}${topEl.id ? '#' + topEl.id : ''}${topEl.className ? '.' + String(topEl.className).replace(/\s+/g, '.') : ''}`
+    })
+    .catch(() => '(取得失敗)')
+  if (confirmObstruction) {
+    log(`警告: 「確認する」ボタンの位置に別の要素(${confirmObstruction})が重なっている可能性があります`)
+  }
+
   await confirmHandle.click()
 
   // 2026-08-15追記(診断強化): クリック直後に一瞬だけ表示され、その後
@@ -1286,7 +1341,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
       .catch(() => null)
     const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 2000)).catch(() => '(取得失敗)')
     throw new Error(
-      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'} / 確認ボタン押下後に画面遷移=${navigated ? 'あり' : 'なし'} / HTML5バリデーションエラー=${validationInfo?.invalidSummary || 'なし'} / エラー表示要素=${validationInfo?.errorTexts || 'なし'})。url=${currentUrl} クリック約1.2秒後の画面内容=${earlySnapshot ?? '(取得失敗)'} 画面内容=${bodySnippet}`
+      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'} / 確認ボタンの重なり=${confirmObstruction ?? 'なし'} / 確認ボタン押下後に画面遷移=${navigated ? 'あり' : 'なし'} / HTML5バリデーションエラー=${validationInfo?.invalidSummary || 'なし'} / エラー表示要素=${validationInfo?.errorTexts || 'なし'})。url=${currentUrl} クリック約1.2秒後の画面内容=${earlySnapshot ?? '(取得失敗)'} 画面内容=${bodySnippet}`
     )
   }
 
