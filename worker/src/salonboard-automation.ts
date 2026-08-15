@@ -1012,8 +1012,11 @@ export async function postStyleImageFull(page: Page, input: StylePostInput, log:
 // 確定済みの実DOM構造:
 //   - フォーム: #blog (POST /CLP/bt/blog/blog/)
 //   - タイトル: input#blogTitle name="title" (最大50、全角25文字以下)
-//   - カテゴリ: select#blogCategoryCd (BL01〜BL11)
-//   - 投稿者: select#stylistId (Tコード)
+//   - カテゴリ: select#blogCategoryCd (実際のvalue属性は不明、日本語ラベル
+//     テキストで一致させて選択する。blog_categories.hpb_category_valueには
+//     「こだわりの仕事道具」等のラベル文字列自体が保存されている)
+//   - 投稿者: select#stylistId (Tコード、こちらはvalue属性がそのままTコード
+//     なのでpage.select()でvalue一致による選択が可能、実機で確認済み)
 //   - 本文: textarea#blogContents (nicEditのリッチテキストエディタ。
 //     フォーム送信自体は元のtextareaの.valueを見る設計のため、.valueへ
 //     直接セットする方式で問題ない想定。ただし実機未検証のため、初回の
@@ -1035,7 +1038,7 @@ export async function postStyleImageFull(page: Page, input: StylePostInput, log:
 export type BlogPostInput = {
   title: string // 最大25文字(全角換算)
   body: string // 本文(1000文字程度、フッター込み)
-  categoryValue: string // blogCategoryCd の <option value>(BL01〜BL11)、空なら未選択のまま
+  categoryValue: string // blogCategoryCd の <option> の表示ラベル文字列(例:「こだわりの仕事道具」)、空なら未選択のまま
   stylistSelectValue: string // stylistId の <option value>(Tコード)、空なら未選択のまま
   imageBuffer: ArrayBuffer | null // 画像が無い記事は許容する(SALON BOARD側の必須判定に委ねる)
   imageFileName: string | null
@@ -1132,8 +1135,25 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   }
 
   if (input.categoryValue) {
-    const categoryHandle = await page.$('#blogCategoryCd')
-    if (categoryHandle) await page.select('#blogCategoryCd', input.categoryValue)
+    // 2026-08-15追記(重大バグ修正): blog_categories.hpb_category_value には
+    // 「こだわりの仕事道具」等の日本語ラベル文字列がそのまま保存されている
+    // (テンプレート編集画面の<option value>にラベル文字列を使っているため)。
+    // 一方、page.select()は<option>のvalue属性で一致判定するため、SALON
+    // BOARD側の実際のvalue(BL01等のコード)とは一致せず、常に選択に失敗して
+    // いた(実機ログで確認済み)。ラベルのテキスト内容で一致する<option>を
+    // 探し、そのvalueで選択する。
+    const selected = await page.evaluate((label: string) => {
+      const select = document.getElementById('blogCategoryCd') as HTMLSelectElement | null
+      if (!select) return false
+      const option = Array.from(select.options).find((o) => o.textContent?.trim() === label)
+      if (!option) return false
+      select.value = option.value
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      return true
+    }, input.categoryValue)
+    if (!selected) {
+      log(`カテゴリ「${input.categoryValue}」に一致する選択肢が見つかりませんでした`)
+    }
   }
 
   await page.evaluate((text: string) => {
