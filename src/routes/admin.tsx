@@ -236,19 +236,15 @@ type SalonSubRow = {
   is_active_workspace: number
 }
 
-type FlatSalonRow = {
+type AccountGroup = {
   seq: number
   accountId: number
   accountSalonName: string | null
   email: string
   isActive: number
   accountDeletionRequestedAt: string | null
-  salonId: number | null
-  salonKey: string | null
-  salonName: string | null
-  isActiveWorkspace: number
-  isFirstOfGroup: boolean
-  groupSize: number
+  activeSalons: SalonSubRow[]
+  inactiveSalons: SalonSubRow[]
 }
 
 function buildSalonsListUrl(page: number, q: string) {
@@ -267,31 +263,38 @@ function daysUntilDeletion(deletionRequestedAt: string): number {
   return Math.max(0, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)))
 }
 
-// 2026-08-14追記(ユーザー指定): サロン単位の個別削除ボタンは撤去し、既存の
-// 「契約」トグル(アカウント単位のis_active)に一本化した。契約外にすると
-// 3日後に自動削除される(下のtoggle-activeルート・src/lib/account-deletion.ts参照)。
-// このセルは「有効化する」(未使用の物理サロンをこのアカウントで使えるようにする)
-// 機能のみを残す。
-function SalonOperationCell({ row, page, q }: { row: FlatSalonRow; page: number; q: string }) {
-  if (!row.salonId) return <span class="text-xs text-gray-300">-</span>
-
-  if (row.isActiveWorkspace === 0) {
-    return (
-      <form method="post" action={`/admin/salons/${row.accountId}/activate-salon`}>
-        <input type="hidden" name="page" value={page} />
-        <input type="hidden" name="q" value={q} />
-        <input type="hidden" name="salonId" value={row.salonId} />
-        <button
-          type="submit"
-          class="text-xs font-semibold px-2 py-1 rounded-lg bg-pink-50 hover:bg-pink-100 text-pink-600 whitespace-nowrap"
-        >
-          有効化する
-        </button>
-      </form>
-    )
-  }
-
-  return <span class="text-xs text-gray-400">有効</span>
+// 2026-08-15追記(ユーザー指定): 「有効化」を契約トグルと同じ見た目の
+// ON/OFFスイッチにし、有効化・無効化どちらの向きにも切り替えられるようにした
+// (以前は有効化する一方向のボタンのみだった)。
+function WorkspaceToggle({
+  accountId,
+  salonId,
+  isActiveWorkspace,
+  page,
+  q
+}: {
+  accountId: number
+  salonId: number
+  isActiveWorkspace: boolean
+  page: number
+  q: string
+}) {
+  return (
+    <form method="post" action={`/admin/salons/${accountId}/salon/${salonId}/toggle-workspace`}>
+      <input type="hidden" name="page" value={page} />
+      <input type="hidden" name="q" value={q} />
+      <label class="flex items-center gap-2 cursor-pointer w-fit">
+        <span class="relative inline-flex items-center flex-shrink-0">
+          <input type="checkbox" checked={isActiveWorkspace} onchange="this.form.submit()" class="sr-only peer" />
+          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+        </span>
+        <span class={'text-xs font-semibold ' + (isActiveWorkspace ? 'text-pink-600' : 'text-gray-400')}>
+          {isActiveWorkspace ? '有効' : '無効'}
+        </span>
+      </label>
+    </form>
+  )
 }
 
 admin.get('/admin/salons', async (c) => {
@@ -339,43 +342,22 @@ admin.get('/admin/salons', async (c) => {
     }
   }
 
-  const flatRows: FlatSalonRow[] = []
-  for (const account of accounts) {
+  // 2026-08-15追記(ユーザー指定): 「契約」トグルはサロン単位ではなく
+  // アカウント(氏名)単位で一本化し、複数サロンでも1つのボタンで管理する。
+  // 有効化されていないサロンは折りたたんで(アコーディオン)表示する。
+  const groups: AccountGroup[] = accounts.map((account) => {
     const subs = subSalonsByAccount.get(account.id) || []
-    if (subs.length === 0) {
-      flatRows.push({
-        seq: account.seq,
-        accountId: account.id,
-        accountSalonName: account.salon_name,
-        email: account.email,
-        isActive: account.is_active,
-        accountDeletionRequestedAt: account.deletion_requested_at,
-        salonId: null,
-        salonKey: null,
-        salonName: null,
-        isActiveWorkspace: 0,
-        isFirstOfGroup: true,
-        groupSize: 1
-      })
-      continue
+    return {
+      seq: account.seq,
+      accountId: account.id,
+      accountSalonName: account.salon_name,
+      email: account.email,
+      isActive: account.is_active,
+      accountDeletionRequestedAt: account.deletion_requested_at,
+      activeSalons: subs.filter((s) => s.is_active_workspace === 1),
+      inactiveSalons: subs.filter((s) => s.is_active_workspace === 0)
     }
-    subs.forEach((sub, i) => {
-      flatRows.push({
-        seq: account.seq,
-        accountId: account.id,
-        accountSalonName: account.salon_name,
-        email: account.email,
-        isActive: account.is_active,
-        accountDeletionRequestedAt: account.deletion_requested_at,
-        salonId: sub.id,
-        salonKey: sub.salon_key,
-        salonName: sub.salon_name,
-        isActiveWorkspace: sub.is_active_workspace,
-        isFirstOfGroup: i === 0,
-        groupSize: subs.length
-      })
-    })
-  }
+  })
 
   return c.render(
     <AdminPageLayout active="admin-salons" adminEmail={adminUser.email} title="契約サロン一覧">
@@ -419,72 +401,122 @@ admin.get('/admin/salons', async (c) => {
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              {flatRows.map((row) => (
-                <tr class={row.isFirstOfGroup ? 'border-t-2 border-t-gray-100' : ''}>
-                  {row.isFirstOfGroup && (
-                    <>
-                      <td class="px-4 py-2.5 text-gray-400" rowspan={row.groupSize}>
-                        {row.seq}
-                      </td>
-                      <td class="px-4 py-2.5 font-medium text-gray-800" rowspan={row.groupSize}>
-                        {row.accountSalonName || '(未設定)'}
-                      </td>
-                      <td class="px-4 py-2.5 text-gray-500" rowspan={row.groupSize}>
-                        {row.email}
-                      </td>
-                    </>
-                  )}
-                  <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{row.salonKey || '(未確定)'}</td>
-                  <td class="px-4 py-2.5 text-gray-600">{row.salonName || '(未取得)'}</td>
-                  <td class="px-4 py-2.5">
-                    <form
-                      method="post"
-                      action={`/admin/salons/${row.accountId}/impersonate`}
-                      target="_blank"
-                      onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
-                    >
-                      <button
-                        type="submit"
-                        class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
-                      >
-                        <i class="fas fa-right-to-bracket mr-1"></i>ログイン
-                      </button>
-                    </form>
-                  </td>
-                  <td class="px-4 py-2.5">
-                    <SalonOperationCell row={row} page={page} q={q} />
-                  </td>
-                  <td class="px-4 py-2.5">
-                    <form method="post" action={`/admin/salons/${row.accountId}/toggle-active`}>
-                      <input type="hidden" name="page" value={page} />
-                      <input type="hidden" name="q" value={q} />
-                      <label class="flex items-center gap-2 cursor-pointer w-fit">
-                        <span class="relative inline-flex items-center flex-shrink-0">
-                          <input
-                            type="checkbox"
-                            checked={row.isActive === 1}
-                            onchange="this.form.submit()"
-                            class="sr-only peer"
-                          />
-                          <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                          <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-                        </span>
-                        <span
-                          class={'text-xs font-semibold ' + (row.isActive === 1 ? 'text-pink-600' : 'text-gray-400')}
-                        >
-                          {row.isActive === 1 ? '契約中' : '契約外'}
-                        </span>
-                      </label>
-                    </form>
-                    {row.isActive === 0 && row.accountDeletionRequestedAt && (
-                      <p class="text-xs text-red-600 mt-1 whitespace-nowrap">
-                        あと{daysUntilDeletion(row.accountDeletionRequestedAt)}日で削除されます
-                      </p>
+              {groups.map((group) => {
+                const mainRows = group.activeSalons.length > 0 ? group.activeSalons : [null]
+                const rowspan = mainRows.length
+                return (
+                  <>
+                    {mainRows.map((sub, i) => (
+                      <tr class={i === 0 ? 'border-t-2 border-t-gray-100' : ''}>
+                        {i === 0 && (
+                          <>
+                            <td class="px-4 py-2.5 text-gray-400" rowspan={rowspan}>
+                              {group.seq}
+                            </td>
+                            <td class="px-4 py-2.5 font-medium text-gray-800" rowspan={rowspan}>
+                              {group.accountSalonName || '(未設定)'}
+                            </td>
+                            <td class="px-4 py-2.5 text-gray-500" rowspan={rowspan}>
+                              {group.email}
+                            </td>
+                          </>
+                        )}
+                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{sub?.salon_key || '(未確定)'}</td>
+                        <td class="px-4 py-2.5 text-gray-600">{sub?.salon_name || '(未取得)'}</td>
+                        {i === 0 && (
+                          <td class="px-4 py-2.5" rowspan={rowspan}>
+                            <form
+                              method="post"
+                              action={`/admin/salons/${group.accountId}/impersonate`}
+                              target="_blank"
+                              onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
+                            >
+                              <button
+                                type="submit"
+                                class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+                              >
+                                <i class="fas fa-right-to-bracket mr-1"></i>ログイン
+                              </button>
+                            </form>
+                          </td>
+                        )}
+                        <td class="px-4 py-2.5">
+                          {sub ? (
+                            <WorkspaceToggle
+                              accountId={group.accountId}
+                              salonId={sub.id}
+                              isActiveWorkspace={true}
+                              page={page}
+                              q={q}
+                            />
+                          ) : (
+                            <span class="text-xs text-gray-300">-</span>
+                          )}
+                        </td>
+                        {i === 0 && (
+                          <td class="px-4 py-2.5" rowspan={rowspan}>
+                            <form method="post" action={`/admin/salons/${group.accountId}/toggle-active`}>
+                              <input type="hidden" name="page" value={page} />
+                              <input type="hidden" name="q" value={q} />
+                              <label class="flex items-center gap-2 cursor-pointer w-fit">
+                                <span class="relative inline-flex items-center flex-shrink-0">
+                                  <input
+                                    type="checkbox"
+                                    checked={group.isActive === 1}
+                                    onchange="this.form.submit()"
+                                    class="sr-only peer"
+                                  />
+                                  <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                                  <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+                                </span>
+                                <span
+                                  class={
+                                    'text-xs font-semibold ' + (group.isActive === 1 ? 'text-pink-600' : 'text-gray-400')
+                                  }
+                                >
+                                  {group.isActive === 1 ? '契約中' : '契約外'}
+                                </span>
+                              </label>
+                            </form>
+                            {group.isActive === 0 && group.accountDeletionRequestedAt && (
+                              <p class="text-xs text-red-600 mt-1 whitespace-nowrap">
+                                あと{daysUntilDeletion(group.accountDeletionRequestedAt)}日で削除されます
+                              </p>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                    {group.inactiveSalons.length > 0 && (
+                      <tr>
+                        <td colspan={8} class="px-4 py-2 bg-gray-50">
+                          <details>
+                            <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-700 select-none">
+                              無効化中のサロンを表示({group.inactiveSalons.length}件)
+                            </summary>
+                            <div class="mt-2 space-y-1.5">
+                              {group.inactiveSalons.map((sub) => (
+                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs bg-white rounded-lg border border-gray-100 px-3 py-2">
+                                  <span class="font-mono text-gray-600">{sub.salon_key || '(未確定)'}</span>
+                                  <span class="text-gray-500">{sub.salon_name || '(未取得)'}</span>
+                                  <WorkspaceToggle
+                                    accountId={group.accountId}
+                                    salonId={sub.id}
+                                    isActiveWorkspace={false}
+                                    page={page}
+                                    q={q}
+                                  />
+                                </div>
+                              ))}
+                            </div>
+                          </details>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                </tr>
-              ))}
-              {flatRows.length === 0 && (
+                  </>
+                )
+              })}
+              {groups.length === 0 && (
                 <tr>
                   <td colspan={8} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
@@ -584,16 +616,18 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
   return c.redirect('/dashboard')
 })
 
-// 複数サロン対応: 管理者が「どの物理サロンを追加するか」を直接サロンIDで
-// 選んで有効化する(以前の「枠数を+1するだけ」という抽象的な操作から変更)。
-// 有効化と同時にsalon_slot_limitを新しい有効サロン数以上に自動調整する。
-admin.post('/admin/salons/:userId/activate-salon', async (c) => {
+// 2026-08-15追記(ユーザー指定): 「有効化する」一方向のボタンから、
+// 契約トグルと同じON/OFFスイッチに変更し、有効化・無効化を1つのエンドポイントで
+// 両方向切り替えられるようにした。有効化と同時にsalon_slot_limitを新しい
+// 有効サロン数以上に自動調整する(以前の「枠数を+1するだけ」という抽象的な
+// 操作から変更した経緯を踏襲)。
+admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) => {
   const adminUser = c.get('admin')
   const userId = Number(c.req.param('userId'))
+  const salonId = Number(c.req.param('salonId'))
   const body = await c.req.parseBody()
   const page = String(body.page || '1')
   const q = String(body.q || '')
-  const salonId = Number(body.salonId)
 
   const salon = await c.env.DB.prepare(
     'SELECT id, salon_key, is_active_workspace FROM salonboard_salons WHERE id = ? AND user_id = ?'
@@ -601,36 +635,53 @@ admin.post('/admin/salons/:userId/activate-salon', async (c) => {
     .bind(salonId, userId)
     .first<{ id: number; salon_key: string | null; is_active_workspace: number }>()
 
-  if (salon && salon.is_active_workspace === 0) {
+  if (salon) {
+    const next = salon.is_active_workspace === 1 ? 0 : 1
     await c.env.DB.prepare(
-      `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      `UPDATE salonboard_salons SET is_active_workspace = ?,
+         activated_at = CASE WHEN ? = 1 THEN COALESCE(activated_at, CURRENT_TIMESTAMP) ELSE activated_at END
+       WHERE id = ?`
     )
-      .bind(salonId)
+      .bind(next, next, salonId)
       .run()
-    const activeCountRow = await c.env.DB.prepare(
-      'SELECT COUNT(*) AS cnt FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1'
-    )
-      .bind(userId)
-      .first<{ cnt: number }>()
-    const activeCount = activeCountRow?.cnt ?? 1
-    await c.env.DB.prepare(
-      'UPDATE users SET salon_slot_limit = GREATEST(salon_slot_limit, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
-    )
-      .bind(activeCount, userId)
-      .run()
-    // このアカウントにまだ有効なサロンが無かった場合(管理者が最初の1件を
-    // 有効化するケース)、そのままこのサロンを利用中サロン(active_salon_id)にする。
-    // 既に別のサロンが利用中の場合(2件目以降の有効化)は上書きしない。
-    await c.env.DB.prepare('UPDATE users SET active_salon_id = COALESCE(active_salon_id, ?) WHERE id = ?')
-      .bind(salonId, userId)
-      .run()
+
+    if (next === 1) {
+      const activeCountRow = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS cnt FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1'
+      )
+        .bind(userId)
+        .first<{ cnt: number }>()
+      const activeCount = activeCountRow?.cnt ?? 1
+      await c.env.DB.prepare(
+        'UPDATE users SET salon_slot_limit = GREATEST(salon_slot_limit, ?), updated_at = CURRENT_TIMESTAMP WHERE id = ?'
+      )
+        .bind(activeCount, userId)
+        .run()
+      // このアカウントにまだ有効なサロンが無かった場合、そのままこのサロンを
+      // 利用中サロン(active_salon_id)にする。既に別のサロンが利用中の場合は上書きしない。
+      await c.env.DB.prepare('UPDATE users SET active_salon_id = COALESCE(active_salon_id, ?) WHERE id = ?')
+        .bind(salonId, userId)
+        .run()
+    } else {
+      // 無効化した場合、それが利用中サロン(active_salon_id)だったなら、
+      // 同アカウントの他の有効サロンへ re-point する(無ければNULLのまま)。
+      await c.env.DB.prepare(
+        `UPDATE users SET active_salon_id = (
+           SELECT id FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1 AND id != ? ORDER BY id LIMIT 1
+         )
+         WHERE id = ? AND active_salon_id = ?`
+      )
+        .bind(userId, salonId, userId, salonId)
+        .run()
+    }
+
     await logAdminAction(
       c,
       adminUser.id,
-      'admin_activate_salon',
+      'toggle_salon_workspace',
       'salonboard_salon',
       salonId,
-      `user_id=${userId} salon_key=${salon.salon_key || '-'}`
+      `user_id=${userId} salon_key=${salon.salon_key || '-'} is_active_workspace ${salon.is_active_workspace} -> ${next}`
     )
   }
 
@@ -702,8 +753,16 @@ admin.get('/admin/tool', async (c) => {
   const offset = (page - 1) * TOOL_PAGE_SIZE
   const likePattern = `%${q}%`
 
+  // 2026-08-15追記(ユーザー指定): 契約サロン一覧で「契約中」かつ「有効化」の
+  // 両方がされているサロンを持つアカウントのみを対象にする。
+  const contractedAndActiveFilter = `
+    is_active = 1
+    AND EXISTS (SELECT 1 FROM salonboard_salons WHERE user_id = users.id AND is_active_workspace = 1)
+  `
+
   const countRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM users WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
+    `SELECT COUNT(*) as cnt FROM users
+     WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
   )
     .bind(q, likePattern, likePattern)
     .first<{ cnt: number }>()
@@ -714,7 +773,7 @@ admin.get('/admin/tool', async (c) => {
     `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
-     WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
+     WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
      ORDER BY is_active DESC, created_at ASC
      LIMIT ? OFFSET ?`
   )
@@ -938,8 +997,16 @@ admin.get('/admin/status', async (c) => {
   const offset = (page - 1) * STATUS_PAGE_SIZE
   const likePattern = `%${q}%`
 
+  // 2026-08-15追記(ユーザー指定): 機能設定と同様、契約サロン一覧で「契約中」
+  // かつ「有効化」の両方がされているサロンを持つアカウントのみを対象にする。
+  const contractedAndActiveFilter = `
+    is_active = 1
+    AND EXISTS (SELECT 1 FROM salonboard_salons WHERE user_id = users.id AND is_active_workspace = 1)
+  `
+
   const countRow = await c.env.DB.prepare(
-    `SELECT COUNT(*) as cnt FROM users WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
+    `SELECT COUNT(*) as cnt FROM users
+     WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)`
   )
     .bind(q, likePattern, likePattern)
     .first<{ cnt: number }>()
@@ -951,7 +1018,7 @@ admin.get('/admin/status', async (c) => {
     `SELECT id, email, salon_name, consecutive_failure_count, is_active, style_enabled,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
-     WHERE (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
+     WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
      ORDER BY is_active DESC, created_at ASC
      LIMIT ? OFFSET ?`
   )
