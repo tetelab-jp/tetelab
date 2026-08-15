@@ -168,7 +168,10 @@ async function dispatchBlogPostJob(
     )
       .bind(message, jobId)
       .run()
-    await env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
+    // 2026-08-15追記(ユーザー指定): 失敗しても承認状態は解除しない
+    // (承認済みのままにしておき、次のローテーションで自動的に再試行される
+    // ようにする。5件連続失敗した場合の自動一時停止/アラートは別途機能する)。
+    await env.DB.prepare(`UPDATE blog_articles SET last_error = ? WHERE id = ?`)
       .bind(`ジョブ起動に失敗しました: ${message}`, articleId)
       .run()
     await env.DB.prepare(
@@ -489,7 +492,7 @@ async function clearStaleBlogJob(env: Bindings, j: StaleBlogJobRow): Promise<voi
   )
     .bind(j.id)
     .run()
-  await env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = 'Fargateジョブがタイムアウトしました(応答がありませんでした)' WHERE id = ?`)
+  await env.DB.prepare(`UPDATE blog_articles SET last_error = 'Fargateジョブがタイムアウトしました(応答がありませんでした)' WHERE id = ?`)
     .bind(j.article_id)
     .run()
   await env.DB.prepare(
