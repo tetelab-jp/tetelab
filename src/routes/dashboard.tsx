@@ -189,7 +189,7 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       )}
 
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div class="bg-white rounded-xl border border-gray-100 p-5">
           <p class="font-semibold mb-2">
             <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
@@ -210,6 +210,17 @@ dashboard.get('/dashboard', async (c) => {
           </p>
           <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
             投稿記事一覧を開く <i class="fas fa-arrow-right ml-1"></i>
+          </a>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="font-semibold mb-2">
+            <i class="fas fa-list-check mr-2 text-pink-500"></i>対策キーワード設定
+          </p>
+          <p class="text-sm text-gray-600 mb-3">
+            上位表示を狙うキーワードを登録し、定期的に検索順位を測定できます。
+          </p>
+          <a href="/seo/keywords" class="text-sm font-semibold text-pink-600 hover:underline">
+            対策キーワード設定を開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
       </div>
