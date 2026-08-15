@@ -17,7 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   })
 
-  // SALON BOARDへの自動投稿: 「今すぐ1本投稿する」ボタン
+  // SALON BOARDへの自動投稿: 「今すぐまとめて投稿する」ボタン
   const blogTestRunBtn = document.getElementById('blog-test-run-btn')
   if (blogTestRunBtn) {
     blogTestRunBtn.addEventListener('click', async () => {
@@ -28,7 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch('/api/blog-automation/test-run', { method: 'POST' })
         const data = await res.json()
         if (data.success) {
-          if (status) status.textContent = '投稿処理を開始しました。完了まで数分かかります。'
+          if (status) {
+            status.textContent =
+              (data.totalArticles || 1) + '件のブログ記事を投稿します。投稿は自動で進むので待つ必要はありません。'
+          }
         } else {
           if (status) status.textContent = 'エラー: ' + (data.error || '不明なエラー')
           blogTestRunBtn.disabled = false
