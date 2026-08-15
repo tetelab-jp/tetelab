@@ -1127,6 +1127,22 @@ async function uploadBlogImageOnce(page: Page, imageBuffer: ArrayBuffer, fileNam
   }
 }
 
+// モーダル内での完了検知(#imagePath1/サムネイル)から、メインフォーム上の
+// 画像カウンタへ実際に反映されるまでには多少のタイムラグがありうるため、
+// 0のまま即座に「失敗」と判断せず、最大maxWaitMs待って何度か読み直す。
+async function waitForFormImageCounter(
+  page: Page,
+  maxWaitMs: number
+): Promise<{ bodyCount: number; lineBreaks: number; images: number } | null> {
+  const deadline = Date.now() + maxWaitMs
+  let counters = await readFormCounters(page)
+  while ((!counters || counters.images === 0) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 800))
+    counters = await readFormCounters(page)
+  }
+  return counters
+}
+
 // 2026-08-15追記(診断結果に基づく修正): 実機の投稿失敗ログで、
 // 「画像アップロードが完了しました」のログが出た後もメインフォームの
 // 画像カウンタが常に「0/4」のままで、その状態で確認ボタン(#confirm)を
@@ -1136,17 +1152,20 @@ async function uploadBlogImageOnce(page: Page, imageBuffer: ArrayBuffer, fileNam
 // 完了判定が、実際にはメインフォームへ反映されていない状態を「完了」と
 // 誤検知している可能性が高いため、モーダルを閉じた後にメインフォーム上の
 // 実際の画像カウンタ(「n/4」)を読み取って検証し、0のままなら最大1回まで
-// アップロードをやり直す。
+// アップロードをやり直す。ただし、モーダル内の完了検知からメインフォーム
+// のカウンタへ反映されるまでに数秒のタイムラグがあるケースを誤って
+// 「失敗」と判定してしまわないよう、即座に1回だけ読むのではなく最大10秒
+// かけて数回読み直してから判断する。
 async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
   await uploadBlogImageOnce(page, imageBuffer, fileName, log)
 
-  let counters = await readFormCounters(page)
+  let counters = await waitForFormImageCounter(page, 10000)
   log(`アップロード後のフォーム画像カウンタ: ${counters ? `${counters.images}/4` : '(取得失敗)'}`)
 
   if (counters && counters.images === 0) {
-    log('警告: アップロード完了を検知したにもかかわらずフォームの画像カウンタが0のままです。アップロードをもう一度やり直します...')
+    log('警告: 10秒待ってもフォームの画像カウンタが0のままです。アップロードをもう一度やり直します...')
     await uploadBlogImageOnce(page, imageBuffer, fileName, log)
-    counters = await readFormCounters(page)
+    counters = await waitForFormImageCounter(page, 10000)
     log(`再アップロード後のフォーム画像カウンタ: ${counters ? `${counters.images}/4` : '(取得失敗)'}`)
   }
 }
