@@ -1382,6 +1382,19 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     )
   }
 
+  // 2026-08-15追記(診断強化): 「投稿完了」と表示されたにもかかわらず、
+  // 実際には画像が投稿されていなかった実機報告があった。編集フォーム上の
+  // 画像カウンタは正しく1/4を示していたため、確認画面(#confirm押下後、
+  // #reflect押下前)で画像が本当にプレビューへ反映されているかを毎回
+  // ログに残し、次回同様の報告があった際に「確認画面の時点で既に画像が
+  // 欠落していた(=このワーカー側の不具合)」のか「確認画面には映って
+  // いたのに最終的な公開記事に反映されなかった(=SALON BOARD側の問題の
+  // 可能性)」のかを切り分けられるようにする。
+  const confirmScreenImageCount = await page
+    .evaluate(() => document.querySelectorAll('img').length)
+    .catch(() => null)
+  log(`確認画面のimg要素数: ${confirmScreenImageCount ?? '(取得失敗)'}`)
+
   log('「登録・反映する」を実行中...')
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
