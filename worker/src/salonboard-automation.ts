@@ -1198,20 +1198,27 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
 
   // 送信直前の入力状態を診断ログに残す(nicEditの同期に失敗して本文が
   // 空のまま送信され、サーバー側バリデーションで弾かれるケースの切り分け用)。
+  // カテゴリ・投稿者はinput側が空文字の場合に選択操作自体をスキップしている
+  // ため、未選択のまま(必須項目バリデーションで弾かれる)可能性も合わせて確認する。
   const preSubmitState = await page
     .evaluate(() => {
       const w = window as any
       const titleEl = document.getElementById('blogTitle') as HTMLInputElement | null
       const bodyEl = document.getElementById('blogContents') as HTMLTextAreaElement | null
+      const categoryEl = document.getElementById('blogCategoryCd') as HTMLSelectElement | null
+      const stylistEl = document.getElementById('stylistId') as HTMLSelectElement | null
       return {
         fillMethod: w.__blogContentsFillMethod || '(不明)',
         titleLen: titleEl ? titleEl.value.length : -1,
-        bodyLen: bodyEl ? bodyEl.value.length : -1
+        bodyLen: bodyEl ? bodyEl.value.length : -1,
+        categoryValue: categoryEl ? categoryEl.value : '(要素なし)',
+        stylistValue: stylistEl ? stylistEl.value : '(要素なし)',
+        url: location.href
       }
     })
     .catch(() => null)
   log(
-    `送信直前の状態: 本文入力方式=${preSubmitState?.fillMethod ?? '(取得失敗)'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'}`
+    `送信直前の状態: 本文入力方式=${preSubmitState?.fillMethod ?? '(取得失敗)'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'}`
   )
 
   log('入力内容を確認画面へ送信中...')
@@ -1219,6 +1226,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   if (!confirmHandle) {
     throw new Error('「確認する」ボタン(#confirm)が見つかりませんでした')
   }
+  const urlBeforeConfirm = page.url()
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
     confirmHandle.click()
@@ -1227,9 +1235,28 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   const reflectHandle = await page.waitForSelector('#reflect', { timeout: 15000 }).catch(() => null)
   if (!reflectHandle) {
     const currentUrl = page.url()
-    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
+    const navigated = currentUrl !== urlBeforeConfirm
+    // 全角25文字を超える等、HTML5のバリデーションで弾かれて画面遷移せず
+    // 留まっているケースを切り分けるため、遷移の有無と併せてバリデーション
+    // メッセージ(validationMessage)・エラー表示らしき要素の文言も拾う。
+    const validationInfo = await page
+      .evaluate(() => {
+        const invalidEls = Array.from(document.querySelectorAll('input:invalid, select:invalid, textarea:invalid')) as (
+          | HTMLInputElement
+          | HTMLSelectElement
+          | HTMLTextAreaElement
+        )[]
+        const invalidSummary = invalidEls.map((el) => `${el.id || el.tagName}:${el.validationMessage}`).join(' / ')
+        const errorEls = Array.from(document.querySelectorAll('[class*="error" i], [class*="Error" i]'))
+          .map((el) => (el as HTMLElement).innerText?.trim())
+          .filter((t) => t)
+          .slice(0, 5)
+        return { invalidSummary, errorTexts: errorEls.join(' / ') }
+      })
+      .catch(() => null)
+    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 2000)).catch(() => '(取得失敗)')
     throw new Error(
-      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'})。url=${currentUrl} 画面内容=${bodySnippet}`
+      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'} カテゴリ選択値=${preSubmitState?.categoryValue ?? '?'} 投稿者選択値=${preSubmitState?.stylistValue ?? '?'} / 確認ボタン押下後に画面遷移=${navigated ? 'あり' : 'なし'} / HTML5バリデーションエラー=${validationInfo?.invalidSummary || 'なし'} / エラー表示要素=${validationInfo?.errorTexts || 'なし'})。url=${currentUrl} 画面内容=${bodySnippet}`
     )
   }
 
