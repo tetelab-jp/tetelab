@@ -261,7 +261,9 @@ document.addEventListener('DOMContentLoaded', () => {
     currentFooterLen = (data.footer || '').length
 
     const categorySelect = document.getElementById('rv-category')
-    categorySelect.innerHTML = data.categories.map((c) => `<option value="${c.id}"${c.id === a.category_id ? ' selected' : ''}>${c.name}</option>`).join('')
+    categorySelect.innerHTML =
+      '<option value="">未設定</option>' +
+      data.categories.map((c) => `<option value="${c.id}"${c.id === a.category_id ? ' selected' : ''}>${c.name}</option>`).join('')
 
     const stylistSelect = document.getElementById('rv-stylist')
     stylistSelect.innerHTML =
