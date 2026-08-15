@@ -1525,7 +1525,7 @@ style.get('/style/schedule', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿対象のスタイルを登録順に{POST_INTERVAL_MINUTES_LABEL}分おきに1スタイルずつ「登録＋反映申請」まで自動実行。
+        自動投稿対象のスタイルをNo.順に{POST_INTERVAL_MINUTES_LABEL}分おきに「登録＋反映申請」まで自動投稿。
         <br />
         ※深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯
         <br />
