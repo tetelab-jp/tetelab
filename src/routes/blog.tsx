@@ -481,9 +481,17 @@ blog.get('/blog/template', async (c) => {
             {catList.map((cat) => (
               <a
                 href={`/blog/template?category=${cat.id}`}
-                class={`block px-4 py-3 text-sm ${cat.id === selectedId ? 'bg-pink-50 text-pink-700 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
+                class={`flex items-center justify-between gap-2 px-4 py-3 text-sm ${cat.id === selectedId ? 'bg-pink-50 text-pink-700 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
               >
-                {cat.name}
+                <span class="truncate">{cat.name}</span>
+                {!cat.hpb_category_value && (
+                  <span
+                    class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 flex-none"
+                    title="HPBブログカテゴリが未設定のため、このカテゴリの記事はSALON BOARDへ自動投稿できません"
+                  >
+                    HPB未設定
+                  </span>
+                )}
               </a>
             ))}
           </div>

@@ -806,12 +806,15 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
     return c.json({ error: 'article not available' }, 500)
   }
 
-  // カテゴリ未設定のまま投稿すると、SALON BOARD側のカテゴリ選択が必須項目
-  // バリデーションで弾かれ、確認画面(#reflect)へ進めずに失敗する
+  // HPBブログカテゴリ(記事カテゴリ=生成テンプレート側の設定。記事自身の
+  // カテゴリ選択とは別物)が未設定のまま投稿すると、SALON BOARD側のカテゴリ
+  // 選択が必須項目バリデーションで弾かれ、確認画面(#reflect)へ進めずに失敗する
   // (2026-08-15、実機ログで確認済み)。ブラウザを起動する前にここで検知し、
-  // 分かりやすいメッセージで即座に失敗させる。
+  // 「記事カテゴリ」と「HPBブログカテゴリ」を混同しないよう、どの記事カテゴリの
+  // どの設定が不足しているかを明示したメッセージで即座に失敗させる。
   if (!row.hpb_category_value) {
-    const message = 'カテゴリが設定されていません。記事を開いてカテゴリを選択・保存してから再度お試しください'
+    const categoryLabel = row.category_name ? `記事カテゴリ「${row.category_name}」` : 'この記事の記事カテゴリ'
+    const message = `${categoryLabel}にHPBブログカテゴリが設定されていません。生成テンプレート画面(記事カテゴリの設定)からHPBブログカテゴリを選択・保存してから再度お試しください`
     await c.env.DB.prepare(
       `UPDATE blog_post_jobs SET status = 'failed', result_step = 'form_fill', result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
