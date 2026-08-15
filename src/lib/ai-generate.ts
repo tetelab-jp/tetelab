@@ -49,7 +49,16 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   return lines
 }
 
-async function callChatJson(env: Bindings, systemPrompt: string, userPrompt: string): Promise<any> {
+function logTokenUsage(label: string, data: any): void {
+  const usage = data?.usage
+  if (!usage) return
+  console.log(
+    `[ai-generate] usage label=${label} model=${data.model || DEFAULT_MODEL} ` +
+      `prompt_tokens=${usage.prompt_tokens} completion_tokens=${usage.completion_tokens} total_tokens=${usage.total_tokens}`
+  )
+}
+
+async function callChatJson(env: Bindings, systemPrompt: string, userPrompt: string, label: string): Promise<any> {
   const apiKey = env.OPENAI_API_KEY
   const baseUrl = env.OPENAI_BASE_URL || 'https://api.openai.com/v1'
   if (!apiKey) {
@@ -75,6 +84,7 @@ async function callChatJson(env: Bindings, systemPrompt: string, userPrompt: str
   }
 
   const data = (await res.json()) as any
+  logTokenUsage(label, data)
   const rawContent = data?.choices?.[0]?.message?.content
   if (!rawContent) {
     throw new Error('AI生成結果が空でした')
@@ -99,7 +109,7 @@ export async function generateCategoryDraft(
 出力は必ず以下のJSON形式のみで返してください:
 {"draft": "伝えたいこと（2〜3文）"}`
 
-  const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt)
+  const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'category_draft')
   return String(parsed.draft || '').trim()
 }
 
@@ -174,7 +184,7 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
 出力は必ず以下のJSON形式のみで返してください（説明文やコードブロックは不要）:
 {"title": "記事タイトル（25文字以内）", "body": "本文（${input.bodyMaxChars}文字以内、改行を含む）"}`
 
-  const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt)
+  const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'article_content')
   return {
     title: String(parsed.title || '').trim().slice(0, 25),
     body: String(parsed.body || '').trim().slice(0, input.bodyMaxChars)
@@ -221,6 +231,7 @@ export async function generateImageDescription(env: Bindings, imageBuffer: Buffe
   }
 
   const data = (await res.json()) as any
+  logTokenUsage('image_description', data)
   const text = data?.choices?.[0]?.message?.content
   if (!text) throw new Error('AI画像説明の生成結果が空でした')
   return String(text).trim().slice(0, 100)
