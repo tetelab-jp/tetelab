@@ -396,6 +396,28 @@ type CategoryRow = {
   title_prompt: string | null
   body_prompt: string | null
   style_mode: string | null
+  season_months_json: string | null
+}
+
+// 記事カテゴリの季節パラメータ用の二月セット。生成AIへの季節柄の指示と、
+// このカテゴリで生成する記事のmonth_tags_json(投稿カレンダーの月一致判定)の
+// 両方に使う。各ペアのvalueは"1,2"のようにカンマ区切りで送られてくる。
+const SEASON_MONTH_PAIRS: [number, number][] = [
+  [1, 2],
+  [3, 4],
+  [5, 6],
+  [7, 8],
+  [9, 10],
+  [11, 12]
+]
+
+function parseSeasonMonths(json: string | null): number[] {
+  try {
+    const arr = JSON.parse(json || '[]')
+    return Array.isArray(arr) ? arr.filter((n) => Number.isInteger(n) && n >= 1 && n <= 12) : []
+  } catch {
+    return []
+  }
 }
 
 const STYLE_MODE_LABEL: Record<string, string> = {
@@ -416,7 +438,7 @@ blog.get('/blog/template', async (c) => {
   const user = c.get('user')
 
   const { results: categories } = await c.env.DB.prepare(
-    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode
+    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode, season_months_json
      FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC`
   )
     .bind(user.id, user.active_salon_id)
@@ -450,7 +472,7 @@ blog.get('/blog/template', async (c) => {
       <div class="flex gap-6 flex-col lg:flex-row">
         <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none">
           <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-            <p class="font-semibold text-sm">まとまり</p>
+            <p class="font-semibold text-sm">記事カテゴリ</p>
             <span class="text-xs text-gray-400">{catList.length}/10</span>
           </div>
           <div class="divide-y divide-gray-50">
@@ -466,7 +488,7 @@ blog.get('/blog/template', async (c) => {
           </div>
           {catList.length < 10 && (
             <form method="post" action="/blog/template/categories/add" class="p-3 border-t border-gray-100 flex gap-2">
-              <input type="text" name="name" required placeholder="新しいまとまり名" class="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+              <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
               <button type="submit" class="bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">追加</button>
             </form>
           )}
@@ -474,14 +496,14 @@ blog.get('/blog/template', async (c) => {
 
         {!selected ? (
           <div class="flex-1 bg-white rounded-xl border border-gray-100 p-6 text-sm text-gray-400">
-            左の「まとまりを追加」からカテゴリを作成してください。
+            左の入力欄から記事カテゴリを追加してください。
           </div>
         ) : (
           <div class="flex-1 space-y-6 min-w-0">
             <div class="bg-white rounded-xl border border-gray-100 p-6">
               <div class="flex items-center justify-between mb-3">
                 <p class="font-semibold">
-                  <i class="fas fa-tag mr-2 text-pink-500"></i>このまとまりについて
+                  <i class="fas fa-tag mr-2 text-pink-500"></i>この記事カテゴリについて
                 </p>
                 <form method="post" action={`/blog/template/categories/${selected.id}/delete`} onsubmit="return confirm('このカテゴリと未承認の記事を削除します。よろしいですか？')">
                   <button type="submit" class="text-xs text-gray-400 hover:text-red-500">
@@ -523,6 +545,28 @@ blog.get('/blog/template', async (c) => {
                       </option>
                     ))}
                   </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">
+                    季節柄<span class="text-xs text-gray-400 ml-2">選んだ月ごろの内容として生成され、その記事の投稿予定月にもなります</span>
+                  </label>
+                  <div class="flex flex-wrap gap-3">
+                    {(() => {
+                      const selectedMonths = parseSeasonMonths(selected.season_months_json)
+                      return SEASON_MONTH_PAIRS.map(([m1, m2]) => (
+                        <label class="flex items-center gap-1.5 text-sm">
+                          <input
+                            type="checkbox"
+                            name="season_pairs"
+                            value={`${m1},${m2}`}
+                            checked={selectedMonths.includes(m1) && selectedMonths.includes(m2)}
+                            class="accent-pink-500"
+                          />
+                          {m1}・{m2}月
+                        </label>
+                      ))
+                    })()}
+                  </div>
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -603,7 +647,7 @@ blog.get('/blog/template', async (c) => {
                 1本だけ試しに書かせる
               </button>
               <button type="button" id="generate-batch-btn" data-category-id={selected.id} class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-                このまとまりの記事を書く（{counts.total - counts.generated}本）
+                この記事カテゴリの記事を書く（{counts.total - counts.generated}本）
               </button>
               <span class="text-xs text-gray-400">まだ記事になっていない写真だけが対象です</span>
               <p id="generate-status" class="text-sm text-gray-500 w-full"></p>
@@ -671,8 +715,22 @@ blog.post('/blog/template/categories/:id', async (c) => {
   const body = await c.req.parseBody()
 
   const styleMode = ['params', 'reference', 'scraped'].includes(String(body.style_mode)) ? String(body.style_mode) : 'params'
+
+  const seasonPairsRaw = body.season_pairs
+  const seasonPairs = Array.isArray(seasonPairsRaw) ? seasonPairsRaw : seasonPairsRaw ? [seasonPairsRaw] : []
+  const seasonMonths = Array.from(
+    new Set(
+      seasonPairs.flatMap((pair) =>
+        String(pair)
+          .split(',')
+          .map((n) => Number(n))
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= 12)
+      )
+    )
+  ).sort((a, b) => a - b)
+
   await c.env.DB.prepare(
-    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, style_mode=?
+    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, style_mode=?, season_months_json=?
      WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
@@ -682,6 +740,7 @@ blog.post('/blog/template/categories/:id', async (c) => {
       String(body.key_message || '').trim() || null,
       String(body.body_prompt || '').trim() || null,
       styleMode,
+      JSON.stringify(seasonMonths),
       id,
       user.id,
       user.active_salon_id
@@ -693,14 +752,14 @@ blog.post('/blog/template/categories/:id', async (c) => {
 blog.post('/api/blog/categories/:id/generate-draft', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
-  const category = await c.env.DB.prepare('SELECT name FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
+  const category = await c.env.DB.prepare('SELECT name, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
     .bind(id, user.id, user.active_salon_id)
-    .first<{ name: string }>()
+    .first<{ name: string; season_months_json: string | null }>()
   if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
 
   try {
     const profile = await getSalonProfileForGeneration(c, user)
-    const draft = await generateCategoryDraft(c.env, category.name, profile)
+    const draft = await generateCategoryDraft(c.env, category.name, profile, parseSeasonMonths(category.season_months_json))
     return c.json({ success: true, draft })
   } catch (err: any) {
     return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
@@ -797,6 +856,8 @@ async function generateOneArticle(
     ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
     : null
 
+  const seasonMonths = parseSeasonMonths(category.season_months_json)
+
   const result = await generateArticleContent(c.env, {
     categoryName: category.name,
     keyMessage: category.key_message,
@@ -806,13 +867,16 @@ async function generateOneArticle(
     couponName: null,
     bodyMaxChars,
     profile,
-    styleMode: (category.style_mode as any) || 'params'
+    styleMode: (category.style_mode as any) || 'params',
+    seasonMonths
   })
 
+  // カテゴリに季節パラメータが設定されていれば、生成した記事の月タグへ
+  // そのまま反映する(その月に合わせて投稿されるようにするため)。
   await c.env.DB.prepare(
-    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
+    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, month_tags_json=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
   )
-    .bind(result.title, result.body, category.default_stylist_id || null, article.id, user.id, user.active_salon_id)
+    .bind(result.title, result.body, category.default_stylist_id || null, JSON.stringify(seasonMonths), article.id, user.id, user.active_salon_id)
     .run()
 }
 
@@ -820,7 +884,7 @@ blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(id, user.id, user.active_salon_id)
     .first<CategoryRow>()
@@ -848,7 +912,8 @@ blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
       couponName: null,
       bodyMaxChars,
       profile,
-      styleMode: (category.style_mode as any) || 'params'
+      styleMode: (category.style_mode as any) || 'params',
+      seasonMonths: parseSeasonMonths(category.season_months_json)
     })
     return c.json({ success: true, ...result })
   } catch (err: any) {
@@ -860,7 +925,7 @@ blog.post('/api/blog/categories/:id/generate-batch', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(id, user.id, user.active_salon_id)
     .first<CategoryRow>()
@@ -985,28 +1050,40 @@ blog.get('/blog/articles', async (c) => {
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   const remainingDaysInMonth = daysInMonth - now.getDate() + 1
 
-  // 投稿順(sort_order)を1日1本で巡回した場合の簡易シミュレーション(Phase 2で
-  // 実際の自動投稿を実装するまでは、あくまで見込み表示)。承認済みのみ対象。
-  const approvedArticles = articles.filter((a) => a.status === 'approved')
+  // 投稿順(生成順=sort_order)を1日1本で巡回した場合の簡易シミュレーション
+  // (Phase 2で実際の自動投稿を実装するまでは、あくまで見込み表示)。
+  // 承認済み・自動投稿ONの記事だけを対象に生成順で巡回し、各日について
+  // その月に合う(月タグが空、またはその日の月を含む)記事をカーソル位置から
+  // 探して割り当てる。合う記事が無い日はスキップとして表示する。
+  const postable = articles.filter((a) => a.status === 'approved' && a.auto_post_enabled_flag === 1)
   const calendarDays: { dateLabel: string; article: ArticleListRow | null; skipReason: string | null }[] = []
   const previewDays = 14
+  let cursor = 0
   for (let i = 0; i < previewDays; i++) {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i)
     const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`
-    if (articles.length === 0) {
-      calendarDays.push({ dateLabel, article: null, skipReason: '記事がありません' })
+    const month = d.getMonth() + 1
+
+    if (postable.length === 0) {
+      calendarDays.push({ dateLabel, article: null, skipReason: '承認済み・自動投稿ONの記事がありません' })
       continue
     }
-    const candidate = articles[i % articles.length]
-    const monthTags: number[] = JSON.parse(candidate.month_tags_json || '[]')
-    if (candidate.status !== 'approved') {
-      calendarDays.push({ dateLabel, article: candidate, skipReason: '未承認のためスキップ' })
-    } else if (candidate.auto_post_enabled_flag !== 1) {
-      calendarDays.push({ dateLabel, article: candidate, skipReason: '自動投稿OFFのためスキップ' })
-    } else if (monthTags.length > 0 && !monthTags.includes(d.getMonth() + 1)) {
-      calendarDays.push({ dateLabel, article: candidate, skipReason: '月タグ不一致のためスキップ' })
+
+    let matchIndex = -1
+    for (let k = 0; k < postable.length; k++) {
+      const idx = (cursor + k) % postable.length
+      const monthTags: number[] = JSON.parse(postable[idx].month_tags_json || '[]')
+      if (monthTags.length === 0 || monthTags.includes(month)) {
+        matchIndex = idx
+        break
+      }
+    }
+
+    if (matchIndex === -1) {
+      calendarDays.push({ dateLabel, article: null, skipReason: `${month}月に合う記事がありません` })
     } else {
-      calendarDays.push({ dateLabel, article: candidate, skipReason: null })
+      calendarDays.push({ dateLabel, article: postable[matchIndex], skipReason: null })
+      cursor = matchIndex + 1
     }
   }
 
@@ -1066,16 +1143,13 @@ blog.get('/blog/articles', async (c) => {
       <div data-tab-panel="list">
         <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div class="flex items-center gap-2 flex-wrap">
-            <button type="button" id="blog-rearrange-btn" class="bg-white border border-gray-300 hover:bg-gray-50 text-xs font-semibold px-3 py-1.5 rounded-lg text-gray-600">
-              <i class="fas fa-shuffle mr-1"></i>まとまりの順番に並び替える
-            </button>
             <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
               <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">すべて</button>
               <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
               <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
             </div>
           </div>
-          <span class="text-xs text-gray-400">まとまり1→2→3→…の順に1記事ずつ交互に並び替えます</span>
+          <span class="text-xs text-gray-400">生成した順番に表示しています</span>
         </div>
 
         <div id="blog-bulk-bar" class="hidden bg-gray-800 text-white rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap mb-4">
@@ -1094,17 +1168,8 @@ blog.get('/blog/articles', async (c) => {
           {articles.length === 0 && <p class="text-sm text-gray-400 p-6">まだ記事がありません。生成テンプレートから写真をアップロードしてください。</p>}
           {articles.map((a) => (
             <div class="flex items-start gap-3 p-4" data-article-id={a.id} data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}>
-              <span class="blog-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-none mt-1 px-1" data-article-id={a.id}>
-                <i class="fas fa-grip-lines"></i>
-              </span>
               <input type="checkbox" class="blog-article-checkbox mt-1 accent-pink-500" data-article-id={a.id} />
-              <input
-                type="number"
-                class="blog-order-input w-14 rounded border border-gray-200 px-1.5 py-1 text-xs text-center [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                data-article-id={a.id}
-                value={a.no}
-                min={1}
-              />
+              <span class="text-xs text-gray-300 font-mono w-6 text-center mt-1.5 flex-none">{a.no}</span>
               <label class="flex flex-col items-center mt-1 flex-none" title="自動投稿の対象">
                 <input
                   type="checkbox"
@@ -1242,83 +1307,6 @@ blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
     .bind(enabled ? 1 : 0, articleId, user.id, user.active_salon_id)
     .run()
 
-  return c.json({ success: true })
-})
-
-blog.post('/api/blog/articles/reorder', async (c) => {
-  const user = c.get('user')
-  const { articleId, newPosition } = await c.req.json<{ articleId: number; newPosition: number }>()
-
-  const { results } = await c.env.DB.prepare(
-    'SELECT id FROM blog_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
-  )
-    .bind(user.id, user.active_salon_id)
-    .all<{ id: number }>()
-  const ids = (results || []).map((r) => r.id)
-  const currentIndex = ids.indexOf(articleId)
-  if (currentIndex === -1) return c.json({ success: false, error: '対象の記事が見つかりません' }, 404)
-
-  ids.splice(currentIndex, 1)
-  const targetIndex = Math.min(Math.max(Math.trunc(newPosition) - 1, 0), ids.length)
-  ids.splice(targetIndex, 0, articleId)
-
-  for (let i = 0; i < ids.length; i++) {
-    await c.env.DB.prepare(
-      'UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
-    )
-      .bind(i, ids[i], user.id, user.active_salon_id)
-      .run()
-  }
-  return c.json({ success: true })
-})
-
-// 「まとまり」(カテゴリ)を1記事ずつ順番に交互させる並び替え。カテゴリの
-// sort_order順にローテーションし、各カテゴリの中では現在のsort_order順を
-// キューとして先頭から1件ずつ取り出す。カテゴリ未設定の記事は最後の
-// 1グループとしてローテーションに混ぜる。ボタン押下時のみ実行され、
-// 記事の生成・承認時に自動では走らない(手動での並び替えを上書きしないため)。
-blog.post('/api/blog/articles/rearrange-by-category', async (c) => {
-  const user = c.get('user')
-
-  const { results: categories } = await c.env.DB.prepare(
-    'SELECT id FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
-  )
-    .bind(user.id, user.active_salon_id)
-    .all<{ id: number }>()
-
-  const { results: articles } = await c.env.DB.prepare(
-    'SELECT id, category_id FROM blog_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
-  )
-    .bind(user.id, user.active_salon_id)
-    .all<{ id: number; category_id: number | null }>()
-
-  const queues = new Map<number | null, number[]>()
-  for (const a of articles || []) {
-    const key = a.category_id
-    if (!queues.has(key)) queues.set(key, [])
-    queues.get(key)!.push(a.id)
-  }
-
-  const groupOrder: (number | null)[] = [...(categories || []).map((cat) => cat.id), null]
-  const orderedIds: number[] = []
-  let remaining = (articles || []).length
-  while (remaining > 0) {
-    for (const key of groupOrder) {
-      const queue = queues.get(key)
-      if (queue && queue.length > 0) {
-        orderedIds.push(queue.shift()!)
-        remaining--
-      }
-    }
-  }
-
-  for (let i = 0; i < orderedIds.length; i++) {
-    await c.env.DB.prepare(
-      'UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
-    )
-      .bind(i, orderedIds[i], user.id, user.active_salon_id)
-      .run()
-  }
   return c.json({ success: true })
 })
 
@@ -1501,7 +1489,7 @@ blog.post('/api/blog/articles/:id/regenerate-body', async (c) => {
   if (!article.category_id) return c.json({ error: 'カテゴリが設定されていません' }, 400)
 
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(article.category_id, user.id, user.active_salon_id)
     .first<CategoryRow>()
