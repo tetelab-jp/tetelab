@@ -96,13 +96,14 @@ export type ReadyArticleRow = {
   image_r2_key: string | null
   image_file_name: string | null
   hpb_category_value: string | null
+  category_name: string | null
   stylist_select_value: string | null
 }
 
 const READY_ARTICLE_SELECT = `
   SELECT
     a.id, a.title, a.body, a.image_r2_key, a.image_file_name,
-    bc.hpb_category_value,
+    bc.hpb_category_value, bc.name AS category_name,
     st.salonboard_stylist_key AS stylist_select_value
   FROM blog_articles a
   LEFT JOIN blog_categories bc ON bc.id = a.category_id
