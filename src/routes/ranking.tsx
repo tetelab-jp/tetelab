@@ -299,8 +299,8 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
   // 表示に変更した。
   const badgeCls =
     size === 'lg'
-      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-base'
-      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-sm'
+      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-xl'
+      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-lg'
 
   if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
   if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
