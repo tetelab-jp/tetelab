@@ -820,7 +820,8 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
     )
       .bind(message, jobId)
       .run()
-    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
+    // 2026-08-15追記(ユーザー指定): 失敗しても承認状態は解除しない
+    await c.env.DB.prepare(`UPDATE blog_articles SET last_error = ? WHERE id = ?`)
       .bind(message, job.article_id)
       .run()
     await c.env.DB.prepare(
@@ -926,9 +927,10 @@ automation.post('/api/blog-automation/jobs/:id/result', async (c) => {
       .run()
     jobStatus = 'success'
   } else {
-    // 承認を解除せず、投稿失敗として明示的にマークする(review-modalから
-    // 再承認すれば次のローテーションで再度対象になる)。
-    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
+    // 2026-08-15追記(ユーザー指定): 失敗しても承認状態は解除しない
+    // (承認済みのままにしておき、次のローテーションで自動的に再試行される
+    // ようにする。5件連続失敗した場合の自動一時停止/アラートは別途機能する)。
+    await c.env.DB.prepare(`UPDATE blog_articles SET last_error = ? WHERE id = ?`)
       .bind(messageWithDiagnostics, articleId)
       .run()
     await c.env.DB.prepare(
