@@ -492,6 +492,16 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(ブログ自動投稿テーブル)に失敗しました:', err)
   }
   try {
+    // 2026-08-15追記2: execution_logs.post_idは旧posts(廃止済み)向けのFKで、
+    // 新しいblog_articlesとは別テーブルのため流用できない(実行履歴の
+    // 「ブログ」タブが常に0件になる不具合の原因)。専用列を追加する。
+    await bindings.DB.prepare(
+      `ALTER TABLE execution_logs ADD COLUMN IF NOT EXISTS blog_article_id INTEGER REFERENCES blog_articles(id) ON DELETE CASCADE`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(execution_logs.blog_article_id)に失敗しました:', err)
+  }
+  try {
     // 2026-08-14(ユーザー指定): サロンボードの1ログインに複数サロン(ヘア/キレイ)が
     // 紐づくアカウント対応。ユーザーが選択した(または単一サロンのため自動確定した)
     // STORE_IDと、サロン種別(ヘア/キレイ)を保持する。

@@ -69,7 +69,8 @@ function randomSessionId(): string {
 
 const EXECUTION_TYPE_LABEL: Record<string, string> = {
   register_style: '登録',
-  request_reflection: '反映申請'
+  request_reflection: '反映申請',
+  post_blog_article: 'ブログ投稿'
 }
 
 const LOG_RESULT_LABEL: Record<string, string> = {
@@ -225,11 +226,12 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
 
   const { results: logs } = await c.env.DB.prepare(
-    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.style_no, l.post_id, l.created_at,
-            s.title AS style_title, p.title AS post_title
+    `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.style_no, l.post_id, l.blog_article_id, l.created_at,
+            s.title AS style_title, p.title AS post_title, ba.title AS blog_article_title
      FROM execution_logs l
      LEFT JOIN styles s ON s.id = l.style_id
      LEFT JOIN posts p ON p.id = l.post_id
+     LEFT JOIN blog_articles ba ON ba.id = l.blog_article_id
      WHERE l.user_id = ? AND l.salon_id = ? ORDER BY l.id DESC LIMIT 30`
   )
     .bind(user.id, user.active_salon_id)
@@ -241,13 +243,15 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       style_id: number | null
       style_no: number | null
       post_id: number | null
+      blog_article_id: number | null
       created_at: string
       style_title: string | null
       post_title: string | null
+      blog_article_title: string | null
     }>()
 
   const logRows = (logs || []).map((l) => {
-    const category = l.post_id ? 'ブログ' : 'スタイル'
+    const category = l.post_id || l.blog_article_id ? 'ブログ' : 'スタイル'
     const errorText = (l.message || '').slice(0, 10000)
     const contentLabel = l.execution_type && (
       <span class="text-xs font-semibold text-gray-400">
@@ -260,6 +264,8 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       </a>
     ) : l.post_id ? (
       l.post_title || `投稿${l.post_id}`
+    ) : l.blog_article_id ? (
+      l.blog_article_title || `記事${l.blog_article_id}`
     ) : (
       '-'
     )
@@ -877,12 +883,24 @@ automation.post('/api/blog-automation/jobs/:id/result', async (c) => {
     )
       .bind(articleId)
       .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (blog_article_id, user_id, salon_id, execution_type, status, message)
+       VALUES (?, ?, ?, 'post_blog_article', 'success', ?)`
+    )
+      .bind(articleId, userId, job.salon_id, messageWithDiagnostics)
+      .run()
     jobStatus = 'success'
   } else {
     // 承認を解除せず、投稿失敗として明示的にマークする(review-modalから
     // 再承認すれば次のローテーションで再度対象になる)。
     await c.env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
       .bind(messageWithDiagnostics, articleId)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (blog_article_id, user_id, salon_id, execution_type, status, message)
+       VALUES (?, ?, ?, 'post_blog_article', 'failure', ?)`
+    )
+      .bind(articleId, userId, job.salon_id, `ブログ投稿失敗: ${messageWithDiagnostics}`)
       .run()
     jobStatus = 'failed'
   }
