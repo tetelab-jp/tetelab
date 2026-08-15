@@ -66,4 +66,17 @@ resource "aws_db_instance" "main" {
   final_snapshot_identifier = "${var.project_name}-db-final"
   backup_retention_period   = 7
   deletion_protection       = true
+
+  # 2026-08-15追記(重大インシデント回避): 実際に稼働中のRDSインスタンスは
+  # まだ未暗号化(storage_encrypted=false)のまま(上のコメント通り、安全な
+  # 移行手順(スナップショット→暗号化コピー→復元→import)がまだ実施されて
+  # いない)。storage_encrypted=trueをコード上の目標として残しつつ、この属性の
+  # 差分だけはterraform plan/applyが強制的な「削除→再作成」を提案しないよう
+  # 無視する。これが無いと、SES追加等の無関係な変更をapplyしただけで本番
+  # データベースが誤って作り直され、全データが失われる重大な事故につながる。
+  # 実際の暗号化移行を行う際は、このlifecycleブロックを外してから、
+  # 上のコメントの手順(a)または(b)を計画的に実施すること。
+  lifecycle {
+    ignore_changes = [storage_encrypted]
+  }
 }
