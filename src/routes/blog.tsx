@@ -1148,33 +1148,46 @@ blog.get('/blog/articles', async (c) => {
       </div>
 
       <div data-tab-panel="list">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <div class="flex items-center gap-2 flex-wrap">
-            <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
-              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">すべて</button>
-              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
-              <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
+        <div class="mb-3 space-y-2">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+              <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
+                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">すべて</button>
+                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
+                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
+              </div>
+              <select id="blog-category-filter" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+                <option value="">すべての記事カテゴリ</option>
+                {(categoryOptions || []).map((cat) => (
+                  <option value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
+              <select id="blog-sort-select" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+                <option value="generated">生成順に表示</option>
+                <option value="season">季節柄でソート</option>
+              </select>
             </div>
-            <select id="blog-category-filter" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
-              <option value="">すべての記事カテゴリ</option>
-              {(categoryOptions || []).map((cat) => (
-                <option value={cat.id}>{cat.name}</option>
-              ))}
-            </select>
-            <select id="blog-sort-select" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
-              <option value="generated">生成順に表示</option>
-              <option value="season">季節柄でソート</option>
-            </select>
-            <button type="button" id="blog-select-all-btn" class="text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">全選択</button>
-            <button type="button" id="blog-deselect-all-btn" class="text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">全解除</button>
+            <span class="text-xs text-gray-400">生成した順番に表示しています</span>
           </div>
-          <span class="text-xs text-gray-400">生成した順番に表示しています</span>
+
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-gray-400">承認チェック</span>
+              <button type="button" id="blog-select-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600">全選択</button>
+              <button type="button" id="blog-deselect-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600">全解除</button>
+            </div>
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs text-blue-500"><i class="fas fa-paper-plane mr-1"></i>自動投稿</span>
+              <button type="button" id="blog-auto-post-select-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 text-blue-600">全てON</button>
+              <button type="button" id="blog-auto-post-deselect-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 text-blue-600">全てOFF</button>
+            </div>
+          </div>
         </div>
 
         <div id="blog-bulk-bar" class="hidden bg-gray-800 text-white rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap mb-4">
           <span><b id="blog-selected-count">0</b>件を選択中</span>
           <button type="button" id="blog-bulk-approve-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">まとめて承認する</button>
-          <select id="blog-bulk-coupon-select" class="bg-white/10 text-xs px-2 py-1.5 rounded-lg">
+          <select id="blog-bulk-coupon-select" class="bg-white/10 text-xs px-2 py-1.5 rounded-lg w-full sm:w-auto min-w-0">
             <option value="">クーポンを設定...</option>
             {(couponOptions || []).map((cp) => (
               <option value={cp.id}>{cp.name}</option>
