@@ -1427,8 +1427,8 @@ blog.post('/api/blog/articles/bulk-approve', async (c) => {
   let count = 0
   for (const id of articleIds || []) {
     const result = await c.env.DB.prepare(
-      `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-       WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'unapproved'`
+      `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, last_error = NULL
+       WHERE id = ? AND user_id = ? AND salon_id = ? AND status IN ('unapproved', 'posting_failed')`
     )
       .bind(id, user.id, user.active_salon_id)
       .run()
@@ -1545,8 +1545,8 @@ blog.post('/api/blog/articles/:id/approve', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const result = await c.env.DB.prepare(
-    `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'unapproved'`
+    `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, last_error = NULL
+     WHERE id = ? AND user_id = ? AND salon_id = ? AND status IN ('unapproved', 'posting_failed')`
   )
     .bind(id, user.id, user.active_salon_id)
     .run()
