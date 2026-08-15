@@ -365,6 +365,21 @@ function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; si
   )
 }
 
+// 過去列専用: 最新列(順位+店舗数の2行)と縦の高さを揃えるため、店舗数の行を
+// 見えない(invisible)プレースホルダーとして確保する。こうすることでセルの
+// vertical-align:middle(中央揃え)を使っても、順位バッジのY位置が最新列と
+// 過去列とでぴったり揃う(見えない行が無いと、行の高さが最新列基準になった際に
+// 過去列の1行だけのコンテンツが中央に来てしまい、順位の位置がずれて見える)。
+function PastAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
+  const placeholderCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  return (
+    <span class="inline-flex flex-col items-center gap-0.5">
+      <RankPivotCell current={current} prev={prev} size={size} />
+      <span class={`${placeholderCls} invisible`}>0店舗中</span>
+    </span>
+  )
+}
+
 /** 計測日を「2026/8/12」のような短い表記にする(年も含める) */
 function shortDate(sqliteTimestamp: string): string {
   const ymd = formatJstDateTime(sqliteTimestamp).slice(0, 10)
@@ -490,7 +505,7 @@ function renderRankTable(
           <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
             <td
               class={
-                `py-3 px-3 text-left font-semibold text-gray-900 truncate align-top ${v.bodyText} ${v.keywordColClass}` +
+                `py-3 px-3 text-left font-semibold text-gray-900 truncate ${v.bodyText} ${v.keywordColClass}` +
                 (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
               }
               title={kw}
@@ -508,21 +523,21 @@ function renderRankTable(
               if (!isLatest) {
                 return (
                   <>
-                    <td class="py-3 px-1 border-l border-gray-100 align-top">
-                      <RankPivotCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                    <td class="py-3 px-1 border-l border-gray-100">
+                      <PastAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
                     </td>
-                    <td class="py-3 px-1 align-top">
-                      <RankPivotCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                    <td class="py-3 px-1">
+                      <PastAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
                     </td>
                   </>
                 )
               }
               return (
                 <>
-                  <td class={`py-3 px-1 border-l border-gray-100 align-top ${v.latestCol1Class}${rowBg}`}>
+                  <td class={`py-3 px-1 border-l border-gray-100 ${v.latestCol1Class}${rowBg}`}>
                     <LatestAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
                   </td>
-                  <td class={`py-3 px-1 border-r-2 border-gray-200 align-top ${v.latestCol2Class}${rowBg}`}>
+                  <td class={`py-3 px-1 border-r-2 border-gray-200 ${v.latestCol2Class}${rowBg}`}>
                     <LatestAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
                   </td>
                 </>

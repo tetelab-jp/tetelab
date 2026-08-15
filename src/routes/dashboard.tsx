@@ -99,7 +99,7 @@ dashboard.get('/dashboard', async (c) => {
       {activeSalonInfo?.salon_name && (
         <div class="flex items-center gap-2 min-w-0">
           <i class="fas fa-shop text-pink-500 text-sm md:text-lg flex-shrink-0"></i>
-          <h2 class="text-sm md:text-2xl font-bold text-gray-900 truncate">{activeSalonInfo.salon_name}</h2>
+          <h2 class="text-sm md:text-2xl font-bold text-gray-900 break-words md:truncate">{activeSalonInfo.salon_name}</h2>
         </div>
       )}
       {blockedError && (
