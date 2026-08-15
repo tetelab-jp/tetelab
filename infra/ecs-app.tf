@@ -90,6 +90,14 @@ data "aws_iam_policy_document" "app_task" {
     actions   = ["sns:Publish"]
     resources = [aws_sns_topic.alerts.arn]
   }
+  # 2026-08-15追記: パスワード再設定メール送信(src/lib/ses-email.ts)用。
+  # SESの送信先はユーザーが入力したメールアドレスで動的に決まるため
+  # (SNSのトピックARNのような固定リソースが無い)、resourcesは*にする。
+  statement {
+    sid       = "SendPasswordResetEmail"
+    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_role_policy" "app_task" {
@@ -123,7 +131,8 @@ resource "aws_ecs_task_definition" "app" {
         { name = "ECS_CONTAINER_NAME", value = "worker" },
         { name = "ECS_SUBNET_IDS", value = join(",", data.aws_subnets.default_public.ids) },
         { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id },
-        { name = "SNS_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn }
+        { name = "SNS_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn },
+        { name = "SES_FROM_EMAIL", value = local.has_domain ? "noreply@${var.route53_zone_name}" : "" }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },

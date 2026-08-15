@@ -178,3 +178,21 @@ export function generateEncryptionKeyBase64(): string {
   const key = crypto.getRandomValues(new Uint8Array(32))
   return bufToBase64(key)
 }
+
+// ---------- パスワード再設定トークン ----------
+// メールで送るリンクに載せる生トークンと、DBに保存するハッシュを分離する
+// (パスワードそのものと違い高エントロピーな乱数のため、低速なPBKDF2ではなく
+// 単純なSHA-256ハッシュで十分)。生トークンはDBに保存しないため、メールの
+// 盗み見以外の経路(DB漏洩等)では再設定を行えない。
+
+export function generatePasswordResetToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  let binary = ''
+  for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+}
+
+export async function hashPasswordResetToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', ENC.encode(token))
+  return bufToBase64(digest)
+}
