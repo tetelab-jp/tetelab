@@ -341,7 +341,7 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
   }
 
   return (
-    <span class="inline-flex items-baseline gap-1 whitespace-nowrap">
+    <span class="inline-flex items-baseline gap-0.5 whitespace-nowrap">
       <span class={badgeCls}>{current.rank}</span>
       {deltaText && <span class={`${deltaCls} font-semibold ${deltaColorCls}`}>({deltaText})</span>}
     </span>
@@ -490,7 +490,7 @@ function renderRankTable(
           <tr class={'border-b border-gray-50' + (rowIdx % 2 === 1 ? ' bg-gray-50/40' : '')}>
             <td
               class={
-                `py-3 px-3 text-left font-semibold text-gray-900 truncate ${v.bodyText} ${v.keywordColClass}` +
+                `py-3 px-3 text-left font-semibold text-gray-900 truncate align-top ${v.bodyText} ${v.keywordColClass}` +
                 (rowIdx % 2 === 1 ? ' bg-gray-50' : ' bg-white')
               }
               title={kw}
@@ -508,10 +508,10 @@ function renderRankTable(
               if (!isLatest) {
                 return (
                   <>
-                    <td class="py-3 px-1 border-l border-gray-100">
+                    <td class="py-3 px-1 border-l border-gray-100 align-top">
                       <RankPivotCell current={middleCurrent} prev={middlePrev} size={v.size} />
                     </td>
-                    <td class="py-3 px-1">
+                    <td class="py-3 px-1 align-top">
                       <RankPivotCell current={smallCurrent} prev={smallPrev} size={v.size} />
                     </td>
                   </>
@@ -519,10 +519,10 @@ function renderRankTable(
               }
               return (
                 <>
-                  <td class={`py-3 px-1 border-l border-gray-100 ${v.latestCol1Class}${rowBg}`}>
+                  <td class={`py-3 px-1 border-l border-gray-100 align-top ${v.latestCol1Class}${rowBg}`}>
                     <LatestAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
                   </td>
-                  <td class={`py-3 px-1 border-r-2 border-gray-200 ${v.latestCol2Class}${rowBg}`}>
+                  <td class={`py-3 px-1 border-r-2 border-gray-200 align-top ${v.latestCol2Class}${rowBg}`}>
                     <LatestAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
                   </td>
                 </>
@@ -741,6 +741,21 @@ ranking.post('/seo/measure', requireAuth, requireSeoEnabled, async (c) => {
     .first<{ id: number }>()
   if (runningRun) {
     return c.json({ success: false, error: '既に計測が実行中です。完了までお待ちください' }, 409)
+  }
+
+  // 手動測定は1日最大2回まで(ユーザー指定)。過去2日分のmanual実行を取得し、
+  // JST日付で本日分を数える。
+  const DAILY_MANUAL_MEASURE_LIMIT = 2
+  const { results: recentManualRuns } = await c.env.DB.prepare(
+    `SELECT started_at FROM ranking_runs
+     WHERE user_id = ? AND salon_id = ? AND trigger = 'manual' AND started_at >= now() - interval '2 days'`
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ started_at: string }>()
+  const todayYmd = jstYmd(new Date(Date.now() + 9 * 60 * 60 * 1000))
+  const todayManualCount = (recentManualRuns || []).filter((r) => jstYmd(toJstDate(r.started_at)) === todayYmd).length
+  if (todayManualCount >= DAILY_MANUAL_MEASURE_LIMIT) {
+    return c.json({ success: false, error: `手動測定は1日最大${DAILY_MANUAL_MEASURE_LIMIT}回までです。翌日またお試しください` }, 429)
   }
 
   const run = await c.env.DB.prepare(

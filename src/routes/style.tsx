@@ -283,17 +283,17 @@ function StyleListSection({
   return (
     <>
       <div class="flex items-center justify-between flex-wrap gap-2">
-        <p class="font-semibold">
-          <i class="fas fa-portrait mr-2 text-pink-500"></i>{heading}（{totalCount}件）
-        </p>
-        <div class="flex items-center gap-3">
-          <span class="text-sm text-gray-600">
+        <p class="font-semibold flex items-center gap-2 flex-wrap">
+          <span><i class="fas fa-portrait mr-2 text-pink-500"></i>{heading}（{totalCount}件）</span>
+          <span class="text-sm font-normal text-gray-600">
             {isTemplateMode ? '選択中' : '投稿対象'}:{' '}
             <span id={isTemplateMode ? 'template-target-selected-count' : 'selected-count'} class="font-bold text-pink-600">
               {isTemplateMode ? 0 : selectedCount}
             </span>{' '}
             / {totalCount} 件
           </span>
+        </p>
+        <div class="flex items-center gap-2">
           <button
             id={isTemplateMode ? 'template-target-select-all-btn' : 'select-all-btn'}
             type="button"
@@ -309,17 +309,11 @@ function StyleListSection({
             全解除
           </button>
           {!isTemplateMode && (
-            <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
-              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">
-                すべて
-              </button>
-              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">
-                ONのみ
-              </button>
-              <button type="button" class="style-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">
-                OFFのみ
-              </button>
-            </div>
+            <select id="style-filter-select" class="text-xs font-semibold text-gray-600 border border-gray-300 rounded px-2 py-1.5">
+              <option value="all">すべて</option>
+              <option value="on">ONのみ</option>
+              <option value="off">OFFのみ</option>
+            </select>
           )}
           {showCreateLink && (
             <a
@@ -1527,12 +1521,10 @@ style.get('/style/schedule', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿を有効にすると、まず動作確認として登録順の先頭3件を連続投稿し、その後は
-        <b>深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯</b>に、自動投稿対象（入力完了済み）の
-        スタイルを登録順に、{POST_INTERVAL_MINUTES_LABEL}分おきに1件ずつ巡回しながら「登録＋反映申請」まで自動実行します
-        （最後まで行ったら先頭に戻り、日付をまたいでも継続します）。
-        また、5件連続で投稿に失敗した場合は5時間自動的に停止します。
-        いったんOFFにしてから再度ONにすると、先頭3件からの動作確認をやり直します。
+        自動投稿対象（入力完了済み）のスタイルを登録順に、{POST_INTERVAL_MINUTES_LABEL}分おき
+        （深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯）に1件ずつ「登録＋反映申請」まで自動実行します。
+        （最後まで行ったら先頭に戻り、日付をまたいでも継続）
+        <br />
         現在<b>{selectedCount}件</b>が対象です。
       </div>
 
