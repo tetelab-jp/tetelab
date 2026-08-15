@@ -9,6 +9,7 @@ import {
 import { signJwt } from '../lib/jwt'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import { sendEmail } from '../lib/ses-email'
+import { publishAlert } from '../lib/sns-alert'
 import type { Bindings } from '../types'
 
 const auth = new Hono<{ Bindings: Bindings }>()
@@ -303,7 +304,7 @@ auth.post('/forgot-password', async (c) => {
 
       const baseUrl = c.env.APP_BASE_URL || new URL(c.req.url).origin
       const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`
-      await sendEmail(
+      const result = await sendEmail(
         c.env,
         email,
         '【SalonMotion】パスワード再設定のご案内',
@@ -311,6 +312,16 @@ auth.post('/forgot-password', async (c) => {
           `このリンクの有効期限は${PASSWORD_RESET_TOKEN_TTL_MINUTES}分です。\n` +
           `心当たりがない場合は、このメールを破棄してください。`
       )
+      // 画面上は(なりすまし対策のため)常に「送信しました」と表示するため、
+      // 送信失敗自体はユーザーには伝わらない。気づけるよう管理者へアラート
+      // 通知する(既存のCloudWatchアラームと同じSNSトピック、sns-alert.ts参照)。
+      if (!result.success) {
+        await publishAlert(
+          c.env,
+          '[SalonMotion] パスワード再設定メールの送信に失敗',
+          `user_id=${user.id} email=${email}\n${result.error || '(詳細不明)'}`
+        ).catch(() => {})
+      }
     }
   }
 
