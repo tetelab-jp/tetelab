@@ -8,6 +8,7 @@ import {
   generateImageDescription,
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
+import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -1053,6 +1054,20 @@ blog.get('/blog/articles', async (c) => {
   const approved = articles.filter((a) => a.status === 'approved').length
   const unapproved = articles.filter((a) => a.status === 'unapproved').length
 
+  const schedule = await c.env.DB.prepare(
+    `SELECT enabled, paused_until FROM blog_post_schedules WHERE user_id = ? AND salon_id = ?`
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ enabled: number; paused_until: string | null }>()
+  const scheduleEnabled = schedule?.enabled === 1
+  const pausedUntilMs = schedule?.paused_until ? new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime() : null
+  const isPaused = !!pausedUntilMs && pausedUntilMs > Date.now()
+  const inFlightBlogJob = await c.env.DB.prepare(
+    `SELECT 1 as x FROM blog_post_jobs WHERE user_id = ? AND salon_id = ? AND status IN ('pending', 'running') LIMIT 1`
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ x: number }>()
+
   const now = jstNow()
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
   const remainingDaysInMonth = daysInMonth - now.getDate() + 1
@@ -1140,6 +1155,39 @@ blog.get('/blog/articles', async (c) => {
           </div>
         )}
         <p class="text-xs text-gray-400 mt-2">承認済み・投稿待ち / 未承認 / 生成中 / 投稿失敗 / 未生成</p>
+      </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p class="font-semibold"><i class="fas fa-robot mr-2 text-pink-500"></i>SALON BOARDへの自動投稿</p>
+            <p class="text-xs text-gray-400 mt-1">
+              承認済み・自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
+            </p>
+          </div>
+          <form method="post" action="/blog/articles/schedule" class="flex items-center gap-2">
+            <label class="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" name="enabled" checked={scheduleEnabled} onchange="this.form.submit()" class="sr-only peer" />
+              <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+            </label>
+            <span class={'text-sm font-semibold ' + (scheduleEnabled ? 'text-pink-600' : 'text-gray-400')}>
+              {scheduleEnabled ? '自動投稿 ON' : '自動投稿 OFF'}
+            </span>
+          </form>
+        </div>
+        {isPaused && (
+          <p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
+            連続で投稿に失敗したため、一時的に自動投稿を停止しています(しばらくすると自動的に再開します)。
+          </p>
+        )}
+        <div class="flex items-center gap-3 mt-4">
+          <button type="button" id="blog-test-run-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg" disabled={!!inFlightBlogJob}>
+            今すぐ1本投稿する
+          </button>
+          {inFlightBlogJob && <span class="text-xs text-gray-400">投稿処理が進行中です...</span>}
+          <p id="blog-test-run-status" class="text-sm text-gray-500"></p>
+        </div>
       </div>
 
       <div class="flex gap-2 border-b border-gray-100">
@@ -1333,6 +1381,31 @@ blog.get('/blog/articles', async (c) => {
     </PageLayout>,
     { title: '投稿記事一覧' }
   )
+})
+
+// ブログ自動投稿(SALON BOARDへの実投稿)のワークスペース単位ON/OFF。
+// 行が無い(初めてこのページを開いた)場合はOFF扱いで、明示的にONにする
+// までは自動投稿されない(ユーザー指定: 初回は必ずOFF)。
+blog.post('/blog/articles/schedule', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const enabled = body.enabled === 'on' || body.enabled === 'true'
+
+  await c.env.DB.prepare(
+    `INSERT INTO blog_post_schedules (user_id, salon_id, enabled)
+     VALUES (?, ?, ?)
+     ON CONFLICT (salon_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(user.id, user.active_salon_id, enabled ? 1 : 0)
+    .run()
+
+  return c.redirect('/blog/articles')
+})
+
+blog.post('/api/blog/articles/reset-stuck-jobs', async (c) => {
+  const user = c.get('user')
+  const count = await resetStuckBlogJobsForUser(c.env, user.id, user.active_salon_id)
+  return c.json({ success: true, count })
 })
 
 blog.post('/api/blog/articles/toggle-auto-post', async (c) => {

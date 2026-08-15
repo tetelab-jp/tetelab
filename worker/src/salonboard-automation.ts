@@ -998,3 +998,201 @@ export async function postStyleImageFull(page: Page, input: StylePostInput, log:
   await draftRegisterStyle(page, input, log)
   await submitReflectApplication(page, log)
 }
+
+// ============================================
+// ブログ投稿(2026-08-15追記)
+//
+// ユーザー提供のSALON BOARD実HTML(ブログ編集入力画面・確認画面・完了画面の
+// view-source)に基づく。スタイル投稿と異なり「登録」→「反映申請」の2段階
+// ではなく、入力→確認→「登録・反映する」の1連の操作でHOT PEPPER Beautyへの
+// 掲載まで完了する(反映申請という別工程は無い)。SALON BOARD自体の予約投稿
+// 機能(rsvTokoFlg)は使わず、常に即時投稿にする(投稿タイミングはアプリ側の
+// スケジューラ/cronが判断する)。
+//
+// 確定済みの実DOM構造:
+//   - フォーム: #blog (POST /CLP/bt/blog/blog/)
+//   - タイトル: input#blogTitle name="title" (最大50、全角25文字以下)
+//   - カテゴリ: select#blogCategoryCd (BL01〜BL11)
+//   - 投稿者: select#stylistId (Tコード)
+//   - 本文: textarea#blogContents (nicEditのリッチテキストエディタ。
+//     フォーム送信自体は元のtextareaの.valueを見る設計のため、.valueへ
+//     直接セットする方式で問題ない想定。ただし実機未検証のため、初回の
+//     手動実行結果で本文が正しく反映されているか必ず確認すること)
+//   - 即時/予約投稿: input[name="rsvTokoFlg"][value="0"] (常にこちらを選択)
+//   - 画像アップロード: a#upload(.jscImageUploaderModalTrigger)クリックで
+//     モーダルが開く。file input: input#sendFile。登録ボタン:
+//     input.jscImageUploaderModalSubmitButton(スタイル投稿の画像アップロード
+//     モーダルと共通のUIコンポーネント、クラス名が同一)。完了判定は
+//     imagePath1(最初の空きスロットが自動的に埋まる想定、複数画像スロットの
+//     具体的な埋まり方は実機未検証)。
+//   - 入力完了後: a#confirm(「確認する」)をクリックして確認画面へ遷移。
+//   - 確認画面: a#reflect(「登録・反映する」、クリックで即座にHOT PEPPER
+//     Beautyへ掲載。反映申請は別途不要)。a#unReflect(「登録・未反映にする」、
+//     未使用)。
+//   - 完了画面: 本文に「ブログの登録が完了しました。」という文言が入る。
+// ============================================
+
+export type BlogPostInput = {
+  title: string // 最大25文字(全角換算)
+  body: string // 本文(1000文字程度、フッター込み)
+  categoryValue: string // blogCategoryCd の <option value>(BL01〜BL11)、空なら未選択のまま
+  stylistSelectValue: string // stylistId の <option value>(Tコード)、空なら未選択のまま
+  imageBuffer: ArrayBuffer | null // 画像が無い記事は許容する(SALON BOARD側の必須判定に委ねる)
+  imageFileName: string | null
+}
+
+export type BlogPostResult = {
+  success: boolean
+  step: 'login' | 'navigate' | 'form_fill' | 'image_upload' | 'confirm' | 'submit' | 'done'
+  message: string
+}
+
+/**
+ * ブログ画像アップロードモーダル。uploadFrontImage()と同じ「File/DataTransfer
+ * をpage.evaluate内で直接組み立てて<input>にセットする」方式を踏襲する
+ * (実ファイルパスやfetch()直叩きを経由しない、確定済みの安定動作パターン)。
+ * placeholder(#upload)・file input(#sendFile)・登録ボタンのクラス名は
+ * スタイル投稿の画像アップロードモーダルと共通の実装であることをユーザー
+ * 提供のHTMLで確認済みだが、完了判定用の要素(imagePath1)はスタイル側の
+ * #FRONT_IMG_ID_IDとは異なる構造のため、こちらは実機で未検証。
+ */
+async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
+  log('ブログ画像アップロードモーダルを開いています...')
+  await page.waitForSelector('#upload', { timeout: 15000 })
+  await page.click('#upload')
+
+  const fileInput = (await page.waitForSelector('#sendFile', { timeout: 15000 })) as ElementHandle<HTMLInputElement> | null
+  if (!fileInput) {
+    throw new Error('画像アップロードに失敗しました: #sendFile が見つかりませんでした')
+  }
+
+  log(`アップロード画像サイズ: ${(imageBuffer.byteLength / 1024).toFixed(1)}KB`)
+  const base64Image = Buffer.from(imageBuffer).toString('base64')
+  await fileInput.evaluate(
+    (el, args) => {
+      const input = el as HTMLInputElement
+      const binary = atob(args.base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+      const file = new File([bytes], args.fileName, { type: 'image/jpeg' })
+      const dataTransfer = new DataTransfer()
+      dataTransfer.items.add(file)
+      input.files = dataTransfer.files
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    },
+    { base64: base64Image, fileName }
+  )
+
+  log('ファイル選択完了。「登録する」ボタンの活性化を待機中...')
+  await page.waitForSelector('input.jscImageUploaderModalSubmitButton.isActive', { timeout: 15000 })
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  await page.click('input.jscImageUploaderModalSubmitButton')
+
+  log('アップロード完了の検知を待機中...')
+  try {
+    await page.waitForFunction(
+      () => {
+        const el = document.getElementById('imagePath1') as HTMLInputElement | null
+        if (el && el.value) return true
+        // フォールバック: サムネイル一覧に画像が1件以上表示されたかで判定する
+        const thumbs = document.querySelectorAll('.imageUploaderModalThumbnail')
+        return thumbs.length > 0
+      },
+      { timeout: 45000 }
+    )
+  } catch (err: any) {
+    throw new Error(`画像アップロードに失敗しました: アップロード完了を45秒待っても検知できませんでした(${String(err?.message || err)})`)
+  }
+  log('画像アップロードが完了しました')
+
+  // モーダルを閉じる(開いたままだと後続のフォーム操作を妨げる可能性があるため)
+  const closeBtn = await page.$('.imageUploaderModalTopCloseButton')
+  if (closeBtn) {
+    await closeBtn.click().catch(() => {})
+    await new Promise((resolve) => setTimeout(resolve, 300))
+  }
+}
+
+/**
+ * ブログ記事1件をSALON BOARDへ投稿(入力→確認→登録・反映)する。
+ */
+export async function postBlogArticle(page: Page, input: BlogPostInput, log: AutomationLogger): Promise<void> {
+  log('ブログ編集ページへ遷移中...')
+  await page.goto(`${SALONBOARD_BASE_URL}/CLP/bt/blog/blog/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await page.waitForSelector('#blog', { timeout: 15000 })
+
+  if (input.imageBuffer && input.imageFileName) {
+    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
+  }
+
+  if (input.stylistSelectValue) {
+    const stylistHandle = await page.$('#stylistId')
+    if (stylistHandle) await page.select('#stylistId', input.stylistSelectValue)
+  }
+
+  if (input.categoryValue) {
+    const categoryHandle = await page.$('#blogCategoryCd')
+    if (categoryHandle) await page.select('#blogCategoryCd', input.categoryValue)
+  }
+
+  await page.evaluate((text: string) => {
+    const el = document.getElementById('blogTitle') as HTMLInputElement | null
+    if (el) el.value = text
+  }, input.title)
+
+  // 本文: nicEditのリッチテキストエディタが元のtextareaを隠して表示を担当するが、
+  // フォーム送信時に読まれるのは元のtextarea自身の.value。
+  await page.evaluate((text: string) => {
+    const el = document.getElementById('blogContents') as HTMLTextAreaElement | null
+    if (el) {
+      el.value = text
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+  }, input.body)
+
+  // 即時投稿を明示する(SALON BOARD側の予約投稿機能は使わない)
+  await page.evaluate(() => {
+    const radio = document.querySelector('input[name="rsvTokoFlg"][value="0"]') as HTMLInputElement | null
+    if (radio) radio.checked = true
+  })
+
+  log('入力内容を確認画面へ送信中...')
+  const confirmHandle = await page.$('#confirm')
+  if (!confirmHandle) {
+    throw new Error('「確認する」ボタン(#confirm)が見つかりませんでした')
+  }
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+    confirmHandle.click()
+  ])
+
+  const reflectHandle = await page.waitForSelector('#reflect', { timeout: 15000 }).catch(() => null)
+  if (!reflectHandle) {
+    const currentUrl = page.url()
+    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
+    throw new Error(
+      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした。url=${currentUrl} 画面内容=${bodySnippet}`
+    )
+  }
+
+  log('「登録・反映する」を実行中...')
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+    reflectHandle.click()
+  ])
+
+  const completed = await page
+    .waitForFunction(() => document.body.innerText.includes('登録が完了しました'), { timeout: 20000 })
+    .then(() => true)
+    .catch(() => false)
+
+  if (!completed) {
+    const currentUrl = page.url()
+    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
+    throw new Error(`ブログ登録の完了を確認できませんでした。url=${currentUrl} 画面内容=${bodySnippet}`)
+  }
+
+  log('ブログ登録が完了しました')
+}
