@@ -356,11 +356,16 @@ function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) 
 }
 
 // 最新列専用: 順位バッジの下に店舗数を改行して表示する(中エリア/小エリア
-// それぞれ1列)。セルの中央揃え(vertical-align:middle、tdのデフォルト)に
-// より、行の高さの枠に対して自動的に中央配置される。
+// それぞれ1列)。過去列(1行のみ)と行の高さが揃うと、この列の順位バッジは
+// 2行ブロックの上寄りに来てしまい過去列の順位より高い位置にずれるため、
+// 順位の上にも店舗数と同じ高さの非表示スペーサーを置いてブロックを
+// 上下対称にし、順位バッジ自体が行の高さの中心に来るようにしている。
 function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
   return (
     <span class="inline-flex flex-col items-center gap-0.5">
+      <span class="invisible" aria-hidden="true">
+        <StoreCountCell cell={current} size={size} />
+      </span>
       <RankPivotCell current={current} prev={prev} size={size} />
       <StoreCountCell cell={current} size={size} />
     </span>
