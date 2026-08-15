@@ -1138,18 +1138,56 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
 
   await page.evaluate((text: string) => {
     const el = document.getElementById('blogTitle') as HTMLInputElement | null
-    if (el) el.value = text
+    if (el) {
+      el.value = text
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+      el.dispatchEvent(new Event('keyup', { bubbles: true }))
+    }
   }, input.title)
 
-  // 本文: nicEditのリッチテキストエディタが元のtextareaを隠して表示を担当するが、
-  // フォーム送信時に読まれるのは元のtextarea自身の.value。
+  // 本文: nicEditのリッチテキストエディタが元のtextareaを隠し、代わりに
+  // 編集用のiframe(またはcontenteditable領域)を表示する。フォーム送信時、
+  // nicEdit自身がその「編集領域の内容」を元のtextareaへ上書き同期するため、
+  // textareaの.valueへ直接セットするだけでは、送信直前にnicEditによって
+  // (何も入力されていない)空の内容で上書きされてしまう(2026-08-15の実機
+  // テストで確認された不具合)。nicEditの編集領域そのものへ書き込む。
   await page.evaluate((text: string) => {
+    const w = window as any
+    let filled = false
+    // 方法1: nicEditのグローバルAPI(最も確実)
+    if (w.nicEditors && typeof w.nicEditors.findEditor === 'function') {
+      const editor = w.nicEditors.findEditor('blogContents')
+      if (editor && typeof editor.setContent === 'function') {
+        editor.setContent(text)
+        filled = true
+      }
+    }
+    // 方法2: nicEditが生成する編集領域(iframe内のdocumentであるケース)
+    if (!filled) {
+      const iframe = document.querySelector('iframe[id^="blogContents"], .nicEdit-main iframe') as HTMLIFrameElement | null
+      if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
+        iframe.contentDocument.body.innerHTML = text
+        filled = true
+      }
+    }
+    // 方法3: nicEditが生成する編集領域(contenteditableなdivであるケース)
+    if (!filled) {
+      const editableDiv = document.querySelector('.nicEdit-main') as HTMLElement | null
+      if (editableDiv) {
+        editableDiv.innerHTML = text
+        filled = true
+      }
+    }
+    // 元のtextarea自体にも念のためセットしておく(上記のいずれの方法が
+    // 実際に使われているかに関わらず、送信直前の状態を保険として揃える)。
     const el = document.getElementById('blogContents') as HTMLTextAreaElement | null
     if (el) {
       el.value = text
       el.dispatchEvent(new Event('input', { bubbles: true }))
       el.dispatchEvent(new Event('change', { bubbles: true }))
     }
+    ;(w.__blogContentsFillMethod as any) = filled ? 'nicedit' : 'textarea-only'
   }, input.body)
 
   // 即時投稿を明示する(SALON BOARD側の予約投稿機能は使わない)
@@ -1157,6 +1195,24 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     const radio = document.querySelector('input[name="rsvTokoFlg"][value="0"]') as HTMLInputElement | null
     if (radio) radio.checked = true
   })
+
+  // 送信直前の入力状態を診断ログに残す(nicEditの同期に失敗して本文が
+  // 空のまま送信され、サーバー側バリデーションで弾かれるケースの切り分け用)。
+  const preSubmitState = await page
+    .evaluate(() => {
+      const w = window as any
+      const titleEl = document.getElementById('blogTitle') as HTMLInputElement | null
+      const bodyEl = document.getElementById('blogContents') as HTMLTextAreaElement | null
+      return {
+        fillMethod: w.__blogContentsFillMethod || '(不明)',
+        titleLen: titleEl ? titleEl.value.length : -1,
+        bodyLen: bodyEl ? bodyEl.value.length : -1
+      }
+    })
+    .catch(() => null)
+  log(
+    `送信直前の状態: 本文入力方式=${preSubmitState?.fillMethod ?? '(取得失敗)'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'}`
+  )
 
   log('入力内容を確認画面へ送信中...')
   const confirmHandle = await page.$('#confirm')
@@ -1173,7 +1229,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     const currentUrl = page.url()
     const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
     throw new Error(
-      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした。url=${currentUrl} 画面内容=${bodySnippet}`
+      `確認画面の「登録・反映する」ボタン(#reflect)が見つかりませんでした(送信直前: 本文入力方式=${preSubmitState?.fillMethod ?? '?'} タイトル文字数=${preSubmitState?.titleLen ?? '?'} 本文文字数=${preSubmitState?.bodyLen ?? '?'})。url=${currentUrl} 画面内容=${bodySnippet}`
     )
   }
 
