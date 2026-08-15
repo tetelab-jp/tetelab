@@ -290,22 +290,55 @@ function KeywordFields({ keywords }: { keywords?: string[] }) {
 type Cell = { rank: number | null; status: string; resultCount: number | null } | undefined
 type CellSize = 'sm' | 'lg'
 
-// 順位測定表の1マス(今回順位 + 1つ右の列=前回との比較)。
+type DeltaInfo = { text: string; colorCls: string } | null
+
+// 2026-08-13変更: 背景付きバッジ(ピンクグラデーション+白文字)は数字が
+// 見づらいという指摘があったため、背景無し・ピンク文字のみのシンプルな
+// 表示に変更した。マイナス(下降)の場合も赤ではなく黒色にする
+// (上昇=緑、変化なし=グレーは維持)。
+function computeDelta(currentRank: number, prev: Cell): DeltaInfo {
+  if (!prev) return null
+  if (prev.rank == null) return { text: '▲前回100位圏外', colorCls: 'text-green-600' }
+  const diff = prev.rank - currentRank
+  if (diff > 0) return { text: `▲${diff}`, colorCls: 'text-green-600' }
+  if (diff < 0) return { text: `▼${-diff}`, colorCls: 'text-black' }
+  return { text: '±0', colorCls: 'text-gray-600' }
+}
+
+// 順位の数字だけを表示する部品。
+// 2026-08-15追記(ユーザー指定): 順位の文字サイズを大きくした際、行の高さが
+// 対策キーワード列(text-sm/text-xs)の行の高さより高くなってしまっていた。
+// 文字サイズはそのままに、line-heightだけを対策キーワード列と同じ値
+// (text-sm=leading-5、text-xs=leading-4)に固定し、行の高さは変えずに
+// 文字だけ大きく見せる。
+function RankBadge({ rank, size }: { rank: number; size: CellSize }) {
+  const badgeCls =
+    size === 'lg'
+      ? 'block text-center min-w-[2.75rem] text-pink-600 font-bold text-xl leading-5'
+      : 'block text-center min-w-[2.25rem] text-pink-600 font-bold text-lg leading-4'
+  return <span class={badgeCls}>{rank}</span>
+}
+
+// 前回比を表示する部品。データが無い場合も同じ高さの行を確保する(非表示)
+// ことで、上に置く非表示スペーサーと高さを揃えられるようにしている。
+function DeltaSlot({ delta, size }: { delta: DeltaInfo; size: CellSize }) {
+  const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+  return (
+    <span class={`block ${deltaCls} font-semibold whitespace-nowrap ${delta ? delta.colorCls : 'invisible'}`}>
+      {delta ? delta.text : '±0'}
+    </span>
+  )
+}
+
+// 過去列の1マス(順位＋前回比)。
+// 2026-08-15追記(ユーザー指定): 対策キーワード列・過去列・最新列の順位
+// (ピンクの文字)の高さをすべて上下中央で揃える必要がある。前回比を順位の
+// 下に別行で表示すると、順位の行が対策キーワード列の中心よりも上寄りに
+// なってしまうため、順位の上にも前回比と同じ高さの非表示スペーサーを
+// 置いてブロックを上下対称にし、順位自体が行の高さの中心に来るようにする。
 function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Cell; size?: CellSize }) {
   const baseTextCls = size === 'lg' ? 'text-sm' : 'text-xs'
   const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
-  // 2026-08-13変更: 背景付きバッジ(ピンクグラデーション+白文字)は数字が
-  // 見づらいという指摘があったため、背景無し・ピンク文字のみのシンプルな
-  // 表示に変更した。
-  // 2026-08-15追記(ユーザー指定): 順位の文字サイズを大きくした際、行の高さが
-  // 対策キーワード列(text-sm/text-xs)の行の高さより高くなってしまっていた
-  // (表のサイズは変えない、という指示に反する)。文字サイズはそのままに、
-  // line-heightだけを対策キーワード列と同じ値(text-sm=leading-5,
-  // text-xs=leading-4)に固定し、行の高さは変えずに文字だけ大きく見せる。
-  const badgeCls =
-    size === 'lg'
-      ? 'inline-flex items-center justify-center min-w-[2.75rem] text-pink-600 font-bold text-xl leading-5'
-      : 'inline-flex items-center justify-center min-w-[2.25rem] text-pink-600 font-bold text-lg leading-4'
 
   if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
   if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
@@ -321,65 +354,56 @@ function RankPivotCell({ current, prev, size = 'sm' }: { current: Cell; prev: Ce
     )
   }
 
-  // 2026-08-13追記(ユーザー指定): 前回比は順位の下に別行で表示せず、
-  // 順位の隣に括弧書きで表示する。マイナス(下降)の場合も赤ではなく
-  // 黒色にする(上昇=緑、変化なし=グレーは維持)。
-  let deltaText: string | null = null
-  let deltaColorCls = 'text-gray-600'
-  if (prev) {
-    if (prev.rank == null) {
-      deltaText = '▲前回100位圏外'
-      deltaColorCls = 'text-green-600'
-    } else {
-      const diff = prev.rank - current.rank
-      if (diff > 0) {
-        deltaText = `▲${diff}`
-        deltaColorCls = 'text-green-600'
-      } else if (diff < 0) {
-        deltaText = `▼${-diff}`
-        deltaColorCls = 'text-black'
-      } else {
-        deltaText = '±0'
-        deltaColorCls = 'text-gray-600'
-      }
-    }
-  }
-
+  const delta = computeDelta(current.rank, prev)
   return (
-    <span class="inline-flex items-baseline gap-0.5 whitespace-nowrap">
-      <span class={badgeCls}>{current.rank}</span>
-      {deltaText && <span class={`${deltaCls} font-semibold ${deltaColorCls}`}>({deltaText})</span>}
+    <span class="inline-flex flex-col items-center gap-0.5">
+      <span class="invisible" aria-hidden="true">
+        <DeltaSlot delta={delta} size={size} />
+      </span>
+      <RankBadge rank={current.rank} size={size} />
+      <DeltaSlot delta={delta} size={size} />
     </span>
   )
 }
 
-// 該当店舗数だけを表示する部品(最新列でRankPivotCellと組み合わせて使う)
+// 該当店舗数だけを表示する部品(最新列でRankBadgeと組み合わせて使う)
 function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) {
   const cls = size === 'lg' ? 'text-xs' : 'text-[10px]'
   if (!cell || cell.resultCount == null) return <span class={`text-gray-300 ${cls}`}>-</span>
   return <span class={`${cls} text-gray-700 whitespace-nowrap`}>{cell.resultCount}店舗中</span>
 }
 
-// 最新列専用: 順位バッジの下に店舗数を表示する(中エリア/小エリアそれぞれ
-// 1列)。
-// 2026-08-15追記(見切れ修正のため方式変更): 一時、店舗数をposition:absolute
-// で行の外にはみ出させ、通常の高さ計算に影響させない方式にしていたが、
-// 表全体を囲むoverflow-x-auto(横スクロール用)は仕様上overflow-yも自動的に
-// autoになるため、はみ出した部分が縦方向にクリップされ、PC・モバイル両方
-// で店舗数が見切れてしまっていた。position:absoluteによる見切れは
-// overflow-x-autoと併用する限り根本的に解消できないため、店舗数を通常の
-// レイアウトの流れに戻す。順位バッジの上にも店舗数と同じ高さの非表示
-// スペーサーを置いてブロックを上下対称にすることで、行全体はキーワード列
-// よりわずかに高くなるものの、順位バッジ自体は過去列の順位と同じ高さに
-// 揃う。
+// 最新列の1マス(店舗数＋順位＋前回比、中エリア/小エリアそれぞれ1列)。
+// 2026-08-15追記(ユーザー指定): 「店舗数を順位の上に、前回比を順位の下に」
+// 配置する。店舗数と前回比はどちらも同じ文字サイズ(text-xs/text-[10px])
+// なので、この並びだけで自然に上下対称なブロックになり、順位が行の高さの
+// 中心・対策キーワード列や過去列の順位と同じ高さに揃う(過去列のような
+// 非表示スペーサーは不要)。
 function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
+  const baseTextCls = size === 'lg' ? 'text-sm' : 'text-xs'
+  const deltaCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
+
+  if (!current) return <span class={`text-gray-300 ${baseTextCls}`}>-</span>
+  if (current.status === 'error') return <span class={`${baseTextCls} text-red-500 whitespace-nowrap`}>エラー</span>
+
+  if (current.rank == null) {
+    return (
+      <span class="inline-flex flex-col items-center gap-0.5">
+        <StoreCountCell cell={current} size={size} />
+        <span class={`text-gray-700 ${baseTextCls} font-medium whitespace-nowrap`}>100位圏外</span>
+        {prev && prev.rank != null && (
+          <span class={`block ${deltaCls} leading-tight text-black whitespace-nowrap`}>▼前回{prev.rank}位</span>
+        )}
+      </span>
+    )
+  }
+
+  const delta = computeDelta(current.rank, prev)
   return (
     <span class="inline-flex flex-col items-center gap-0.5">
-      <span class="invisible" aria-hidden="true">
-        <StoreCountCell cell={current} size={size} />
-      </span>
-      <RankPivotCell current={current} prev={prev} size={size} />
       <StoreCountCell cell={current} size={size} />
+      <RankBadge rank={current.rank} size={size} />
+      <DeltaSlot delta={delta} size={size} />
     </span>
   )
 }
