@@ -31,24 +31,16 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   // ON/OFF表示切り替え
-  document.querySelectorAll('.style-filter-btn').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      document.querySelectorAll('.style-filter-btn').forEach((b) => {
-        b.classList.toggle('bg-pink-500', b === btn)
-        b.classList.toggle('text-white', b === btn)
-        b.classList.toggle('text-gray-500', b !== btn)
-      })
-      const filter = btn.getAttribute('data-filter')
+  const styleFilterSelect = document.getElementById('style-filter-select')
+  if (styleFilterSelect) {
+    styleFilterSelect.addEventListener('change', () => {
+      const filter = styleFilterSelect.value
       document.querySelectorAll('#style-list > [data-auto-post]').forEach((row) => {
         const on = row.getAttribute('data-auto-post') === '1'
         const show = filter === 'all' || (filter === 'on' && on) || (filter === 'off' && !on)
         row.classList.toggle('hidden', !show)
       })
     })
-  })
-  const initialFilterBtn = document.querySelector('.style-filter-btn[data-filter="all"]')
-  if (initialFilterBtn) {
-    initialFilterBtn.classList.add('bg-pink-500', 'text-white')
   }
 
   // ドラッグハンドルによる並び替え(マウス・タッチ両対応、Pointer Events使用)
