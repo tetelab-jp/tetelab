@@ -280,6 +280,11 @@ function StyleListSection({
   checkboxMode?: 'auto-post' | 'template-target'
 }) {
   const isTemplateMode = checkboxMode === 'template-target'
+  // ボタン群(全選択/全解除/表示フィルター/新規作成)の高さを揃え、モバイルでは
+  // コンテンツ幅いっぱいに均等配置する(グリッド列数は表示するボタン数に応じて変える)。
+  const actionItemCount = 2 + (isTemplateMode ? 0 : 1) + (showCreateLink ? 1 : 0)
+  const actionGridColsClass = actionItemCount === 2 ? 'grid-cols-2' : actionItemCount === 3 ? 'grid-cols-3' : 'grid-cols-4'
+  const actionItemClass = 'text-xs font-semibold text-center rounded-lg px-2 py-2'
   return (
     <>
       <div class="flex items-center justify-between flex-wrap gap-2">
@@ -293,23 +298,23 @@ function StyleListSection({
             / {totalCount} 件
           </span>
         </p>
-        <div class="flex items-center gap-2">
+        <div class={`grid ${actionGridColsClass} sm:flex sm:items-center gap-2 w-full sm:w-auto`}>
           <button
             id={isTemplateMode ? 'template-target-select-all-btn' : 'select-all-btn'}
             type="button"
-            class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
+            class={`${actionItemClass} text-gray-500 hover:text-pink-600 border border-gray-300`}
           >
             全選択
           </button>
           <button
             id={isTemplateMode ? 'template-target-deselect-all-btn' : 'deselect-all-btn'}
             type="button"
-            class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1"
+            class={`${actionItemClass} text-gray-500 hover:text-pink-600 border border-gray-300`}
           >
             全解除
           </button>
           {!isTemplateMode && (
-            <select id="style-filter-select" class="text-xs font-semibold text-gray-600 border border-gray-300 rounded px-2 py-1.5">
+            <select id="style-filter-select" class={`${actionItemClass} text-gray-600 border border-gray-300 min-w-0`}>
               <option value="all">すべて</option>
               <option value="on">ONのみ</option>
               <option value="off">OFFのみ</option>
@@ -318,7 +323,7 @@ function StyleListSection({
           {showCreateLink && (
             <a
               href="/style/new"
-              class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg"
+              class={`${actionItemClass} bg-pink-500 hover:bg-pink-600 text-white border border-transparent`}
             >
               <i class="fas fa-plus mr-1"></i>新規作成
             </a>
@@ -1521,9 +1526,8 @@ style.get('/style/schedule', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        自動投稿対象（入力完了済み）のスタイルを登録順に、{POST_INTERVAL_MINUTES_LABEL}分おき
-        （深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯）に1件ずつ「登録＋反映申請」まで自動実行します。
-        （最後まで行ったら先頭に戻り、日付をまたいでも継続）
+        自動投稿対象のスタイルを登録順に{POST_INTERVAL_MINUTES_LABEL}分おき
+        （深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯）に1スタイルずつ「登録＋反映申請」まで自動実行。
         <br />
         現在<b>{selectedCount}件</b>が対象です。
       </div>
