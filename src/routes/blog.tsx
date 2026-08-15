@@ -1360,6 +1360,7 @@ blog.get('/blog/articles', async (c) => {
                 <div>
                   <label class="block text-xs font-medium text-gray-500 mb-1">カテゴリ</label>
                   <select id="rv-category" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"></select>
+                  <p id="rv-hpb-category-hint" class="text-xs mt-1"></p>
                 </div>
                 <div>
                   <label class="block text-xs font-medium text-gray-500 mb-1">投稿者</label>
@@ -1479,9 +1480,9 @@ blog.get('/api/blog/articles/:id', async (c) => {
         month_tags_json: string
         status: string
       }>(),
-    c.env.DB.prepare('SELECT id, name FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC')
+    c.env.DB.prepare('SELECT id, name, hpb_category_value FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC')
       .bind(user.id, user.active_salon_id)
-      .all<{ id: number; name: string }>(),
+      .all<{ id: number; name: string; hpb_category_value: string | null }>(),
     c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
       .bind(user.id, user.active_salon_id)
       .all<{ id: number; name: string }>(),
