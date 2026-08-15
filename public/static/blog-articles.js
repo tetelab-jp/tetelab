@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // 全選択/全解除(現在表示中の行のみを対象にする)
+  // 承認チェックの全選択/全解除(現在表示中の行のみを対象にする)
   const selectAllBtn = document.getElementById('blog-select-all-btn')
   if (selectAllBtn) {
     selectAllBtn.addEventListener('click', () => {
@@ -110,6 +110,26 @@ document.addEventListener('DOMContentLoaded', () => {
       })
       updateBulkBar()
     })
+  }
+
+  // 自動投稿の一括ON/OFF(承認チェックの全選択/全解除とは別物。1件ずつサーバーへ
+  // 反映する必要があるため、既存のchangeハンドラをdispatchEventで再利用する。
+  // 現在表示中の行のみを対象にし、既に目的の状態のものは通信を発生させない)
+  function bulkSetAutoPost(enabled) {
+    articleList?.querySelectorAll(':scope > [data-auto-post]:not(.hidden) .blog-auto-post-toggle').forEach((cb) => {
+      if (cb.checked !== enabled) {
+        cb.checked = enabled
+        cb.dispatchEvent(new Event('change'))
+      }
+    })
+  }
+  const autoPostSelectAllBtn = document.getElementById('blog-auto-post-select-all-btn')
+  if (autoPostSelectAllBtn) {
+    autoPostSelectAllBtn.addEventListener('click', () => bulkSetAutoPost(true))
+  }
+  const autoPostDeselectAllBtn = document.getElementById('blog-auto-post-deselect-all-btn')
+  if (autoPostDeselectAllBtn) {
+    autoPostDeselectAllBtn.addEventListener('click', () => bulkSetAutoPost(false))
   }
 
   // 一括操作バーの選択状態管理
