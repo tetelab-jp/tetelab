@@ -170,6 +170,12 @@ async function dispatchBlogPostJob(
     await env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
       .bind(`ジョブ起動に失敗しました: ${message}`, articleId)
       .run()
+    await env.DB.prepare(
+      `INSERT INTO execution_logs (blog_article_id, user_id, salon_id, execution_type, status, message)
+       VALUES (?, ?, ?, 'post_blog_article', 'failure', ?)`
+    )
+      .bind(articleId, userId, salonId, `ジョブ起動失敗: ${message}`)
+      .run()
     throw err
   }
 }
@@ -484,6 +490,12 @@ async function clearStaleBlogJob(env: Bindings, j: StaleBlogJobRow): Promise<voi
     .run()
   await env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = 'Fargateジョブがタイムアウトしました(応答がありませんでした)' WHERE id = ?`)
     .bind(j.article_id)
+    .run()
+  await env.DB.prepare(
+    `INSERT INTO execution_logs (blog_article_id, user_id, salon_id, execution_type, status, message)
+     VALUES (?, ?, ?, 'post_blog_article', 'failure', 'ジョブがタイムアウトしました(Fargateタスクからの応答なし)')`
+  )
+    .bind(j.article_id, j.user_id, j.salon_id)
     .run()
   await updateBlogConsecutiveFailureAndNotify(env, j.user_id, j.salon_id, false)
   if (j.run_id) await finalizeBlogRunIfComplete(env, j.run_id)
