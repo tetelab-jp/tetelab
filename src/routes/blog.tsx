@@ -1183,7 +1183,7 @@ blog.get('/blog/articles', async (c) => {
         )}
         <div class="flex items-center gap-3 mt-4">
           <button type="button" id="blog-test-run-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg" disabled={!!inFlightBlogJob}>
-            今すぐ1本投稿する
+            今すぐまとめて投稿する
           </button>
           {inFlightBlogJob && <span class="text-xs text-gray-400">投稿処理が進行中です...</span>}
           <p id="blog-test-run-status" class="text-sm text-gray-500"></p>

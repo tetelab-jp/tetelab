@@ -726,6 +726,8 @@ automation.post('/api/blog-automation/test-run', requireAuth, requireBlogEnabled
     return c.json({
       success: summary.dispatchedCount > 0,
       dispatchedCount: summary.dispatchedCount,
+      failedToDispatchCount: summary.failedToDispatchCount,
+      totalArticles: summary.totalArticles,
       status: summary.status,
       error: summary.errorMessage
     })

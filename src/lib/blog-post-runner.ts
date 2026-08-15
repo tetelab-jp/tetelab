@@ -82,7 +82,9 @@ export async function finalizeBlogRunIfComplete(env: Bindings, runId: number): P
 
 export type BlogRunSummary = {
   runId: number
+  totalArticles: number
   dispatchedCount: number
+  failedToDispatchCount: number
   status: 'dispatched' | 'failed'
   errorMessage?: string
 }
@@ -189,27 +191,42 @@ async function hasInFlightJob(env: Bindings, articleId: number): Promise<boolean
   return !!row
 }
 
+function currentJstMonth(): number {
+  return new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCMonth() + 1
+}
+
 /**
- * 承認済み・自動投稿ON・進行中ジョブなし・月タグが今月に合う(または未設定)
- * 記事を、生成順(sort_order)で1件選ぶ。cronの巡回カーソル(next_cursor_article_id)
- * より後ろの最初の1件を選び、無ければ先頭に戻る(style-post-runner.tsの
- * selectNextStyleIdと同じローテーション方式)。
+ * 承認済み・自動投稿ON・進行中ジョブなし・月タグが今月に合う(または未設定)、
+ * という共通の投稿対象条件。バインド順は (userId, salonId, currentMonth)。
+ */
+const ELIGIBLE_ARTICLE_WHERE = `
+  a.user_id = ? AND a.salon_id = ? AND a.status = 'approved' AND a.auto_post_enabled_flag = 1
+  AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
+  AND (
+    a.month_tags_json = '[]'
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS m(v) WHERE m.v::int = ?)
+  )
+`
+
+/** 指定した記事がまだ投稿対象として有効(承認済み・自動投稿ON・進行中ジョブなし等)かを確認する。 */
+async function isArticleEligible(env: Bindings, userId: number, salonId: number | null, articleId: number): Promise<boolean> {
+  const row = await env.DB.prepare(`SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_ARTICLE_WHERE} AND a.id = ?`)
+    .bind(userId, salonId, currentJstMonth(), articleId)
+    .first<{ id: number }>()
+  return !!row
+}
+
+/**
+ * cronの巡回カーソル(next_cursor_article_id)より後ろの最初の1件を選び、
+ * 無ければ(カーソル未設定、または最後まで巡回し終えた場合)先頭に戻る。
  */
 async function selectNextArticleId(env: Bindings, userId: number, salonId: number | null, cursor: number | null): Promise<number | null> {
-  const currentMonth = new Date(Date.now() + 9 * 60 * 60 * 1000).getUTCMonth() + 1
-  const eligibleWhere = `
-    a.user_id = ? AND a.salon_id = ? AND a.status = 'approved' AND a.auto_post_enabled_flag = 1
-    AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
-    AND (
-      a.month_tags_json = '[]'
-      OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS m(v) WHERE m.v::int = ?)
-    )
-  `
+  const currentMonth = currentJstMonth()
 
   if (cursor) {
     const nextRow = await env.DB.prepare(
       `SELECT a.id FROM blog_articles a
-       WHERE ${eligibleWhere}
+       WHERE ${ELIGIBLE_ARTICLE_WHERE}
          AND (a.sort_order, a.id) > (SELECT sort_order, id FROM blog_articles WHERE id = ?)
        ORDER BY a.sort_order ASC, a.id ASC
        LIMIT 1`
@@ -220,14 +237,63 @@ async function selectNextArticleId(env: Bindings, userId: number, salonId: numbe
   }
 
   const firstRow = await env.DB.prepare(
-    `SELECT a.id FROM blog_articles a WHERE ${eligibleWhere} ORDER BY a.sort_order ASC, a.id ASC LIMIT 1`
+    `SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_ARTICLE_WHERE} ORDER BY a.sort_order ASC, a.id ASC LIMIT 1`
   )
     .bind(userId, salonId, currentMonth)
     .first<{ id: number }>()
   return firstRow?.id ?? null
 }
 
-/** 「今すぐ投稿する」ボタンから、次に投稿すべき記事を1件だけ即座に投稿する。 */
+const MANUAL_DISPATCH_LIMIT = 100
+const JOB_WAIT_POLL_INTERVAL_MS = 8000
+const JOB_WAIT_MAX_MS = 13 * 60 * 1000 // sweepStaleBlogJobsの15分タイムアウトより少し短く設定
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitForJobTerminal(env: Bindings, jobId: number): Promise<void> {
+  const deadline = Date.now() + JOB_WAIT_MAX_MS
+  while (Date.now() < deadline) {
+    const row = await env.DB.prepare(`SELECT status FROM blog_post_jobs WHERE id = ?`).bind(jobId).first<{ status: string }>()
+    if (!row || (row.status !== 'pending' && row.status !== 'running')) return
+    await sleep(JOB_WAIT_POLL_INTERVAL_MS)
+  }
+}
+
+/**
+ * 2件目以降の記事を、前のジョブが完了してから順に投入する(HTTPレスポンスは
+ * 待たずバックグラウンドで進行)。同一アカウントへ複数IPが同時ログインする
+ * 不自然さを避けるため、スタイル投稿(style-post-runner.ts)と同じ方式で
+ * 1件ずつ順番に投稿する。投入直前に毎回isArticleEligibleで再確認し、
+ * 既に無効(OFFにされた・他ジョブが進行中等)ならスキップする。
+ */
+async function dispatchRemainingArticlesSequentially(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  runId: number,
+  remaining: { id: number }[],
+  previousJobId: number | null
+): Promise<void> {
+  let prevJobId = previousJobId
+  for (const t of remaining) {
+    if (prevJobId !== null) {
+      await waitForJobTerminal(env, prevJobId)
+    }
+    if (!(await isArticleEligible(env, userId, salonId, t.id))) {
+      prevJobId = null
+      continue
+    }
+    try {
+      prevJobId = await dispatchBlogPostJob(env, userId, salonId, t.id, runId)
+    } catch {
+      prevJobId = null
+    }
+  }
+}
+
+/** 「今すぐまとめて投稿する」ボタンから、承認済み・自動投稿ONの対象記事を全てまとめて投稿する。 */
 export async function runBlogAutomationForUser(env: Bindings, userId: number, salonId: number | null): Promise<BlogRunSummary> {
   await requireCredentialsConfigured(env, userId)
 
@@ -240,27 +306,53 @@ export async function runBlogAutomationForUser(env: Bindings, userId: number, sa
     throw new Error('既に投稿処理が進行中です。完了してからもう一度お試しください')
   }
 
-  const articleId = await selectNextArticleId(env, userId, salonId, null)
-  if (!articleId) {
+  const { results } = await env.DB.prepare(
+    `SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_ARTICLE_WHERE} ORDER BY a.sort_order ASC, a.id ASC LIMIT ${MANUAL_DISPATCH_LIMIT}`
+  )
+    .bind(userId, salonId, currentJstMonth())
+    .all<{ id: number }>()
+
+  const targets = results || []
+  if (targets.length === 0) {
     throw new Error('投稿対象(承認済み・自動投稿ON・今月の季節柄に合う)のブログ記事がありません')
   }
 
   const runInsert = await env.DB.prepare(
-    `INSERT INTO blog_post_runs (user_id, salon_id, scheduled_time, total_articles, status) VALUES (?, ?, ?, 1, 'processing')`
+    `INSERT INTO blog_post_runs (user_id, salon_id, scheduled_time, total_articles, status) VALUES (?, ?, ?, ?, 'processing')`
   )
-    .bind(userId, salonId, currentJstTimeLabel())
+    .bind(userId, salonId, currentJstTimeLabel(), targets.length)
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
+  // 1件目のみここで投入し、2件目以降は前のジョブが完了してから順に投入する。
+  // ALBのアイドルタイムアウト(60秒)内にHTTPレスポンスを返す必要があるため、
+  // 2件目以降の投入はawaitせずバックグラウンドで進める(style-post-runner.tsと同じ方式)。
+  let firstDispatchFailed = false
+  let firstDispatchErrorMessage: string | undefined
+  let firstJobId: number | null = null
   try {
-    await dispatchBlogPostJob(env, userId, salonId, articleId, runId)
-    return { runId, dispatchedCount: 1, status: 'dispatched' }
+    firstJobId = await dispatchBlogPostJob(env, userId, salonId, targets[0].id, runId)
   } catch (err: any) {
-    const message = String(err?.message || err).slice(0, 500)
-    await env.DB.prepare(`UPDATE blog_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(message, runId)
-      .run()
-    return { runId, dispatchedCount: 0, status: 'failed', errorMessage: message }
+    firstDispatchFailed = true
+    firstDispatchErrorMessage = String(err?.message || err).slice(0, 500)
+  }
+
+  if (targets.length > 1) {
+    void dispatchRemainingArticlesSequentially(env, userId, salonId, runId, targets.slice(1), firstJobId)
+  }
+
+  const runStatus = firstDispatchFailed && targets.length === 1 ? 'failed' : 'processing'
+  await env.DB.prepare(`UPDATE blog_post_runs SET status = ?, error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
+    .bind(runStatus, firstDispatchFailed ? firstDispatchErrorMessage : null, runId)
+    .run()
+
+  return {
+    runId,
+    totalArticles: targets.length,
+    dispatchedCount: firstDispatchFailed ? 0 : 1,
+    failedToDispatchCount: firstDispatchFailed ? 1 : 0,
+    status: firstDispatchFailed && targets.length === 1 ? 'failed' : 'dispatched',
+    errorMessage: firstDispatchFailed ? firstDispatchErrorMessage : undefined
   }
 }
 
@@ -336,7 +428,7 @@ export async function runNextArticleForUser(env: Bindings, userId: number, salon
     await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
       .bind(articleId, userId, salonId)
       .run()
-    return { runId, dispatchedCount: 1, status: 'dispatched' }
+    return { runId, totalArticles: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
     await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
@@ -346,7 +438,7 @@ export async function runNextArticleForUser(env: Bindings, userId: number, salon
     await env.DB.prepare(`UPDATE blog_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .bind(message, runId)
       .run()
-    return { runId, dispatchedCount: 0, status: 'failed', errorMessage: message }
+    return { runId, totalArticles: 1, dispatchedCount: 0, failedToDispatchCount: 1, status: 'failed', errorMessage: message }
   }
 }
 
