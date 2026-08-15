@@ -293,29 +293,6 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const styleLogRows = logRows.filter((r) => r.category === 'スタイル')
   const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
 
-  // 失敗/ブロックされたスタイル: 個別「再実行」ボタンの対象一覧(docs/phase3-mvp-design.md 5-6)
-  // No.は登録スタイル一覧(StyleListSection)と同じ並び順(sort_order)での通し番号。
-  // 対象を絞り込む前の全件に対して番号を振ってから絞り込む必要があるためサブクエリにしている。
-  const { results: retryTargets } = await c.env.DB.prepare(
-    `SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, style_no
-     FROM (
-       SELECT id, title, salonboard_register_status, reflection_request_status, last_executed_at, updated_at,
-         ROW_NUMBER() OVER (ORDER BY sort_order ASC, id DESC) AS style_no
-       FROM styles WHERE user_id = ?
-     ) ranked
-     WHERE salonboard_register_status = 'failed' OR reflection_request_status IN ('failed', 'blocked')
-     ORDER BY updated_at DESC LIMIT 20`
-  )
-    .bind(user.id)
-    .all<{
-      id: number
-      title: string | null
-      salonboard_register_status: string
-      reflection_request_status: string
-      last_executed_at: string | null
-      style_no: number
-    }>()
-
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -325,50 +302,6 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
     >
-      {retryTargets && retryTargets.length > 0 && (
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-rotate-right mr-2 text-pink-500"></i>失敗・ブロック中のスタイル（再実行できます）
-          </p>
-          <ul class="text-sm divide-y divide-gray-50">
-            {retryTargets.map((t) => {
-              const isBlocked = t.reflection_request_status === 'blocked'
-              return (
-                <li class="flex items-center justify-between gap-3 py-2">
-                  <div class="min-w-0">
-                    <a href={`/style/${t.id}/edit`} class="font-medium text-gray-700 hover:text-pink-600 truncate block">
-                      No.{t.style_no} {t.title || `スタイル${t.id}`}
-                    </a>
-                    <p class="text-xs text-gray-400 truncate">
-                      <span class={'px-1.5 py-0.5 rounded font-semibold mr-1 ' + (isBlocked ? 'bg-amber-50 text-amber-600' : 'bg-red-50 text-red-600')}>
-                        {isBlocked ? 'ブロック' : '失敗'}
-                      </span>
-                      {formatJstDate(t.last_executed_at)}
-                    </p>
-                  </div>
-                  <div class="flex items-center gap-2 flex-shrink-0">
-                    <button
-                      type="button"
-                      class="retry-btn text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-3 py-1.5"
-                      data-style-id={t.id}
-                    >
-                      <i class="fas fa-rotate-right mr-1"></i>再実行
-                    </button>
-                    <button
-                      type="button"
-                      class="delete-retry-target-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded px-3 py-1.5"
-                      data-style-id={t.id}
-                    >
-                      <i class="fas fa-trash mr-1"></i>削除
-                    </button>
-                  </div>
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      )}
-
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-3"><i class="fas fa-list-check mr-2 text-pink-500"></i>個別実行ログ（直近30件）</p>
 
