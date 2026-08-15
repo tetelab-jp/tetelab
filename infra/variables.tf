@@ -117,3 +117,14 @@ variable "admin_initial_password" {
   type      = string
   sensitive = true
 }
+
+# ブログ記事のAI自動生成(src/lib/ai-generate.ts)で使うOpenAI APIキー。
+# コード内にハードコードせず、この変数経由でSecrets Managerへ格納する
+# (terraform apply時に -var で指定する。tfvarsファイルはgit管理外にすること)。
+# admin_initial_password等と同様、意図的にdefaultを設けていない
+# (defaultを空文字にすると、この変数を指定し忘れた状態でterraform applyを
+# 実行した場合に、既に設定済みの値が空文字で上書きされてしまう事故が起きるため)。
+variable "openai_api_key" {
+  type      = string
+  sensitive = true
+}
