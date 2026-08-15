@@ -51,6 +51,31 @@ output "acm_certificate_validation_records" {
   ] : []
 }
 
+output "ses_from_email" {
+  description = "アプリのSES_FROM_EMAIL(送信元アドレス)に設定される値"
+  value       = local.has_domain ? "noreply@${var.route53_zone_name}" : ""
+}
+
+output "ses_domain_verification_record" {
+  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSESドメイン所有権検証用TXTレコード"
+  value = local.has_domain ? {
+    name  = "_amazonses.${var.route53_zone_name}"
+    type  = "TXT"
+    value = aws_ses_domain_identity.main[0].verification_token
+  } : null
+}
+
+output "ses_dkim_records" {
+  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSES DKIM署名用CNAMEレコード(3件)"
+  value = local.has_domain ? [
+    for token in aws_ses_domain_dkim.main[0].dkim_tokens : {
+      name  = "${token}._domainkey.${var.route53_zone_name}"
+      type  = "CNAME"
+      value = "${token}.dkim.amazonses.com"
+    }
+  ] : []
+}
+
 output "rds_endpoint" {
   description = "データ移行スクリプト実行時などに使う接続先(ホスト:ポート)"
   value       = aws_db_instance.main.endpoint

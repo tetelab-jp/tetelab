@@ -48,7 +48,8 @@ const bindings: Bindings = {
   ECS_SECURITY_GROUP_IDS: process.env.ECS_SECURITY_GROUP_IDS,
   ADMIN_JWT_SECRET: process.env.ADMIN_JWT_SECRET,
   ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD,
-  SNS_ALERT_TOPIC_ARN: process.env.SNS_ALERT_TOPIC_ARN
+  SNS_ALERT_TOPIC_ARN: process.env.SNS_ALERT_TOPIC_ARN,
+  SES_FROM_EMAIL: process.env.SES_FROM_EMAIL
 }
 
 // 2026-08-11追記: マイグレーション専用のランナーが無いため、追加列のような
@@ -594,6 +595,16 @@ const bindings: Bindings = {
     ).run()
   } catch (err) {
     console.error('起動時マイグレーション(アカウント削除の猶予期間カラム追加)に失敗しました:', err)
+  }
+  try {
+    // パスワード再設定(メールリンク方式、src/lib/ses-email.ts参照)用。
+    // 生トークンはメールにのみ載せ、DBにはSHA-256ハッシュだけを保存する。
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_token_hash TEXT`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_reset_expires_at TIMESTAMP`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(パスワード再設定トークン列追加)に失敗しました:', err)
   }
   try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、

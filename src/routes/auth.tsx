@@ -1,8 +1,14 @@
 import { Hono } from 'hono'
 import { setCookie, deleteCookie } from 'hono/cookie'
-import { hashPassword, verifyPasswordConstantTime } from '../lib/crypto'
+import {
+  hashPassword,
+  verifyPasswordConstantTime,
+  generatePasswordResetToken,
+  hashPasswordResetToken
+} from '../lib/crypto'
 import { signJwt } from '../lib/jwt'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
+import { sendEmail } from '../lib/ses-email'
 import type { Bindings } from '../types'
 
 const auth = new Hono<{ Bindings: Bindings }>()
@@ -166,9 +172,16 @@ auth.post('/signup', async (c) => {
 
 auth.get('/login', (c) => {
   const error = c.req.query('error')
+  const saved = c.req.query('saved')
   return c.render(
     <AuthLayout>
       <h2 class="text-lg font-bold mb-6">ログイン</h2>
+      {saved && (
+        <div class="mb-4 rounded-lg bg-green-50 border border-green-200 text-green-700 px-4 py-3 text-sm">
+          <i class="fas fa-circle-check mr-2"></i>
+          パスワードを再設定しました。新しいパスワードでログインしてください。
+        </div>
+      )}
       <ErrorBanner message={error} />
       <form method="post" action="/login" class="space-y-4">
         <div>
@@ -215,18 +228,51 @@ auth.get('/login', (c) => {
 })
 
 // ---------- Forgot password ----------
-// 2026-08-14追記: メール送信基盤(SES等)を持たないため、本格的な自動リセット
-// フローではなく、サポート窓口への問い合わせ案内のみを表示する簡易ページ。
+// 2026-08-15追記: SES(メール送信基盤)を導入したため、メールリンク方式の
+// 自動再設定フローに変更した(infra/ses.tf、src/lib/ses-email.ts参照)。
+// SESのドメイン検証・サンドボックス解除が完了するまでは実際のメール送信は
+// 失敗するため、その場合は画面上も送信失敗として案内する。
+
+const PASSWORD_RESET_TOKEN_TTL_MINUTES = 30
+
 auth.get('/forgot-password', (c) => {
+  const sent = c.req.query('sent')
+  const error = c.req.query('error')
   return c.render(
     <AuthLayout>
       <h2 class="text-lg font-bold mb-4">パスワードをお忘れの方</h2>
-      <p class="text-sm text-gray-600 leading-relaxed">
-        大変お手数ですが、現在パスワードの自動再設定には対応しておりません。
-        <br />
-        ご登録のメールアドレスを添えて、サポート窓口までお問い合わせください。
-        パスワードの再設定を代行いたします。
-      </p>
+      {sent ? (
+        <p class="text-sm text-gray-600 leading-relaxed">
+          ご入力いただいたメールアドレス宛に、パスワード再設定用のリンクを送信しました
+          (該当するアカウントが存在する場合のみ届きます)。メール内のリンクから
+          {PASSWORD_RESET_TOKEN_TTL_MINUTES}分以内に新しいパスワードを設定してください。
+        </p>
+      ) : (
+        <>
+          <ErrorBanner message={error} />
+          <p class="text-sm text-gray-600 leading-relaxed mb-4">
+            ご登録のメールアドレスを入力してください。パスワード再設定用のリンクをお送りします。
+          </p>
+          <form method="post" action="/forgot-password" class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
+              <input
+                required
+                type="email"
+                name="email"
+                placeholder="owner@example.com"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+            >
+              再設定用リンクを送信する
+            </button>
+          </form>
+        </>
+      )}
       <p class="text-sm text-gray-500 mt-6 text-center">
         <a href="/login" class="text-pink-600 font-medium hover:underline">
           ログイン画面に戻る
@@ -235,6 +281,121 @@ auth.get('/forgot-password', (c) => {
     </AuthLayout>,
     { title: 'パスワードをお忘れの方' }
   )
+})
+
+auth.post('/forgot-password', async (c) => {
+  const body = await c.req.parseBody()
+  const email = String(body.email || '').trim().toLowerCase()
+
+  // 2026-08-13追記のverifyPasswordConstantTimeと同じ考え方: 登録有無に関わらず
+  // 常に同じ「送信しました」画面を返し、メールアドレスの登録有無を推測されないようにする。
+  if (email) {
+    const user = await c.env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first<{ id: number }>()
+    if (user) {
+      const token = generatePasswordResetToken()
+      const tokenHash = await hashPasswordResetToken(token)
+      await c.env.DB.prepare(
+        `UPDATE users SET password_reset_token_hash = ?,
+           password_reset_expires_at = NOW() + (? || ' minutes')::interval WHERE id = ?`
+      )
+        .bind(tokenHash, PASSWORD_RESET_TOKEN_TTL_MINUTES, user.id)
+        .run()
+
+      const baseUrl = c.env.APP_BASE_URL || new URL(c.req.url).origin
+      const resetUrl = `${baseUrl}/reset-password?token=${encodeURIComponent(token)}`
+      await sendEmail(
+        c.env,
+        email,
+        '【SalonMotion】パスワード再設定のご案内',
+        `SalonMotionのパスワード再設定用リンクです。\n\n${resetUrl}\n\n` +
+          `このリンクの有効期限は${PASSWORD_RESET_TOKEN_TTL_MINUTES}分です。\n` +
+          `心当たりがない場合は、このメールを破棄してください。`
+      )
+    }
+  }
+
+  return c.redirect('/forgot-password?sent=1')
+})
+
+// ---------- Reset password ----------
+
+auth.get('/reset-password', (c) => {
+  const token = c.req.query('token') || ''
+  const error = c.req.query('error')
+  return c.render(
+    <AuthLayout>
+      <h2 class="text-lg font-bold mb-6">新しいパスワードの設定</h2>
+      <ErrorBanner message={error} />
+      {token ? (
+        <form method="post" action="/reset-password" class="space-y-4">
+          <input type="hidden" name="token" value={token} />
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
+            <input
+              required
+              type="password"
+              name="new_password"
+              autocomplete="new-password"
+              placeholder="8文字以上"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            パスワードを再設定する
+          </button>
+        </form>
+      ) : (
+        <p class="text-sm text-red-600">
+          再設定用のリンクが正しくありません。
+          <a href="/forgot-password" class="text-pink-600 hover:underline">
+            こちら
+          </a>
+          から再度お試しください。
+        </p>
+      )}
+    </AuthLayout>,
+    { title: '新しいパスワードの設定' }
+  )
+})
+
+auth.post('/reset-password', async (c) => {
+  const body = await c.req.parseBody()
+  const token = String(body.token || '')
+  const newPassword = String(body.new_password || '')
+
+  const redirectError = (message: string) =>
+    c.redirect(`/reset-password?token=${encodeURIComponent(token)}&error=${encodeURIComponent(message)}`)
+
+  if (!token) {
+    return c.redirect('/forgot-password')
+  }
+  if (newPassword.length < 8) {
+    return redirectError('新しいパスワードは8文字以上で入力してください')
+  }
+
+  const tokenHash = await hashPasswordResetToken(token)
+  const user = await c.env.DB.prepare(
+    `SELECT id FROM users WHERE password_reset_token_hash = ? AND password_reset_expires_at > NOW()`
+  )
+    .bind(tokenHash)
+    .first<{ id: number }>()
+
+  if (!user) {
+    return redirectError('リンクの有効期限が切れているか、既に使用されています。お手数ですが再度お試しください')
+  }
+
+  const passwordHash = await hashPassword(newPassword)
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, password_reset_token_hash = NULL, password_reset_expires_at = NULL,
+       updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+  )
+    .bind(passwordHash, user.id)
+    .run()
+
+  return c.redirect('/login?saved=1')
 })
 
 // 2026-08-13追記(監査指摘の是正): ブルートフォース対策が皆無だったため追加。

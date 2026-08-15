@@ -38,6 +38,11 @@ export type Bindings = {
   // Secrets Managerではなく通常の環境変数として渡す(infra/monitoring.tfの
   // 既存SNSトピック、CloudWatchアラーム通知と同じものを使い回す)。
   SNS_ALERT_TOPIC_ARN?: string
+
+  // ---- メール送信(SES、パスワード再設定等) ----
+  // 未設定の場合、送信は失敗としてログに残るだけで処理自体は止めない
+  // (infra/ses.tfでドメイン検証・IAM権限を用意してから設定する)。
+  SES_FROM_EMAIL?: string
 }
 
 export type AppUser = {
