@@ -1000,6 +1000,7 @@ type ArticleListRow = {
   no: number
   title: string | null
   image_r2_key: string | null
+  category_id: number | null
   category_name: string | null
   stylist_name: string | null
   coupon_name: string | null
@@ -1025,11 +1026,17 @@ blog.get('/blog/articles', async (c) => {
     .bind(user.id, user.active_salon_id)
     .all<{ id: number; name: string }>()
 
+  const { results: categoryOptions } = await c.env.DB.prepare(
+    'SELECT id, name FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ id: number; name: string }>()
+
   const { results: rows } = await c.env.DB.prepare(
     `SELECT
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.status, a.month_tags_json, a.last_posted_at, a.post_count,
-       a.auto_post_enabled_flag,
+       a.auto_post_enabled_flag, a.category_id,
        bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
      LEFT JOIN blog_categories bc ON bc.id = a.category_id
@@ -1148,6 +1155,18 @@ blog.get('/blog/articles', async (c) => {
               <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
               <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
             </div>
+            <select id="blog-category-filter" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+              <option value="">すべての記事カテゴリ</option>
+              {(categoryOptions || []).map((cat) => (
+                <option value={cat.id}>{cat.name}</option>
+              ))}
+            </select>
+            <select id="blog-sort-select" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+              <option value="generated">生成順に表示</option>
+              <option value="season">季節柄でソート</option>
+            </select>
+            <button type="button" id="blog-select-all-btn" class="text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">全選択</button>
+            <button type="button" id="blog-deselect-all-btn" class="text-xs font-semibold px-2 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50 text-gray-600">全解除</button>
           </div>
           <span class="text-xs text-gray-400">生成した順番に表示しています</span>
         </div>
@@ -1167,7 +1186,13 @@ blog.get('/blog/articles', async (c) => {
         <div id="blog-article-list" class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
           {articles.length === 0 && <p class="text-sm text-gray-400 p-6">まだ記事がありません。生成テンプレートから写真をアップロードしてください。</p>}
           {articles.map((a) => (
-            <div class="flex items-start gap-3 p-4" data-article-id={a.id} data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}>
+            <div
+              class="flex items-start gap-3 p-4"
+              data-article-id={a.id}
+              data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
+              data-category-id={a.category_id ?? ''}
+              data-month-tags={a.month_tags_json || '[]'}
+            >
               <input type="checkbox" class="blog-article-checkbox mt-1 accent-pink-500" data-article-id={a.id} />
               <span class="text-xs text-gray-300 font-mono w-6 text-center mt-1.5 flex-none">{a.no}</span>
               <label class="flex flex-col items-center mt-1 flex-none" title="自動投稿の対象">

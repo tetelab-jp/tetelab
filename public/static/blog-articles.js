@@ -40,7 +40,20 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   })
 
-  // ON/OFF表示切り替え
+  // ON/OFF・記事カテゴリの表示フィルター(組み合わせて適用する)
+  const articleList = document.getElementById('blog-article-list')
+  let currentAutoPostFilter = 'all'
+
+  function applyFilters() {
+    const categoryFilter = document.getElementById('blog-category-filter')?.value || ''
+    articleList?.querySelectorAll(':scope > [data-auto-post]').forEach((row) => {
+      const on = row.getAttribute('data-auto-post') === '1'
+      const matchesAutoPost = currentAutoPostFilter === 'all' || (currentAutoPostFilter === 'on' && on) || (currentAutoPostFilter === 'off' && !on)
+      const matchesCategory = !categoryFilter || row.getAttribute('data-category-id') === categoryFilter
+      row.classList.toggle('hidden', !(matchesAutoPost && matchesCategory))
+    })
+  }
+
   document.querySelectorAll('.blog-filter-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.blog-filter-btn').forEach((b) => {
@@ -48,16 +61,56 @@ document.addEventListener('DOMContentLoaded', () => {
         b.classList.toggle('text-white', b === btn)
         b.classList.toggle('text-gray-500', b !== btn)
       })
-      const filter = btn.getAttribute('data-filter')
-      document.querySelectorAll('#blog-article-list > [data-auto-post]').forEach((row) => {
-        const on = row.getAttribute('data-auto-post') === '1'
-        const show = filter === 'all' || (filter === 'on' && on) || (filter === 'off' && !on)
-        row.classList.toggle('hidden', !show)
-      })
+      currentAutoPostFilter = btn.getAttribute('data-filter')
+      applyFilters()
     })
   })
   const initialBlogFilterBtn = document.querySelector('.blog-filter-btn[data-filter="all"]')
   if (initialBlogFilterBtn) initialBlogFilterBtn.classList.add('bg-pink-500', 'text-white')
+
+  const categoryFilterSelect = document.getElementById('blog-category-filter')
+  if (categoryFilterSelect) categoryFilterSelect.addEventListener('change', applyFilters)
+
+  // 季節柄でのソート(表示上の並び替えのみ、生成順=sort_orderは変更しない)
+  const sortSelect = document.getElementById('blog-sort-select')
+  if (sortSelect && articleList) {
+    const originalOrder = Array.from(articleList.children)
+    sortSelect.addEventListener('change', () => {
+      if (sortSelect.value === 'season') {
+        const rows = Array.from(articleList.children)
+        rows.sort((a, b) => {
+          const minMonth = (row) => {
+            const tags = JSON.parse(row.getAttribute('data-month-tags') || '[]')
+            return tags.length > 0 ? Math.min(...tags) : 13
+          }
+          return minMonth(a) - minMonth(b)
+        })
+        rows.forEach((row) => articleList.appendChild(row))
+      } else {
+        originalOrder.forEach((row) => articleList.appendChild(row))
+      }
+    })
+  }
+
+  // 全選択/全解除(現在表示中の行のみを対象にする)
+  const selectAllBtn = document.getElementById('blog-select-all-btn')
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', () => {
+      articleList?.querySelectorAll(':scope > [data-auto-post]:not(.hidden) .blog-article-checkbox').forEach((cb) => {
+        cb.checked = true
+      })
+      updateBulkBar()
+    })
+  }
+  const deselectAllBtn = document.getElementById('blog-deselect-all-btn')
+  if (deselectAllBtn) {
+    deselectAllBtn.addEventListener('click', () => {
+      document.querySelectorAll('.blog-article-checkbox').forEach((cb) => {
+        cb.checked = false
+      })
+      updateBulkBar()
+    })
+  }
 
   // 一括操作バーの選択状態管理
   const bulkBar = document.getElementById('blog-bulk-bar')
