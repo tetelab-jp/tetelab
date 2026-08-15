@@ -313,7 +313,7 @@ function StyleListSection({
             </>
           )}
           {!isTemplateMode && (
-            <select id="style-filter-select" class="text-xs font-semibold text-gray-600 border border-gray-300 rounded-lg px-2 py-1.5">
+            <select id="style-filter-select" class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2">
               <option value="all">すべて</option>
               <option value="on">ONのみ</option>
               <option value="off">OFFのみ</option>
@@ -322,7 +322,7 @@ function StyleListSection({
           {showCreateLink && (
             <a
               href="/style/new"
-              class="bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap flex-shrink-0"
+              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap flex-shrink-0"
             >
               <i class="fas fa-plus mr-1"></i>新規作成
             </a>
