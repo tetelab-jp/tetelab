@@ -134,7 +134,7 @@ function MobileNavPanel({
   seoEnabled: boolean
 }) {
   return (
-    <div class="absolute right-0 top-full mt-2 w-72 bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
+    <div class="absolute right-0 top-full mt-2 w-72 max-h-[calc(100vh-5rem)] overflow-y-auto bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
       <div id="salon-switcher-area-mobile" class="mb-2"></div>
       <div class="space-y-4">
         {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
