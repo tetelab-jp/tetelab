@@ -355,27 +355,15 @@ function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) 
   return <span class={`${cls} text-gray-700 whitespace-nowrap`}>{cell.resultCount}店舗中</span>
 }
 
-// 最新列専用: 順位バッジと店舗数を1マスにまとめて表示する(中エリア/小エリアそれぞれ1列)
+// 最新列専用: 順位バッジと店舗数を同じ行に並べて表示する(中エリア/小エリア
+// それぞれ1列)。過去列(順位バッジのみの1行)と行の高さ(=コンテンツの行数)を
+// 揃えることで、セルの中央揃え(vertical-align:middle)のままでも順位バッジの
+// Y位置が最新列・過去列でぴったり揃う。
 function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
   return (
-    <span class="inline-flex flex-col items-center gap-0.5">
+    <span class="inline-flex items-baseline gap-1 whitespace-nowrap">
       <RankPivotCell current={current} prev={prev} size={size} />
       <StoreCountCell cell={current} size={size} />
-    </span>
-  )
-}
-
-// 過去列専用: 最新列(順位+店舗数の2行)と縦の高さを揃えるため、店舗数の行を
-// 見えない(invisible)プレースホルダーとして確保する。こうすることでセルの
-// vertical-align:middle(中央揃え)を使っても、順位バッジのY位置が最新列と
-// 過去列とでぴったり揃う(見えない行が無いと、行の高さが最新列基準になった際に
-// 過去列の1行だけのコンテンツが中央に来てしまい、順位の位置がずれて見える)。
-function PastAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
-  const placeholderCls = size === 'lg' ? 'text-xs' : 'text-[10px]'
-  return (
-    <span class="inline-flex flex-col items-center gap-0.5">
-      <RankPivotCell current={current} prev={prev} size={size} />
-      <span class={`${placeholderCls} invisible`}>0店舗中</span>
     </span>
   )
 }
@@ -524,10 +512,10 @@ function renderRankTable(
                 return (
                   <>
                     <td class="py-3 px-1 border-l border-gray-100">
-                      <PastAreaCell current={middleCurrent} prev={middlePrev} size={v.size} />
+                      <RankPivotCell current={middleCurrent} prev={middlePrev} size={v.size} />
                     </td>
                     <td class="py-3 px-1">
-                      <PastAreaCell current={smallCurrent} prev={smallPrev} size={v.size} />
+                      <RankPivotCell current={smallCurrent} prev={smallPrev} size={v.size} />
                     </td>
                   </>
                 )
