@@ -117,14 +117,20 @@ data "aws_iam_policy_document" "github_actions_deploy" {
     actions   = ["iam:PassRole"]
     resources = [aws_iam_role.task_execution.arn, aws_iam_role.task.arn, aws_iam_role.app_task.arn]
   }
-  # deploy-app.ymlの「Add admin secrets if missing」ステップがadmin用シークレットの
-  # 存在確認(describe-secret)に使う。これが無いと常にAccessDenied→未作成扱いとなり、
-  # ADMIN_INITIAL_PASSWORD等がタスク定義に注入されないまま気づかずスキップされ続ける
-  # (実機で確認済みの不具合)。
+  # deploy-app.ymlの「Add admin secrets if missing」「Add OpenAI API key secret if missing」
+  # ステップが各シークレットの存在確認(describe-secret)に使う。これが無いと常に
+  # AccessDenied→未作成扱いとなり、対象の値がタスク定義に注入されないまま気づかず
+  # スキップされ続ける(admin用シークレットで実機確認済みの不具合。OPENAI_API_KEY追加時に
+  # このリストへの追加を忘れて同じ不具合を再発させたため、新しいシークレットを
+  # describe-secretで存在確認する場合は必ずここにも追加すること)。
   statement {
-    sid       = "DescribeAdminSecrets"
-    actions   = ["secretsmanager:DescribeSecret"]
-    resources = [aws_secretsmanager_secret.admin_jwt_secret.arn, aws_secretsmanager_secret.admin_initial_password.arn]
+    sid     = "DescribeAdminSecrets"
+    actions = ["secretsmanager:DescribeSecret"]
+    resources = [
+      aws_secretsmanager_secret.admin_jwt_secret.arn,
+      aws_secretsmanager_secret.admin_initial_password.arn,
+      aws_secretsmanager_secret.openai_api_key.arn
+    ]
   }
 }
 
