@@ -758,10 +758,18 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, article_id, user_id, salon_id, job_token, status FROM blog_post_jobs WHERE id = ?`
+    `SELECT id, article_id, user_id, salon_id, run_id, job_token, status FROM blog_post_jobs WHERE id = ?`
   )
     .bind(jobId)
-    .first<{ id: number; article_id: number; user_id: number; salon_id: number | null; job_token: string; status: string }>()
+    .first<{
+      id: number
+      article_id: number
+      user_id: number
+      salon_id: number | null
+      run_id: number | null
+      job_token: string
+      status: string
+    }>()
 
   if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
     return c.json({ error: 'unauthorized' }, 401)
@@ -796,6 +804,30 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
   const row = await getArticleRowForJob(c.env, job.article_id)
   if (!row || !row.body) {
     return c.json({ error: 'article not available' }, 500)
+  }
+
+  // カテゴリ未設定のまま投稿すると、SALON BOARD側のカテゴリ選択が必須項目
+  // バリデーションで弾かれ、確認画面(#reflect)へ進めずに失敗する
+  // (2026-08-15、実機ログで確認済み)。ブラウザを起動する前にここで検知し、
+  // 分かりやすいメッセージで即座に失敗させる。
+  if (!row.hpb_category_value) {
+    const message = 'カテゴリが設定されていません。記事を開いてカテゴリを選択・保存してから再度お試しください'
+    await c.env.DB.prepare(
+      `UPDATE blog_post_jobs SET status = 'failed', result_step = 'form_fill', result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(message, jobId)
+      .run()
+    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
+      .bind(message, job.article_id)
+      .run()
+    await c.env.DB.prepare(
+      `INSERT INTO execution_logs (blog_article_id, user_id, salon_id, execution_type, status, message)
+       VALUES (?, ?, ?, 'post_blog_article', 'failure', ?)`
+    )
+      .bind(job.article_id, job.user_id, job.salon_id, message)
+      .run()
+    if (job.run_id) await finalizeBlogRunIfComplete(c.env, job.run_id)
+    return c.json({ error: message }, 422)
   }
 
   let imageBase64: string | null = null
