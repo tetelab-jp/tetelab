@@ -361,24 +361,25 @@ function StoreCountCell({ cell, size = 'sm' }: { cell: Cell; size?: CellSize }) 
 }
 
 // 最新列専用: 順位バッジの下に店舗数を表示する(中エリア/小エリアそれぞれ
-// 1列)。2026-08-15追記(ユーザー指定): 対策キーワード列・過去列・最新列の
-// 順位の高さをすべて対策キーワード列の高さに合わせる必要があるため、店舗数を
-// 通常のレイアウトの流れに乗せて2行分の高さを取らせるのはNG(行全体が
-// 対策キーワード列より高くなってしまう)。店舗数をposition:absoluteで
-// 順位バッジの下に重ねて配置し、通常の高さ計算(=行の高さ)には影響させない
-// ことで、順位バッジ自体は対策キーワード・過去列と全く同じ高さに揃う。
-// 2026-08-15追記(PC画面での見切れ修正): PC版は最新列にsticky+z-10が
-// 付いており、店舗数がposition:absoluteで次の行の領域にはみ出す際、次の
-// 行の同じsticky列(同じz-10)の不透明な背景がDOM順で後に描画されるため
-// 店舗数が隠れて(見切れて)しまっていた。店舗数側のz-indexをtd自体より
-// 高くすることで、常に次の行の背景より手前に描画されるようにする。
+// 1列)。
+// 2026-08-15追記(見切れ修正のため方式変更): 一時、店舗数をposition:absolute
+// で行の外にはみ出させ、通常の高さ計算に影響させない方式にしていたが、
+// 表全体を囲むoverflow-x-auto(横スクロール用)は仕様上overflow-yも自動的に
+// autoになるため、はみ出した部分が縦方向にクリップされ、PC・モバイル両方
+// で店舗数が見切れてしまっていた。position:absoluteによる見切れは
+// overflow-x-autoと併用する限り根本的に解消できないため、店舗数を通常の
+// レイアウトの流れに戻す。順位バッジの上にも店舗数と同じ高さの非表示
+// スペーサーを置いてブロックを上下対称にすることで、行全体はキーワード列
+// よりわずかに高くなるものの、順位バッジ自体は過去列の順位と同じ高さに
+// 揃う。
 function LatestAreaCell({ current, prev, size }: { current: Cell; prev: Cell; size: CellSize }) {
   return (
-    <span class="relative inline-flex items-center justify-center">
-      <RankPivotCell current={current} prev={prev} size={size} />
-      <span class="absolute z-20 top-full left-1/2 -translate-x-1/2 pt-0.5">
+    <span class="inline-flex flex-col items-center gap-0.5">
+      <span class="invisible" aria-hidden="true">
         <StoreCountCell cell={current} size={size} />
       </span>
+      <RankPivotCell current={current} prev={prev} size={size} />
+      <StoreCountCell cell={current} size={size} />
     </span>
   )
 }
