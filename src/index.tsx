@@ -361,6 +361,17 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_categoriesブログ拡張列)に失敗しました:', err)
   }
   try {
+    // 2026-08-15追記: 記事カテゴリ単位の季節パラメータ(生成テンプレートで選ぶ
+    // 「1・2月」のような二月セットのチェックボックス)。選択した月をAI生成時の
+    // 季節柄パラメータとして渡すほか、このカテゴリで生成した記事のmonth_tags_json
+    // へ自動反映し、その月に合わせて投稿されるようにする(詳細はmigrations-pg/0026_*.sql参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS season_months_json TEXT DEFAULT '[]'`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_categories.season_months_json)に失敗しました:', err)
+  }
+  try {
     // 2026-08-14再追記(ユーザー指定): 「これまでのブログの書き方に寄せる」
     // チェックボックス(mimic_past_tone)は、実際には何も参照していなかったため
     // 撤廃する。代わりに、カテゴリ単位で「文章スタイル」(過去記事参照=未実装/

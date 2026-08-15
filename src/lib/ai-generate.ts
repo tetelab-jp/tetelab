@@ -34,6 +34,14 @@ export type SalonProfileForGeneration = {
 // params: 一人称・語尾・文体などのパラメータのみを使用する(デフォルト)
 export type BlogStyleMode = 'scraped' | 'reference' | 'params'
 
+// 記事カテゴリに設定された季節パラメータ(「1・2月」のような二月セットの
+// チェックボックス)を、生成AIへの季節柄の指示として1行にする。
+function buildSeasonLine(seasonMonths?: number[] | null): string[] {
+  if (!seasonMonths || seasonMonths.length === 0) return []
+  const months = [...seasonMonths].sort((a, b) => a - b).map((m) => `${m}月`)
+  return [`季節感: ${months.join('・')}ごろに投稿する記事です。この時期らしい話題や言葉を自然に織り交ぜてください。`]
+}
+
 function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   const lines: string[] = []
   if (profile?.salon_name) lines.push(`サロン名: ${profile.salon_name}`)
@@ -98,11 +106,13 @@ async function callChatJson(env: Bindings, systemPrompt: string, userPrompt: str
 export async function generateCategoryDraft(
   env: Bindings,
   categoryName: string,
-  profile: SalonProfileForGeneration
+  profile: SalonProfileForGeneration,
+  seasonMonths?: number[] | null
 ): Promise<string> {
   const systemLines = [
     'あなたは美容サロンのブログ企画を考える専門プランナーです。',
     ...buildSalonPersonaLines(profile),
+    ...buildSeasonLine(seasonMonths),
     '必ず指定されたJSON形式のみで出力してください。'
   ]
   const userPrompt = `カテゴリ「${categoryName}」のブログ記事で繰り返し伝えるべき、サロンの強み・こだわりを2〜3文でまとめてください。
@@ -123,6 +133,7 @@ export type ArticleGenerationInput = {
   bodyMaxChars: number
   profile: SalonProfileForGeneration
   styleMode: BlogStyleMode | null
+  seasonMonths?: number[] | null
 }
 
 export interface GeneratedArticle {
@@ -162,6 +173,7 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     'あなたは美容サロン（美容室）のブログ記事を書く専門ライターです。',
     'ホットペッパービューティーのサロンブログに掲載する記事を作成します。',
     ...buildSalonPersonaLines(input.profile),
+    ...buildSeasonLine(input.seasonMonths),
     'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。'
   ]
 

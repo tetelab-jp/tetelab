@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // このまとまりの記事を一括生成(バックグラウンド進行、ポーリングで進捗表示)
+  // この記事カテゴリの記事を一括生成(バックグラウンド進行、ポーリングで進捗表示)
   var batchBtn = document.getElementById('generate-batch-btn')
   if (batchBtn) {
     batchBtn.addEventListener('click', async function () {

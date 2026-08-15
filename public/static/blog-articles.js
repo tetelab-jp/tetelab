@@ -59,88 +59,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const initialBlogFilterBtn = document.querySelector('.blog-filter-btn[data-filter="all"]')
   if (initialBlogFilterBtn) initialBlogFilterBtn.classList.add('bg-pink-500', 'text-white')
 
-  // ドラッグハンドルによる並び替え(マウス・タッチ両対応、Pointer Events使用)
-  ;(function setupBlogDragReorder() {
-    const list = document.getElementById('blog-article-list')
-    if (!list) return
-    list.querySelectorAll('.blog-drag-handle').forEach((handle) => {
-      handle.addEventListener('pointerdown', (e) => {
-        e.preventDefault()
-        const row = handle.closest('[data-article-id]')
-        if (!row) return
-        row.setPointerCapture(e.pointerId)
-        row.classList.add('opacity-50')
-
-        const onMove = (moveEvent) => {
-          const rows = Array.from(list.children)
-          const y = moveEvent.clientY
-          for (const other of rows) {
-            if (other === row) continue
-            const rect = other.getBoundingClientRect()
-            const mid = rect.top + rect.height / 2
-            if (y < mid) {
-              list.insertBefore(row, other)
-              break
-            } else if (other === rows[rows.length - 1]) {
-              list.insertBefore(row, other.nextElementSibling)
-              break
-            }
-          }
-        }
-
-        const onUp = async (upEvent) => {
-          row.releasePointerCapture(upEvent.pointerId)
-          row.classList.remove('opacity-50')
-          document.removeEventListener('pointermove', onMove)
-          document.removeEventListener('pointerup', onUp)
-
-          const rows = Array.from(list.children)
-          const newIndex = rows.indexOf(row)
-          const articleId = Number(row.getAttribute('data-article-id'))
-          try {
-            const res = await fetch('/api/blog/articles/reorder', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ articleId, newPosition: newIndex + 1 })
-            })
-            const data = await res.json()
-            if (!data.success) alert('順番の変更に失敗しました: ' + (data.error || '不明なエラー'))
-          } catch (err) {
-            alert('通信エラーが発生しました')
-          } finally {
-            location.reload()
-          }
-        }
-
-        document.addEventListener('pointermove', onMove)
-        document.addEventListener('pointerup', onUp)
-      })
-    })
-  })()
-
-  // まとまり(カテゴリ)の順番に1記事ずつ交互に並び替える
-  const rearrangeBtn = document.getElementById('blog-rearrange-btn')
-  if (rearrangeBtn) {
-    rearrangeBtn.addEventListener('click', async () => {
-      if (!confirm('現在の並び順を、まとまりの順番に1記事ずつ交互に並び替えます。よろしいですか？')) return
-      rearrangeBtn.disabled = true
-      try {
-        const res = await fetch('/api/blog/articles/rearrange-by-category', { method: 'POST' })
-        const data = await res.json()
-        if (!data.success) {
-          alert('並び替えに失敗しました: ' + (data.error || '不明なエラー'))
-          rearrangeBtn.disabled = false
-          return
-        }
-      } catch (e) {
-        alert('通信エラーが発生しました')
-        rearrangeBtn.disabled = false
-        return
-      }
-      location.reload()
-    })
-  }
-
   // 一括操作バーの選択状態管理
   const bulkBar = document.getElementById('blog-bulk-bar')
   const selectedCountEl = document.getElementById('blog-selected-count')
@@ -196,33 +114,6 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     })
   }
-
-  // No.欄の手入力による並び替え
-  document.querySelectorAll('.blog-order-input').forEach((input) => {
-    input.addEventListener('change', async (e) => {
-      const target = e.target
-      const articleId = Number(target.getAttribute('data-article-id'))
-      const newPosition = Number(target.value)
-      if (!newPosition || newPosition < 1) {
-        alert('1以上の数値を入力してください')
-        location.reload()
-        return
-      }
-      try {
-        const res = await fetch('/api/blog/articles/reorder', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ articleId, newPosition })
-        })
-        const data = await res.json()
-        if (!data.success) alert('順番の変更に失敗しました: ' + (data.error || '不明なエラー'))
-      } catch (e) {
-        alert('通信エラーが発生しました')
-      } finally {
-        location.reload()
-      }
-    })
-  })
 
   // ---------- 記事確認モーダル ----------
   const modal = document.getElementById('blog-reviewer')
