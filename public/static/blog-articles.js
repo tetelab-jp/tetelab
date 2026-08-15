@@ -145,6 +145,18 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   document.querySelectorAll('.blog-article-checkbox').forEach((cb) => cb.addEventListener('change', updateBulkBar))
 
+  // まとめて承認バーの外側をタップ/クリックしたら選択を解除して閉じる
+  // (チェックボックス自体のクリックはchangeイベント側で既に処理されるため無視する)
+  document.addEventListener('click', (e) => {
+    if (!bulkBar || bulkBar.classList.contains('hidden')) return
+    if (bulkBar.contains(e.target)) return
+    if (e.target.closest('.blog-article-checkbox')) return
+    document.querySelectorAll('.blog-article-checkbox:checked').forEach((cb) => {
+      cb.checked = false
+    })
+    updateBulkBar()
+  })
+
   const bulkApproveBtn = document.getElementById('blog-bulk-approve-btn')
   if (bulkApproveBtn) {
     bulkApproveBtn.addEventListener('click', async () => {
