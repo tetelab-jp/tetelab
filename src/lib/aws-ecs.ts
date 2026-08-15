@@ -39,13 +39,10 @@ export type RunStylePostTaskResult = {
   taskArn: string | null
 }
 
-/**
- * SALON BOARD投稿ジョブ1件分のFargateタスクを起動する。
- * タスクはcontainerOverrides.environmentで渡されたJOB_ID/JOB_TOKENを使って
- * 自らジョブ内容を取得し(GET /api/automation/jobs/:id)、実行後に結果を
- * コールバックする(POST /api/automation/jobs/:id/result)。
- */
-export async function runStylePostTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
+async function runPostTask(
+  params: RunStylePostTaskParams,
+  jobType: 'style' | 'blog'
+): Promise<RunStylePostTaskResult> {
   const client = new ECSClient({
     region: params.awsRegion,
     credentials: fromHttp()
@@ -71,7 +68,8 @@ export async function runStylePostTask(params: RunStylePostTaskParams): Promise<
             environment: [
               { name: 'JOB_API_BASE', value: params.jobApiBase },
               { name: 'JOB_ID', value: String(params.jobId) },
-              { name: 'JOB_TOKEN', value: params.jobToken }
+              { name: 'JOB_TOKEN', value: params.jobToken },
+              { name: 'JOB_TYPE', value: jobType }
             ]
           }
         ]
@@ -85,6 +83,26 @@ export async function runStylePostTask(params: RunStylePostTaskParams): Promise<
 
   const taskArn = result.tasks?.[0]?.taskArn ?? null
   return { taskArn }
+}
+
+/**
+ * SALON BOARD投稿ジョブ1件分のFargateタスクを起動する。
+ * タスクはcontainerOverrides.environmentで渡されたJOB_ID/JOB_TOKENを使って
+ * 自らジョブ内容を取得し(GET /api/automation/jobs/:id)、実行後に結果を
+ * コールバックする(POST /api/automation/jobs/:id/result)。
+ */
+export async function runStylePostTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
+  return runPostTask(params, 'style')
+}
+
+/**
+ * 2026-08-15追記: ブログ記事投稿ジョブ版。style用と同じクラスタ/タスク定義/
+ * ワーカーコンテナを共用し、containerOverrides.environmentのJOB_TYPE=blogで
+ * ワーカー側(worker/src/index.ts)に処理を振り分ける。ジョブ取得/結果コール
+ * バック先のエンドポイントはblog専用(GET/POST /api/blog-automation/jobs/:id)。
+ */
+export async function runBlogPostTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
+  return runPostTask(params, 'blog')
 }
 
 export type StopStylePostTaskParams = {

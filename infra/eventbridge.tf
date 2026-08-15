@@ -57,7 +57,8 @@ resource "aws_iam_role_policy" "cron_invoke" {
       Action = "events:InvokeApiDestination"
       Resource = [
         aws_cloudwatch_event_api_destination.cron[0].arn,
-        aws_cloudwatch_event_api_destination.cron_ranking[0].arn
+        aws_cloudwatch_event_api_destination.cron_ranking[0].arn,
+        aws_cloudwatch_event_api_destination.cron_blog[0].arn
       ]
     }]
   })
@@ -98,5 +99,31 @@ resource "aws_cloudwatch_event_target" "cron_ranking" {
   count    = local.has_domain ? 1 : 0
   rule     = aws_cloudwatch_event_rule.cron_ranking[0].name
   arn      = aws_cloudwatch_event_api_destination.cron_ranking[0].arn
+  role_arn = aws_iam_role.cron_invoke[0].arn
+}
+
+# ブログ記事の自動投稿。/api/cron/run-blog-posts を1分間隔で叩く。
+# 実際の投稿間隔・ブラックアウト時間帯・一時停止判定はrunNextArticleForUser内の
+# shouldPostNowで行うため(styleのcronと同じパターン)、頻繁に叩いても
+# 実際の投稿はスケジュールに従って間隔を空けて実行される。
+# 認証は既存のcron接続(Bearer CRON_SECRET)を流用する。
+resource "aws_cloudwatch_event_api_destination" "cron_blog" {
+  count               = local.has_domain ? 1 : 0
+  name                = "${var.project_name}-cron-blog-target"
+  invocation_endpoint = "${local.app_public_url}/api/cron/run-blog-posts"
+  http_method         = "POST"
+  connection_arn      = aws_cloudwatch_event_connection.cron[0].arn
+}
+
+resource "aws_cloudwatch_event_rule" "cron_blog" {
+  count               = local.has_domain ? 1 : 0
+  name                = "${var.project_name}-run-blog-posts"
+  schedule_expression = "rate(1 minute)"
+}
+
+resource "aws_cloudwatch_event_target" "cron_blog" {
+  count    = local.has_domain ? 1 : 0
+  rule     = aws_cloudwatch_event_rule.cron_blog[0].name
+  arn      = aws_cloudwatch_event_api_destination.cron_blog[0].arn
   role_arn = aws_iam_role.cron_invoke[0].arn
 }

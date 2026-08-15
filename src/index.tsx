@@ -427,6 +427,71 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_articles.auto_post_enabled_flag)に失敗しました:', err)
   }
   try {
+    // 2026-08-15追記: ブログ記事のSALON BOARDへの実自動投稿(Phase 2)。
+    // style_post_schedules/style_post_runs/style_post_jobsと同じ設計方針
+    // (手動実行/外部Cronからのジョブ投入→AWS ECS Fargateワーカーが実際に
+    // Puppeteerでログイン・投稿→結果コールバック)。スタイル投稿と異なり
+    // ブログは「登録・反映する」ボタン1回で公開まで完了する1段階のフロー
+    // のため、reflect(反映申請)相当の別ステップは無い。またSALON BOARD側の
+    // 予約投稿機能(rsvTokoFlg)は使わず、常に即時投稿とし、いつ投稿するかは
+    // このスケジューラ(cron)側の判定に委ねる(ユーザー指定)。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS blog_post_schedules (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         enabled INTEGER NOT NULL DEFAULT 0,
+         next_cursor_article_id INTEGER,
+         paused_until TIMESTAMP,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE(salon_id)
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS blog_post_runs (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         scheduled_time TEXT,
+         total_articles INTEGER NOT NULL DEFAULT 0,
+         status TEXT NOT NULL DEFAULT 'processing',
+         error_message TEXT,
+         executed_at TIMESTAMP,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS blog_post_jobs (
+         id SERIAL PRIMARY KEY,
+         article_id INTEGER NOT NULL REFERENCES blog_articles(id) ON DELETE CASCADE,
+         run_id INTEGER REFERENCES blog_post_runs(id) ON DELETE SET NULL,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         job_token TEXT NOT NULL UNIQUE,
+         status TEXT NOT NULL DEFAULT 'pending',
+         ecs_task_arn TEXT,
+         result_step TEXT,
+         result_message TEXT,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         completed_at TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_blog_post_jobs_one_in_flight_per_article
+       ON blog_post_jobs (article_id) WHERE status IN ('pending', 'running')`
+    ).run()
+    await bindings.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_blog_post_jobs_user_id ON blog_post_jobs(user_id)`).run()
+    await bindings.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_blog_post_jobs_status ON blog_post_jobs(status)`).run()
+    // スタイル投稿のconsecutive_failure_countとは独立させ、ブログ側の連続失敗が
+    // スタイル側の一時停止/アラートに影響しない(逆も同様)ようにする。
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS consecutive_blog_failure_count INTEGER NOT NULL DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(ブログ自動投稿テーブル)に失敗しました:', err)
+  }
+  try {
     // 2026-08-14(ユーザー指定): サロンボードの1ログインに複数サロン(ヘア/キレイ)が
     // 紐づくアカウント対応。ユーザーが選択した(または単一サロンのため自動確定した)
     // STORE_IDと、サロン種別(ヘア/キレイ)を保持する。

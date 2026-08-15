@@ -16,11 +16,13 @@ import {
   loginToSalonBoard,
   draftRegisterStyle,
   submitReflectApplication,
+  postBlogArticle,
   launchBrowser,
   closeAnonymizedProxy,
   handleGroupTopIfPresent,
   ReflectionBlockedError,
   type StylePostInput,
+  type BlogPostInput,
   type LaunchedBrowser
 } from './salonboard-automation'
 import type { Page } from 'puppeteer'
@@ -59,15 +61,37 @@ type JobResult = {
   loginAttempts?: LoginAttempt[]
 }
 
+// 2026-08-15追記: ECS RunTaskのcontainerOverrides.environmentでJOB_TYPEを
+// 渡し、style/blogどちらのジョブかをここで振り分ける(src/lib/aws-ecs.tsの
+// runStylePostTask/runBlogPostTask参照)。既存のstyleジョブはJOB_TYPEを
+// 付けずに投入されることが無いよう、appデプロイ側で必ず付与しているが、
+// 念のため未設定時はstyleとして扱う(後方互換)。
 async function main(): Promise<void> {
   const apiBase = requireEnv('JOB_API_BASE')
   const jobId = requireEnv('JOB_ID')
   const jobToken = requireEnv('JOB_TOKEN')
+  const jobType = process.env.JOB_TYPE === 'blog' ? 'blog' : 'style'
 
   const logs: string[] = []
   const log = (msg: string) => {
     console.log(msg)
     logs.push(msg)
+  }
+
+  if (jobType === 'blog') {
+    let blogResult: Omit<BlogJobResult, 'logs'>
+    try {
+      const payload = await fetchBlogJob(apiBase, jobId, jobToken)
+      blogResult = await runBlogJob(payload, log)
+    } catch (err: any) {
+      blogResult = {
+        success: false,
+        step: 'login',
+        message: `ジョブ実行中に予期しないエラーが発生しました: ${String(err?.message || err)}`
+      }
+    }
+    await postBlogResult(apiBase, jobId, jobToken, { ...blogResult, logs })
+    process.exit(blogResult.success ? 0 : 1)
   }
 
   let result: Omit<JobResult, 'logs'>
@@ -118,6 +142,109 @@ async function postResult(apiBase: string, jobId: string, jobToken: string, resu
   }
 }
 
+// ---------- ブログ投稿ジョブ(2026-08-15追記) ----------
+
+type BlogJobPayload = {
+  loginId: string
+  password: string
+  proxySessionCandidates?: string[] | null
+  targetStoreId?: string | null
+  article: Omit<BlogPostInput, 'imageBuffer'> & { imageBase64: string | null }
+}
+
+type BlogJobStep = 'login' | 'navigate' | 'form_fill' | 'image_upload' | 'confirm' | 'submit' | 'done'
+
+type BlogJobResult = {
+  success: boolean
+  step: BlogJobStep
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: LoginAttempt[]
+}
+
+async function fetchBlogJob(apiBase: string, jobId: string, jobToken: string): Promise<BlogJobPayload> {
+  const res = await fetch(`${apiBase}/api/blog-automation/jobs/${jobId}`, {
+    headers: { Authorization: `Bearer ${jobToken}` }
+  })
+  if (!res.ok) throw new Error(`ジョブ取得に失敗しました(status=${res.status})`)
+  return (await res.json()) as BlogJobPayload
+}
+
+async function postBlogResult(apiBase: string, jobId: string, jobToken: string, result: BlogJobResult): Promise<void> {
+  try {
+    await fetch(`${apiBase}/api/blog-automation/jobs/${jobId}/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    })
+  } catch (err) {
+    console.error('結果の送信に失敗しました:', err)
+  }
+}
+
+/**
+ * ブログ投稿は「登録」→「反映申請」の2段階が無い1回きりの操作のため、
+ * style側のtryDraftWithRetries(同一セッション内での複数回リトライ)は
+ * 設けず、ログインセッション単位でのプロキシ候補切り替えのみ行う
+ * (attemptLogin/closeAttemptはstyle側と共通のものをそのまま使う)。
+ */
+async function runBlogJob(payload: BlogJobPayload, log: (msg: string) => void): Promise<Omit<BlogJobResult, 'logs'>> {
+  const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
+  const loginAttempts: LoginAttempt[] = []
+
+  const { imageBase64, ...articleRest } = payload.article
+  const articleInput: BlogPostInput = {
+    ...articleRest,
+    imageBuffer: imageBase64 ? base64ToArrayBuffer(imageBase64) : null
+  }
+
+  const styleLikePayload = { loginId: payload.loginId, password: payload.password, targetStoreId: payload.targetStoreId }
+
+  let attempt = await attemptLogin(styleLikePayload, log, candidates[0])
+  if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
+
+  let postError: any = attempt.error ? null : new Error('未試行')
+  if (!attempt.error) {
+    try {
+      await postBlogArticle(attempt.page!, articleInput, log)
+      postError = null
+    } catch (err: any) {
+      postError = err
+    }
+  }
+
+  for (let i = 1; i < candidates.length && (attempt.error || postError); i++) {
+    const reason = attempt.error ? 'ログイン' : 'ブログ投稿'
+    log(`[プロキシ] セッションID(${candidates[i - 1]})での${reason}に失敗したため、次の候補セッションID(${candidates[i]})へ切り替えて再ログインします...`)
+    await closeAttempt(attempt)
+    attempt = await attemptLogin(styleLikePayload, log, candidates[i])
+    loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+    postError = attempt.error ? null : new Error('未試行')
+    if (!attempt.error) {
+      try {
+        await postBlogArticle(attempt.page!, articleInput, log)
+        postError = null
+      } catch (err: any) {
+        postError = err
+      }
+    }
+  }
+
+  try {
+    const { proxySessionId, error: loginError } = attempt
+    if (loginError) {
+      return { success: false, step: 'login', message: String(loginError?.message || loginError), proxySessionId: null, loginAttempts }
+    }
+    if (postError) {
+      return { success: false, step: 'submit', message: String(postError?.message || postError), proxySessionId, loginAttempts }
+    }
+    return { success: true, step: 'done', message: 'ブログ登録が完了しました', proxySessionId, loginAttempts }
+  } finally {
+    await closeAttempt(attempt)
+  }
+}
+
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = Buffer.from(base64, 'base64')
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
@@ -131,8 +258,10 @@ type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any; top
  * 1つのブラウザを使い回してページだけ差し替える方式が使えなくなった。
  * 候補セッションIDごとに、ブラウザの起動からやり直す。
  */
+type LoginCredentials = { loginId: string; password: string; targetStoreId?: string | null }
+
 async function attemptLogin(
-  payload: JobPayload,
+  payload: LoginCredentials,
   log: (msg: string) => void,
   candidateId?: string
 ): Promise<LoginAttemptResult> {

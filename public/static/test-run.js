@@ -22,6 +22,33 @@ if (testRunBtn) {
   })
 }
 
+// 実行日時・カテゴリ列をドラッグで横に広げられるようにする(Pointer Events使用)
+;(function setupLogColumnResize() {
+  document.querySelectorAll('.log-col-resize-handle').forEach(function (handle) {
+    handle.addEventListener('pointerdown', function (e) {
+      e.preventDefault()
+      var col = document.getElementById(handle.getAttribute('data-target-col'))
+      var th = handle.closest('th')
+      if (!col || !th) return
+      var startX = e.clientX
+      var startWidth = th.offsetWidth
+      handle.setPointerCapture(e.pointerId)
+
+      function onMove(moveEvent) {
+        var newWidth = Math.max(50, startWidth + (moveEvent.clientX - startX))
+        col.style.width = newWidth + 'px'
+      }
+      function onUp(upEvent) {
+        handle.releasePointerCapture(upEvent.pointerId)
+        document.removeEventListener('pointermove', onMove)
+        document.removeEventListener('pointerup', onUp)
+      }
+      document.addEventListener('pointermove', onMove)
+      document.addEventListener('pointerup', onUp)
+    })
+  })
+})()
+
 // 実行履歴のスタイル/ブログタブ切り替え
 document.querySelectorAll('.log-tab-btn').forEach(function (btn) {
   btn.addEventListener('click', function () {

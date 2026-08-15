@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled, requireBlogEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import {
   runStyleAutomationForUser,
@@ -12,6 +12,15 @@ import {
   updateConsecutiveFailureAndNotify,
   finalizeRunIfComplete
 } from '../lib/style-post-runner'
+import {
+  runBlogAutomationForUser,
+  runNextArticleForUser,
+  retryBlogPost,
+  getArticleRowForJob,
+  sweepStaleBlogJobs,
+  updateBlogConsecutiveFailureAndNotify,
+  finalizeBlogRunIfComplete
+} from '../lib/blog-post-runner'
 import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
@@ -96,10 +105,12 @@ type ExecutionLogRow = {
   showToggle: boolean
 }
 
-function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
+function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId: string }) {
   if (rows.length === 0) {
     return <p class="text-sm text-gray-400">まだログがありません</p>
   }
+  const dateColId = `log-col-date-${tableId}`
+  const categoryColId = `log-col-category-${tableId}`
   return (
     <>
       {/* PC表示: テーブル */}
@@ -107,15 +118,38 @@ function ExecutionLogTable({ rows }: { rows: ExecutionLogRow[] }) {
         {/* 2026-08-13追記: 成功時も投稿ログに全工程の経過を載せるようにしたため、
             table-fixedで列幅を固定しないと投稿ログ列が際限なく横に伸びてしまい、
             line-clamp-2(2行省略)が実質効かなくなる(横に長い1〜2行に収まって
-            しまい省略の意味がなくなる)不具合があった。列幅を明示して防ぐ。 */}
+            しまい省略の意味がなくなる)不具合があった。列幅を明示して防ぐ。
+            2026-08-15追記(ユーザー指定): 実行日時・カテゴリ列は内容によっては
+            この初期幅では狭いことがあるため、列境界をドラッグして横に広げられる
+            ようにする(colのidをtest-run.jsから操作する。スタイル/ブログの
+            2テーブルが同時にDOMへ存在するため、id重複を避けてtableIdで分ける)。 */}
         <table class="w-full text-sm table-fixed">
+          <colgroup>
+            <col id={dateColId} style="width:9%" />
+            <col id={categoryColId} style="width:6%" />
+            <col style="width:25%" />
+            <col style="width:8%" />
+            <col style="width:52%" />
+          </colgroup>
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
-              <th class="py-2 pl-3 w-[9%]">実行日時</th>
-              <th class="py-2 w-[6%] text-center">カテゴリ</th>
-              <th class="py-2 w-[25%]">内容</th>
-              <th class="py-2 w-[8%] text-center">ステータス</th>
-              <th class="py-2 w-1/2">投稿ログ</th>
+              <th class="py-2 pl-3 relative">
+                実行日時
+                <span
+                  class="log-col-resize-handle absolute top-0 bottom-0 right-0 w-2 -mr-1 cursor-col-resize hover:bg-pink-200 active:bg-pink-300"
+                  data-target-col={dateColId}
+                ></span>
+              </th>
+              <th class="py-2 text-center relative">
+                カテゴリ
+                <span
+                  class="log-col-resize-handle absolute top-0 bottom-0 right-0 w-2 -mr-1 cursor-col-resize hover:bg-pink-200 active:bg-pink-300"
+                  data-target-col={categoryColId}
+                ></span>
+              </th>
+              <th class="py-2">内容</th>
+              <th class="py-2 text-center">ステータス</th>
+              <th class="py-2">投稿ログ</th>
             </tr>
           </thead>
           <tbody>
@@ -350,10 +384,10 @@ automation.get('/style/test-run', requireAuth, async (c) => {
         </div>
 
         <div data-tab-panel="style">
-          <ExecutionLogTable rows={styleLogRows} />
+          <ExecutionLogTable rows={styleLogRows} tableId="style" />
         </div>
         <div data-tab-panel="blog" class="hidden">
-          <ExecutionLogTable rows={blogLogRows} />
+          <ExecutionLogTable rows={blogLogRows} tableId="blog" />
         </div>
       </div>
 
@@ -677,6 +711,238 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
   }
 
   return c.json({ ok: true })
+})
+
+// ============================================
+// ブログ記事の自動投稿(Phase 2)。上のスタイル投稿と同じ設計方針だが、
+// ブログは「登録・反映する」ボタン1回で公開まで完了する1段階のフローの
+// ため、reflect(反映申請)相当の別ステップは無い。
+// ============================================
+
+automation.post('/api/blog-automation/test-run', requireAuth, requireBlogEnabled, async (c) => {
+  const user = c.get('user')
+  try {
+    const summary = await runBlogAutomationForUser(c.env, user.id, user.active_salon_id)
+    return c.json({
+      success: summary.dispatchedCount > 0,
+      dispatchedCount: summary.dispatchedCount,
+      status: summary.status,
+      error: summary.errorMessage
+    })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  }
+})
+
+automation.post('/api/blog-article/:id/retry', requireAuth, requireBlogEnabled, async (c) => {
+  const user = c.get('user')
+  const articleId = Number(c.req.param('id'))
+  try {
+    const result = await retryBlogPost(c.env, user.id, user.active_salon_id, articleId)
+    return c.json({ success: result.outcome === 'dispatched', outcome: result.outcome })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  }
+})
+
+automation.get('/api/blog-automation/jobs/:id', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, article_id, user_id, salon_id, job_token, status FROM blog_post_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{ id: number; article_id: number; user_id: number; salon_id: number | null; job_token: string; status: string }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ error: 'job already completed' }, 409)
+  }
+
+  const cred = await c.env.DB.prepare(
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id, target_store_id
+     FROM salon_credentials WHERE user_id = ?`
+  )
+    .bind(job.user_id)
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+      target_store_id: string | null
+    }>()
+  if (!cred || !c.env.ENCRYPTION_KEY) {
+    return c.json({ error: 'credentials not available' }, 500)
+  }
+
+  let targetStoreId = cred.target_store_id || null
+  if (job.salon_id) {
+    const salon = await c.env.DB.prepare('SELECT salon_key FROM salonboard_salons WHERE id = ?')
+      .bind(job.salon_id)
+      .first<{ salon_key: string | null }>()
+    if (salon?.salon_key) targetStoreId = salon.salon_key
+  }
+
+  const row = await getArticleRowForJob(c.env, job.article_id)
+  if (!row || !row.body) {
+    return c.json({ error: 'article not available' }, 500)
+  }
+
+  let imageBase64: string | null = null
+  if (row.image_r2_key) {
+    const object = await c.env.STYLE_IMAGES.get(row.image_r2_key)
+    if (object) imageBase64 = arrayBufferToBase64(await object.arrayBuffer())
+  }
+
+  const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+  const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+  await c.env.DB.prepare(`UPDATE blog_post_jobs SET status = 'running' WHERE id = ? AND status = 'pending'`)
+    .bind(jobId)
+    .run()
+
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
+
+  return c.json({
+    loginId,
+    password,
+    proxySessionCandidates,
+    targetStoreId,
+    article: {
+      title: (row.title || '').slice(0, 25),
+      body: row.body || '',
+      categoryValue: row.hpb_category_value || '',
+      stylistSelectValue: row.stylist_select_value || '',
+      imageBase64,
+      imageFileName: row.image_file_name || (row.image_r2_key ? `blog-${row.id}.jpg` : null)
+    }
+  })
+})
+
+type BlogJobResultBody = {
+  success: boolean
+  step: 'login' | 'navigate' | 'form_fill' | 'image_upload' | 'confirm' | 'submit' | 'done'
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: { sessionId: string; success: boolean }[]
+}
+
+automation.post('/api/blog-automation/jobs/:id/result', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, article_id, user_id, salon_id, job_token, status, run_id FROM blog_post_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{ id: number; article_id: number; user_id: number; salon_id: number | null; job_token: string; status: string; run_id: number | null }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ ok: true, alreadyCompleted: true })
+  }
+
+  const body = await c.req.json<BlogJobResultBody>().catch(() => null)
+  if (!body) return c.json({ error: 'invalid body' }, 400)
+
+  const { article_id: articleId, user_id: userId } = job
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 投稿ログ: ${body.logs.join(' | ')}` : ''
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
+
+  if (body.step === 'login' && !body.success) {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'failed', last_error = ? WHERE user_id = ?`)
+      .bind(body.message.slice(0, 500), userId)
+      .run()
+      .catch(() => {})
+  } else {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'success', last_error = NULL WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  let jobStatus: string
+  if (body.success) {
+    await c.env.DB.prepare(
+      `UPDATE blog_articles SET last_posted_at = CURRENT_TIMESTAMP, post_count = post_count + 1, last_error = NULL WHERE id = ?`
+    )
+      .bind(articleId)
+      .run()
+    jobStatus = 'success'
+  } else {
+    // 承認を解除せず、投稿失敗として明示的にマークする(review-modalから
+    // 再承認すれば次のローテーションで再度対象になる)。
+    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'posting_failed', last_error = ? WHERE id = ?`)
+      .bind(messageWithDiagnostics, articleId)
+      .run()
+    jobStatus = 'failed'
+  }
+
+  if (jobStatus === 'success' && body.proxySessionId) {
+    await c.env.DB.prepare(
+      `UPDATE salon_credentials SET last_successful_proxy_session_id = ?, last_successful_proxy_session_at = CURRENT_TIMESTAMP WHERE user_id = ?`
+    )
+      .bind(body.proxySessionId, userId)
+      .run()
+      .catch(() => {})
+  } else if (jobStatus !== 'success') {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET last_successful_proxy_session_id = NULL WHERE user_id = ?`)
+      .bind(userId)
+      .run()
+      .catch(() => {})
+  }
+
+  await updateBlogConsecutiveFailureAndNotify(c.env, userId, job.salon_id, jobStatus === 'success')
+
+  await c.env.DB.prepare(
+    `UPDATE blog_post_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+  )
+    .bind(jobStatus, body.step, messageWithDiagnostics, jobId)
+    .run()
+
+  if (job.run_id) {
+    await finalizeBlogRunIfComplete(c.env, job.run_id)
+  }
+
+  return c.json({ ok: true })
+})
+
+automation.post('/api/cron/run-blog-posts', async (c) => {
+  const authHeader = c.req.header('Authorization') || ''
+  const expected = c.env.CRON_SECRET
+  if (!expected || !timingSafeEqual(authHeader, `Bearer ${expected}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+
+  const nowLabel = currentJstTimeLabel()
+  await sweepStaleBlogJobs(c.env).catch(() => {})
+
+  const { results: schedules } = await c.env.DB.prepare(
+    `SELECT s.user_id, s.salon_id FROM blog_post_schedules s
+     JOIN users u ON u.id = s.user_id
+     JOIN salonboard_salons sb ON sb.id = s.salon_id
+     WHERE s.enabled = 1 AND u.is_active = 1 AND u.blog_enabled = 1 AND sb.is_active_workspace = 1`
+  ).all<{ user_id: number; salon_id: number }>()
+
+  const targets = schedules || []
+  const outcomes: any[] = []
+  for (const t of targets) {
+    try {
+      const summary = await runNextArticleForUser(c.env, t.user_id, t.salon_id, nowLabel)
+      outcomes.push(summary ? { userId: t.user_id, salonId: t.salon_id, ...summary } : { userId: t.user_id, skipped: true })
+    } catch (err: any) {
+      outcomes.push({ userId: t.user_id, status: 'failed', error: String(err?.message || err) })
+    }
+  }
+
+  return c.json({ time: nowLabel, matchedUsers: targets.length, outcomes })
 })
 
 // ---------- 外部Cronトリガー用エンドポイント ----------
