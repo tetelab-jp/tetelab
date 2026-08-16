@@ -53,6 +53,7 @@ export type AppUser = {
   style_enabled: number
   blog_enabled: number
   seo_enabled: number
+  review_enabled: number
   // 複数サロンワークスペース対応: 現在アプリ上でアクティブなサロン
   // (salonboard_salons.id)。新規登録時に必ず1件作られるため、通常はnullに
   // ならないが、移行前の異常系に備えnullableとして扱う。

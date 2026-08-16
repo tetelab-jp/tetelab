@@ -667,6 +667,8 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
     >
       {measured && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
@@ -869,6 +871,8 @@ ranking.get('/seo/keywords', requireAuth, requireSeoEnabled, async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
     >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <p class="font-semibold mb-4 text-gray-900">
@@ -1017,6 +1021,8 @@ ranking.get('/seo/templates/:id/edit', requireAuth, requireSeoEnabled, async (c)
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
     >
       <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-3xl">
         <p class="font-semibold mb-5 text-gray-900">対策キーワード編集</p>
@@ -1146,6 +1152,8 @@ ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
     >
       {saved && (
         <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">

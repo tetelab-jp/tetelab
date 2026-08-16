@@ -34,7 +34,7 @@ export async function requireAuth(
 
   // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled, active_salon_id, salon_slot_limit FROM users WHERE id = ?'
+    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled, review_enabled, active_salon_id, salon_slot_limit FROM users WHERE id = ?'
   )
     .bind(payload.sub)
     .first<AppUser>()
@@ -87,6 +87,18 @@ export async function requireSeoEnabled(
   const user = c.get('user')
   if (user.seo_enabled === 0) {
     return redirectOrUnauthorized(c, 'SEO機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
+  }
+  await next()
+}
+
+/** requireStyleEnabledの口コミ管理版。/reviews/*・/api/reviews/* ルートで使う想定。 */
+export async function requireReviewEnabled(
+  c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
+  next: Next
+) {
+  const user = c.get('user')
+  if (user.review_enabled === 0) {
+    return redirectOrUnauthorized(c, '口コミ管理機能は現在ご利用いただけません。詳しくは運営までお問い合わせください。', '/dashboard')
   }
   await next()
 }

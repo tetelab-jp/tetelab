@@ -14,7 +14,9 @@ import {
   parseSearchResultPage,
   findSalonRankInPage,
   extractSalonAreaFromSlnPage,
-  type SalonAreaInfo
+  parseHpbReviewPage,
+  type SalonAreaInfo,
+  type HpbReviewItem
 } from './ranking-parse'
 
 const USER_AGENT =
@@ -154,4 +156,51 @@ export async function fetchSalonAreaFromHpb(
   const dispatcher = await makeDispatcher(options.proxyUrl)
   const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/`, dispatcher, options.signal)
   return extractSalonAreaFromSlnPage(html)
+}
+
+// --------------------------------------------
+// 口コミ管理ツール(2026-08-16追記): HPB公開口コミ一覧の取得
+// --------------------------------------------
+
+export type HpbReviewListResult = {
+  items: HpbReviewItem[]
+  pagesScanned: number
+  /** 1ページ目の「サロン平均」バッジの値(参考表示用) */
+  salonAverageScore: number | null
+}
+
+const DEFAULT_MAX_HPB_REVIEW_PAGES = 200
+const DEFAULT_HPB_REVIEW_PAGE_DELAY_MS = 800
+
+/**
+ * HPB公開口コミ一覧(https://beauty.hotpepper.jp/{hpbSlnId}/review/、
+ * 2ページ目以降は<link rel="next">が示すURLを辿る)を全ページ巡回して
+ * 取得する。ログイン不要・Puppeteer不要(ranking-scraper.tsの既存fetch
+ * 機構を再利用)。
+ */
+export async function fetchHpbReviewList(
+  hpbSlnId: string,
+  options: ScrapeOptions = {}
+): Promise<HpbReviewListResult> {
+  const maxPages = options.maxPages ?? DEFAULT_MAX_HPB_REVIEW_PAGES
+  const delayMs = options.delayMs ?? DEFAULT_HPB_REVIEW_PAGE_DELAY_MS
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+
+  const items: HpbReviewItem[] = []
+  let url: string | null = `https://beauty.hotpepper.jp/${hpbSlnId}/review/`
+  let salonAverageScore: number | null = null
+  let pagesScanned = 0
+
+  while (url && pagesScanned < maxPages) {
+    const html = await fetchHtml(url, dispatcher, options.signal)
+    const parsed = parseHpbReviewPage(html)
+    pagesScanned += 1
+    if (pagesScanned === 1) salonAverageScore = parsed.salonAverageScore
+    items.push(...parsed.items)
+    if (!parsed.nextPageUrl) break
+    url = parsed.nextPageUrl
+    await sleep(delayMs)
+  }
+
+  return { items, pagesScanned, salonAverageScore }
 }

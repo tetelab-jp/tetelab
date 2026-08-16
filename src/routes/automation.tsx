@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { requireAuth, requireStyleEnabled, requireBlogEnabled } from '../lib/auth-middleware'
+import { requireAuth, requireStyleEnabled, requireBlogEnabled, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import {
   runStyleAutomationForUser,
@@ -21,6 +21,8 @@ import {
   updateBlogConsecutiveFailureAndNotify,
   finalizeBlogRunIfComplete
 } from '../lib/blog-post-runner'
+import { enqueueReviewSyncJob, processReviewSyncResult, type ReviewSyncJobRow } from '../lib/review-sync-runner'
+import type { SalonBoardReviewRow } from '../lib/review-match'
 import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
@@ -296,6 +298,8 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-test-run"
       salonName={user.salon_name}
       title="実行履歴"
@@ -903,6 +907,196 @@ automation.post('/api/blog-automation/jobs/:id/result', async (c) => {
 
   return c.json({ ok: true })
 })
+
+// ============================================
+// 口コミ管理ツールの同期ジョブ(2026-08-16追記)。style/blogと同じ設計方針
+// だが、ワーカーはサロンボード口コミ一覧の巡回のみを行い(Puppeteer/ログイン
+// が必要な部分)、HPB公開口コミ一覧との突合はアプリ側(fetch()のみで完結)で
+// 行う。詳細/返信ページ(reviewReply/)は一切使用しない。
+// ============================================
+
+automation.post('/api/reviews/sync/start', requireAuth, requireReviewEnabled, async (c) => {
+  const user = c.get('user')
+  if (!user.active_salon_id) return c.json({ success: false, error: 'サロンが選択されていません' }, 400)
+  try {
+    const result = await enqueueReviewSyncJob(c.env, user.id, user.active_salon_id)
+    return c.json({ success: true, jobId: result.jobId, mode: result.mode })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err) }, 400)
+  }
+})
+
+automation.get('/api/reviews/sync/status', requireAuth, requireReviewEnabled, async (c) => {
+  const user = c.get('user')
+  if (!user.active_salon_id) return c.json({ status: 'none' })
+  const job = await c.env.DB.prepare(
+    `SELECT id, status, mode, matched_count, unmatched_count, result_message
+     FROM review_sync_jobs WHERE salon_id = ? ORDER BY id DESC LIMIT 1`
+  )
+    .bind(user.active_salon_id)
+    .first<{
+      id: number
+      status: string
+      mode: string
+      matched_count: number
+      unmatched_count: number
+      result_message: string | null
+    }>()
+  if (!job) return c.json({ status: 'none' })
+  return c.json({
+    status: job.status,
+    mode: job.mode,
+    matchedCount: job.matched_count,
+    unmatchedCount: job.unmatched_count,
+    errorMessage: job.status === 'failed' || job.status === 'timeout' ? job.result_message : null
+  })
+})
+
+automation.get('/api/review-automation/jobs/:id', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, user_id, salon_id, job_token, status, mode FROM review_sync_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{ id: number; user_id: number; salon_id: number; job_token: string; status: string; mode: string }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ error: 'job already completed' }, 409)
+  }
+
+  const cred = await c.env.DB.prepare(
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id, target_store_id
+     FROM salon_credentials WHERE user_id = ?`
+  )
+    .bind(job.user_id)
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+      target_store_id: string | null
+    }>()
+  if (!cred || !c.env.ENCRYPTION_KEY) {
+    return c.json({ error: 'credentials not available' }, 500)
+  }
+
+  let targetStoreId = cred.target_store_id || null
+  const salon = await c.env.DB.prepare('SELECT salon_key FROM salonboard_salons WHERE id = ?')
+    .bind(job.salon_id)
+    .first<{ salon_key: string | null }>()
+  if (salon?.salon_key) targetStoreId = salon.salon_key
+
+  let stopAtManagementNo: string | null = null
+  if (job.mode === 'incremental') {
+    const state = await c.env.DB.prepare(
+      `SELECT last_synced_review_key FROM review_sync_state WHERE salon_id = ?`
+    )
+      .bind(job.salon_id)
+      .first<{ last_synced_review_key: string | null }>()
+    stopAtManagementNo = state?.last_synced_review_key || null
+  }
+
+  const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+  const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+  await c.env.DB.prepare(`UPDATE review_sync_jobs SET status = 'running' WHERE id = ? AND status = 'pending'`)
+    .bind(jobId)
+    .run()
+
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
+
+  return c.json({
+    loginId,
+    password,
+    proxySessionCandidates,
+    targetStoreId,
+    stopAtManagementNo
+  })
+})
+
+type ReviewSyncJobResultBody = {
+  success: boolean
+  step: 'login' | 'navigate' | 'list_fetch' | 'done'
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: { sessionId: string; success: boolean }[]
+  rows: SalonBoardReviewRow[]
+}
+
+automation.post('/api/review-automation/jobs/:id/result', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, user_id, salon_id, job_token, status, mode FROM review_sync_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<ReviewSyncJobRow & { job_token: string }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ ok: true, alreadyCompleted: true })
+  }
+
+  const body = await c.req.json<ReviewSyncJobResultBody>().catch(() => null)
+  if (!body) return c.json({ error: 'invalid body' }, 400)
+
+  if (body.step === 'login' && !body.success) {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'failed', last_error = ? WHERE user_id = ?`)
+      .bind(body.message.slice(0, 500), job.user_id)
+      .run()
+      .catch(() => {})
+  } else {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'success', last_error = NULL WHERE user_id = ?`)
+      .bind(job.user_id)
+      .run()
+      .catch(() => {})
+  }
+
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 実行ログ: ${body.logs.join(' | ')}` : ''
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
+
+  if (!body.success) {
+    await c.env.DB.prepare(
+      `UPDATE review_sync_jobs SET status = 'failed', result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(body.step, messageWithDiagnostics, jobId)
+      .run()
+    return c.json({ ok: true })
+  }
+
+  try {
+    const { matchedCount, unmatchedCount } = await processReviewSyncResult(c.env, job, body.rows || [])
+    await c.env.DB.prepare(
+      `UPDATE review_sync_jobs SET status = 'success', result_step = ?, result_message = ?, matched_count = ?, unmatched_count = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(body.step, messageWithDiagnostics, matchedCount, unmatchedCount, jobId)
+      .run()
+  } catch (err: any) {
+    const message = `HPB口コミ一覧の取得・突合処理に失敗しました: ${String(err?.message || err)}`.slice(0, 10000)
+    await c.env.DB.prepare(
+      `UPDATE review_sync_jobs SET status = 'failed', result_step = 'list_fetch', result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(message, jobId)
+      .run()
+  }
+
+  return c.json({ ok: true })
+})
+
+// 定期実行(月次差分同期・タイムアウトジョブの掃除)は外部Cronトリガーを
+// 使わず、アプリ内setInterval(src/index.tsx、既存のrunDeletionSweepと
+// 同じパターン)から直接sweepStaleReviewSyncJobs/runMonthlyReviewSyncSweepを
+// 呼ぶ(EventBridgeへの新規スケジュール追加を避けるため)。
 
 automation.post('/api/cron/run-blog-posts', async (c) => {
   const authHeader = c.req.header('Authorization') || ''

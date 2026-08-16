@@ -8,6 +8,7 @@ import blog from './routes/blog'
 import automation from './routes/automation'
 import ranking from './routes/ranking'
 import admin from './routes/admin'
+import reviews from './routes/reviews'
 import { SESSION_COOKIE_NAME } from './lib/auth-middleware'
 import { verifyJwt } from './lib/jwt'
 import { hashPassword } from './lib/crypto'
@@ -15,6 +16,7 @@ import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
 import { backfillCompressStyleImages } from './lib/style-image-backfill'
 import { sweepPendingAccountDeletions } from './lib/account-deletion'
+import { sweepStaleReviewSyncJobs, runMonthlyReviewSyncSweep } from './lib/review-sync-runner'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -693,6 +695,91 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(パスワード再設定トークン列追加)に失敗しました:', err)
   }
   try {
+    // 2026-08-16追記: 口コミ管理ツール。サロンボード口コミ一覧(担当スタイリスト・
+    // 投稿日時)とHPB公開口コミ一覧(評点・本文全文)を投稿日+本文冒頭で突合して
+    // 蓄積する(詳細/返信ページは使用しない設計。migrations-pg/0029参照)。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS reviews (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER NOT NULL REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         salonboard_review_key TEXT NOT NULL,
+         posted_at TIMESTAMP,
+         visited_at DATE,
+         reservation_name TEXT,
+         stylist_name_raw TEXT,
+         stylist_id INTEGER REFERENCES stylists(id) ON DELETE SET NULL,
+         reply_status TEXT,
+         hpb_nickname TEXT,
+         gender TEXT,
+         age_group TEXT,
+         attribute TEXT,
+         menu_used TEXT,
+         coupon_used TEXT,
+         content TEXT,
+         salon_reply_content TEXT,
+         score_atmosphere SMALLINT,
+         score_service SMALLINT,
+         score_technique SMALLINT,
+         score_menu_price SMALLINT,
+         score_overall SMALLINT,
+         matched_at TIMESTAMP,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE(salon_id, salonboard_review_key)
+       )`
+    ).run()
+    await bindings.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_reviews_salon_posted ON reviews(salon_id, posted_at)`).run()
+    await bindings.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_reviews_stylist_id ON reviews(stylist_id)`).run()
+    await bindings.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_reviews_unmatched ON reviews(salon_id) WHERE matched_at IS NULL`
+    ).run()
+
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS review_sync_state (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER NOT NULL REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         backfill_completed_at TIMESTAMP,
+         last_synced_review_key TEXT,
+         last_incremental_sync_month TEXT,
+         last_sync_run_at TIMESTAMP,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE(salon_id)
+       )`
+    ).run()
+
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS review_sync_jobs (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER NOT NULL REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         job_token TEXT NOT NULL UNIQUE,
+         mode TEXT NOT NULL DEFAULT 'incremental',
+         status TEXT NOT NULL DEFAULT 'pending',
+         matched_count INTEGER NOT NULL DEFAULT 0,
+         unmatched_count INTEGER NOT NULL DEFAULT 0,
+         ecs_task_arn TEXT,
+         result_step TEXT,
+         result_message TEXT,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         completed_at TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_sync_jobs_one_in_flight_per_salon
+       ON review_sync_jobs (salon_id) WHERE status IN ('pending', 'running')`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_review_sync_jobs_user_id ON review_sync_jobs(user_id)`
+    ).run()
+
+    await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS review_enabled INTEGER NOT NULL DEFAULT 0`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(口コミ管理ツール)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
@@ -733,6 +820,22 @@ const bindings: Bindings = {
   }
   runDeletionSweep()
   setInterval(runDeletionSweep, 60 * 60 * 1000)
+
+  // 2026-08-16追記: 口コミ管理ツールの月次差分同期・タイムアウトジョブの
+  // 掃除。上のrunDeletionSweepと同じ理由(EventBridgeへの新規スケジュール
+  // 追加を避ける)でアプリ内タイマーにする。1時間毎に自己ゲート判定
+  // (review_sync_state.last_incremental_sync_monthが今月と異なるサロンのみ
+  // 実行)するので、この間隔で十分。
+  const runReviewSync = () => {
+    void sweepStaleReviewSyncJobs(bindings).catch((err) => {
+      console.error('口コミ同期ジョブのタイムアウト掃除に失敗しました:', err)
+    })
+    void runMonthlyReviewSyncSweep(bindings).catch((err) => {
+      console.error('口コミ月次同期の実行に失敗しました:', err)
+    })
+  }
+  runReviewSync()
+  setInterval(runReviewSync, 60 * 60 * 1000)
 })
 
 app.use('*', async (c, next) => {
@@ -784,5 +887,6 @@ app.route('/', ranking)
 app.route('/', dashboard)
 app.route('/', style)
 app.route('/', blog)
+app.route('/', reviews)
 
 export default app

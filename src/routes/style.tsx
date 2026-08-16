@@ -463,6 +463,8 @@ style.get('/style/library', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-library"
       salonName={user.salon_name}
       title="スタイル一覧"
@@ -525,6 +527,8 @@ style.get('/style/import', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-import"
       salonName={user.salon_name}
       title="既存スタイルの取り込み"
@@ -949,6 +953,8 @@ style.get('/style/new', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-library"
       salonName={user.salon_name}
       title="スタイル新規作成"
@@ -1120,6 +1126,8 @@ style.get('/style/:id/edit', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-library"
       salonName={user.salon_name}
       title="スタイル編集"
@@ -1458,6 +1466,8 @@ style.get('/style/schedule', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-schedule"
       salonName={user.salon_name}
       title="自動投稿・手動投稿"
@@ -1661,6 +1671,8 @@ style.get('/style/template', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-template"
       salonName={user.salon_name}
       title="テンプレート作成・適用"
@@ -1968,6 +1980,8 @@ style.get('/style/template/new', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-template"
       salonName={user.salon_name}
       title="テンプレート新規作成"
@@ -2034,6 +2048,8 @@ style.get('/style/template/:id/edit', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="style-template"
       salonName={user.salon_name}
       title="テンプレート編集"

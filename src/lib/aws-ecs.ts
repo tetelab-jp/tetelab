@@ -41,7 +41,7 @@ export type RunStylePostTaskResult = {
 
 async function runPostTask(
   params: RunStylePostTaskParams,
-  jobType: 'style' | 'blog'
+  jobType: 'style' | 'blog' | 'review_sync'
 ): Promise<RunStylePostTaskResult> {
   const client = new ECSClient({
     region: params.awsRegion,
@@ -103,6 +103,17 @@ export async function runStylePostTask(params: RunStylePostTaskParams): Promise<
  */
 export async function runBlogPostTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
   return runPostTask(params, 'blog')
+}
+
+/**
+ * 2026-08-16追記: 口コミ管理ツールの同期ジョブ版。style/blogと同じクラスタ/
+ * タスク定義/ワーカーコンテナを共用し、containerOverrides.environmentの
+ * JOB_TYPE=review_syncでワーカー側(worker/src/index.ts)に処理を振り分ける。
+ * ワーカーはサロンボード口コミ一覧の巡回のみを行い(HPB側の突合はアプリ側)、
+ * ジョブ取得/結果コールバック先は口コミ専用(GET/POST /api/review-automation/jobs/:id)。
+ */
+export async function runReviewSyncTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
+  return runPostTask(params, 'review_sync')
 }
 
 export type StopStylePostTaskParams = {
