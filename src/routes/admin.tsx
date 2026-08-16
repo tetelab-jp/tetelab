@@ -387,7 +387,16 @@ admin.get('/admin/salons', async (c) => {
 
       <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full text-sm table-fixed">
+            <colgroup>
+              <col style="width:6%" />
+              <col style="width:14%" />
+              <col style="width:20%" />
+              <col style="width:14%" />
+              <col style="width:19%" />
+              <col style="width:12%" />
+              <col style="width:15%" />
+            </colgroup>
             <thead class="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th class="px-4 py-3 text-left font-medium">No.</th>
@@ -409,25 +418,39 @@ admin.get('/admin/salons', async (c) => {
                       <tr class={i === 0 ? 'border-t-2 border-t-gray-100' : ''}>
                         {i === 0 && (
                           <>
-                            <td class="px-4 py-2.5 text-gray-400" rowspan={rowspan}>
-                              {group.seq}
+                            <td class="px-4 py-2.5 text-gray-400 align-top" rowspan={rowspan}>
+                              <div class="flex items-center gap-1.5">
+                                {group.inactiveSalons.length > 0 ? (
+                                  <button
+                                    type="button"
+                                    class="admin-toggle-inactive-btn w-4 h-4 flex-shrink-0 flex items-center justify-center text-gray-400 hover:text-pink-600"
+                                    data-account-id={group.accountId}
+                                    title={`無効化中のサロン(${group.inactiveSalons.length}件)を表示`}
+                                  >
+                                    <i class="fas fa-caret-right transition-transform"></i>
+                                  </button>
+                                ) : (
+                                  <span class="w-4 h-4 flex-shrink-0"></span>
+                                )}
+                                <span>{group.seq}</span>
+                              </div>
                             </td>
-                            <td class="px-4 py-2.5 font-medium text-gray-800" rowspan={rowspan}>
+                            <td class="px-4 py-2.5 font-medium text-gray-800 break-words" rowspan={rowspan}>
                               {group.accountSalonName || '(未設定)'}
                               {group.isActive === 0 && group.accountDeletionRequestedAt && (
-                                <p class="text-xs text-red-600 mt-1 font-normal whitespace-nowrap">
+                                <p class="text-xs text-red-600 mt-1 font-normal">
                                   有効なサロンが無いため、あと{daysUntilDeletion(group.accountDeletionRequestedAt)}
                                   日でこのアカウントは削除されます
                                 </p>
                               )}
                             </td>
-                            <td class="px-4 py-2.5 text-gray-500" rowspan={rowspan}>
+                            <td class="px-4 py-2.5 text-gray-500 break-words" rowspan={rowspan}>
                               {group.email}
                             </td>
                           </>
                         )}
-                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{sub?.salon_key || '(未確定)'}</td>
-                        <td class="px-4 py-2.5 text-gray-600">{sub?.salon_name || '(未取得)'}</td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600 break-words">{sub?.salon_key || '(未確定)'}</td>
+                        <td class="px-4 py-2.5 text-gray-600 break-words">{sub?.salon_name || '(未取得)'}</td>
                         {i === 0 && (
                           <td class="px-4 py-2.5" rowspan={rowspan}>
                             <form
@@ -460,28 +483,25 @@ admin.get('/admin/salons', async (c) => {
                         </td>
                       </tr>
                     ))}
-                    {group.inactiveSalons.length > 0 && (
-                      <tr>
-                        <td colspan={7} class="px-4 py-3 bg-gray-50">
-                          <p class="text-xs text-gray-500 mb-2">無効化中のサロン({group.inactiveSalons.length}件)</p>
-                          <div class="space-y-1.5">
-                            {group.inactiveSalons.map((sub) => (
-                              <div class="flex flex-wrap items-center justify-between gap-3 text-xs bg-white rounded-lg border border-gray-200 px-3 py-2">
-                                <span class="font-mono text-gray-600">{sub.salon_key || '(未確定)'}</span>
-                                <span class="text-gray-500">{sub.salon_name || '(未取得)'}</span>
-                                <WorkspaceToggle
-                                  accountId={group.accountId}
-                                  salonId={sub.id}
-                                  isActiveWorkspace={false}
-                                  page={page}
-                                  q={q}
-                                />
-                              </div>
-                            ))}
-                          </div>
+                    {group.inactiveSalons.map((sub) => (
+                      <tr class="hidden bg-gray-50" data-inactive-for={group.accountId}>
+                        <td class="px-4 py-2.5"></td>
+                        <td class="px-4 py-2.5"></td>
+                        <td class="px-4 py-2.5"></td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600 break-words">{sub.salon_key || '(未確定)'}</td>
+                        <td class="px-4 py-2.5 text-gray-600 break-words">{sub.salon_name || '(未取得)'}</td>
+                        <td class="px-4 py-2.5"></td>
+                        <td class="px-4 py-2.5">
+                          <WorkspaceToggle
+                            accountId={group.accountId}
+                            salonId={sub.id}
+                            isActiveWorkspace={false}
+                            page={page}
+                            q={q}
+                          />
                         </td>
                       </tr>
-                    )}
+                    ))}
                   </>
                 )
               })}
@@ -496,6 +516,8 @@ admin.get('/admin/salons', async (c) => {
           </table>
         </div>
       </div>
+
+      <script src="/static/admin-salons.js"></script>
 
       <div class="flex items-center justify-between text-sm text-gray-500">
         <span>

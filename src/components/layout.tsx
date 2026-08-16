@@ -48,7 +48,7 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' |
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
-  { title: 'フリーワード対策', key: 'ranking' },
+  { title: 'SEO', key: 'ranking' },
   { title: '口コミ管理', key: 'review' },
   { title: '設定・確認', key: 'settings' }
 ]
