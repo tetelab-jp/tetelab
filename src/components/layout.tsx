@@ -13,6 +13,7 @@ export type NavKey =
   | 'blog-salon'
   | 'blog-template'
   | 'blog-articles'
+  | 'blog-generate'
   | 'ranking-measure'
   | 'ranking-keywords'
   | 'ranking-schedule'
@@ -32,6 +33,7 @@ const NAV_ITEMS: {
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: 'テンプレート作成・適用', group: 'style' },
   { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-articles', href: '/blog/articles', icon: 'fa-newspaper', label: '投稿記事一覧', group: 'blog' },
+  { key: 'blog-generate', href: '/blog/generate', icon: 'fa-robot', label: 'AI記事生成', group: 'blog' },
   { key: 'blog-template', href: '/blog/template', icon: 'fa-wand-magic-sparkles', label: '生成テンプレート', group: 'blog' },
   { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'サロン基本情報', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },

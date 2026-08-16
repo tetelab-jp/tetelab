@@ -429,6 +429,15 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_articles.auto_post_enabled_flag)に失敗しました:', err)
   }
   try {
+    // 2026-08-16追記: ブログ機能再設計。記事ごとにフッター(サロン基本情報+
+    // 検索されたい言葉)を末尾に付けるかどうかを選べるようにする。
+    await bindings.DB.prepare(
+      `ALTER TABLE blog_articles ADD COLUMN IF NOT EXISTS footer_enabled_flag INTEGER NOT NULL DEFAULT 1`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_articles.footer_enabled_flag)に失敗しました:', err)
+  }
+  try {
     // 2026-08-15追記: ブログ記事のSALON BOARDへの実自動投稿(Phase 2)。
     // style_post_schedules/style_post_runs/style_post_jobsと同じ設計方針
     // (手動実行/外部Cronからのジョブ投入→AWS ECS Fargateワーカーが実際に
