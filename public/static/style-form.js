@@ -86,16 +86,21 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // ハッシュタグ欄: 半角スラッシュ(/)以外の記号が入力された場合はエラー表示する。
-  // 文字・数字・半角スラッシュ・空白のみを許可し、全角スラッシュ(／)や
-  // それ以外の記号(#!?など)を弾く。
+  // ハッシュタグ欄: 半角スラッシュ(/)区切りの各タグを文字・数字のみに限定する
+  // (サーバー側のHASHTAG_ALLOWED_PATTERNと同じ基準)。全角スラッシュ(／)や
+  // それ以外の記号(#!?など)、タグ内の空白は保存時にサーバー側で無言で除外
+  // されてしまうため、クライアント側でも同じ基準でチェックしてエラー表示する。
   const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
   const hashtagsError = form ? form.querySelector('.hashtags-error') : null
-  const HASHTAGS_ALLOWED_PATTERN = /^[\p{L}\p{N}/\s]*$/u
+  const HASHTAG_TAG_PATTERN = /^[\p{L}\p{N}]+$/u
 
   function isHashtagsValid() {
     if (!hashtagsInput) return true
-    return HASHTAGS_ALLOWED_PATTERN.test(hashtagsInput.value)
+    return hashtagsInput.value
+      .split('/')
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .every((tag) => HASHTAG_TAG_PATTERN.test(tag))
   }
 
   function updateHashtagsError() {
@@ -177,7 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isHashtagsValid()) {
         e.preventDefault()
         updateHashtagsError()
-        alert('ハッシュタグに半角スラッシュ(/)以外の記号が含まれています。')
+        alert('ハッシュタグの各タグは文字・数字のみ使用できます(空白・記号は使用できません)。')
         return
       }
       if (!isRequiredFieldsFilled()) {

@@ -32,9 +32,19 @@ export async function requireAuth(
     return redirectOrUnauthorized(c)
   }
 
-  // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)
+  // DBから最新のユーザー情報を取得(削除済みでないか等の確認も兼ねる)。
+  // 機能フラグ(style_enabled等)は2026-08-16よりsalonboard_salons側(サロン単位)
+  // が正になったため、user.active_salon_idの行からLEFT JOINで読む
+  // (active_salon_id未確定=サロン未選択の場合は全機能OFF相当としてCOALESCEする)。
   const user = await c.env.DB.prepare(
-    'SELECT id, email, salon_name, is_active, style_enabled, blog_enabled, seo_enabled, review_enabled, active_salon_id, salon_slot_limit FROM users WHERE id = ?'
+    `SELECT u.id, u.email, u.salon_name, u.is_active, u.active_salon_id, u.salon_slot_limit,
+       COALESCE(sb.style_enabled, 0) AS style_enabled,
+       COALESCE(sb.blog_enabled, 0) AS blog_enabled,
+       COALESCE(sb.seo_enabled, 0) AS seo_enabled,
+       COALESCE(sb.review_enabled, 0) AS review_enabled
+     FROM users u
+     LEFT JOIN salonboard_salons sb ON sb.id = u.active_salon_id
+     WHERE u.id = ?`
   )
     .bind(payload.sub)
     .first<AppUser>()

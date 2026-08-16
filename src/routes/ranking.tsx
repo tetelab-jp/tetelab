@@ -1182,14 +1182,14 @@ ranking.post('/api/cron/run-ranking', async (c) => {
     return c.json({ time: jstHHMM, date: jstToday, enabled: 0, triggered: [], skipped: 'not-monday' })
   }
 
-  // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(seo_enabled=0)にされた
-  // サロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。
+  // 管理者サイトで契約OFF(is_active=0)またはSEO機能OFF(salonboard_salons.seo_enabled=0)
+  // にされたサロンはcronの対象から除外する(automation.tsxの/api/cron/run-style-posts参照)。
   const { results: schedules } = await c.env.DB.prepare(
     `SELECT s.user_id, s.salon_id, s.frequency, s.run_time, s.last_run_at
      FROM ranking_schedules s
      JOIN users u ON u.id = s.user_id
      JOIN salonboard_salons sb ON sb.id = s.salon_id
-     WHERE s.enabled = 1 AND u.is_active = 1 AND u.seo_enabled = 1 AND sb.is_active_workspace = 1`
+     WHERE s.enabled = 1 AND u.is_active = 1 AND sb.seo_enabled = 1 AND sb.is_active_workspace = 1`
   ).all<{
     user_id: number
     salon_id: number

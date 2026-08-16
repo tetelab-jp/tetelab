@@ -1064,9 +1064,11 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
 
     return c.json({ success: true, stylistCount, couponCount, salonName: salonInfo?.salonName || null })
   } catch (err: any) {
+    // 診断ログ(URL・画面テキスト等)はCloudWatch Logsのみに残し、画面には
+    // 出さない(内部の生デバッグ情報がそのまま表示されるのを防ぐため)。
     console.error(`[sync-stylists-coupons] user=${user.id} エラー:`, err?.stack || err)
-    const diagnostics = logLines.length > 0 ? ` / 診断ログ: ${logLines.join(' | ')}` : ''
-    return c.json({ success: false, error: (String(err?.message || err) + diagnostics).slice(0, 2000) }, 400)
+    if (logLines.length > 0) console.error(`[sync-stylists-coupons] user=${user.id} 診断ログ: ${logLines.join(' | ')}`)
+    return c.json({ success: false, error: String(err?.message || err).slice(0, 500) }, 400)
   } finally {
     if (browser) await browser.close().catch(() => {})
   }

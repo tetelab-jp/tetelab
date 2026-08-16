@@ -289,7 +289,7 @@ export async function runMonthlyReviewSyncSweep(env: Bindings): Promise<number> 
      JOIN users u ON u.id = s.user_id
      JOIN salonboard_salons sb ON sb.id = s.salon_id
      WHERE s.backfill_completed_at IS NOT NULL
-       AND u.is_active = 1 AND u.review_enabled = 1 AND sb.is_active_workspace = 1
+       AND u.is_active = 1 AND sb.review_enabled = 1 AND sb.is_active_workspace = 1
        AND (s.last_incremental_sync_month IS NULL OR s.last_incremental_sync_month <> ?)`
   )
     .bind(nowJstMonth)

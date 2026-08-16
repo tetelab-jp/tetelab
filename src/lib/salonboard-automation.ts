@@ -41,6 +41,13 @@ puppeteerExtra.use(StealthPlugin())
 
 export const SALONBOARD_BASE_URL = 'https://salonboard.com' // ⚠️ 要確認
 
+// サロンボード連携失敗時にユーザーへ表示する文言(last_error等、画面表示される
+// 値には内部の診断情報を含めない。診断情報はlog()/console.errorのみに残す)。
+const SALONBOARD_CONNECTION_FAILED_MESSAGE =
+  'サロンボードへの接続に失敗しました。時間を置いて再度お試しください。解決しない場合は運営までお問い合わせください。'
+const SALONBOARD_LOGIN_FAILED_MESSAGE =
+  'サロンボードへのログインに失敗しました。ログインID・パスワードをご確認の上、再度お試しください。解決しない場合は運営までお問い合わせください。'
+
 export type StylePostInput = {
   styleImageId: number
   imageBuffer: ArrayBuffer
@@ -324,9 +331,12 @@ export async function loginToSalonBoard(
     const diagMsg =
       `[診断] ログインフォーム検出失敗時の画面情報: url=${currentUrl} title="${pageTitle}"` +
       ` proxy設定=${proxyConfigured} pageText="${cleanedText}"`
+    // 診断情報(URL・画面テキスト等)はCloudWatch Logsとlog()コールバックのみに残し、
+    // ユーザーに見せるエラーメッセージには含めない(内部の生デバッグ情報が
+    // そのまま画面表示されてしまうのを防ぐため)。
     console.error(diagMsg)
     log(diagMsg)
-    throw err
+    throw new Error(SALONBOARD_CONNECTION_FAILED_MESSAGE)
   }
   await page.type('input[name="userId"]', loginId, { delay: 20 })
   await page.type('input[name="password"]', password, { delay: 20 })
@@ -363,7 +373,7 @@ export async function loginToSalonBoard(
   // 変わらないケースにも対応するため)。
   const stillOnLoginForm = await page.$('input[name="userId"]').catch(() => null)
   if (stillOnLoginForm) {
-    // 原因切り分け用に、失敗時点の画面テキストを診断情報としてログとエラー両方に残す。
+    // 原因切り分け用に、失敗時点の画面テキストを診断情報としてログに残す。
     // (実際のバリデーションエラー文言／Akamai等のボット対策ブロック画面／
     //  単に元のログイン画面が再描画されただけ、を判別するため)
     const currentUrl = page.url()
@@ -371,11 +381,13 @@ export async function loginToSalonBoard(
       .evaluate(() => document.body?.innerText?.slice(0, 500) ?? '')
       .catch(() => '(画面テキスト取得失敗)')
     const cleanedText = pageText.replace(/\s+/g, ' ').trim()
+    // 診断情報(URL・画面テキスト)はCloudWatch Logsとlog()コールバックのみに残し、
+    // ユーザーに見せるメッセージ・DBのlast_error(/settings/salonboardに常設表示
+    // される)には含めない。
     log(`ログイン失敗時のURL: ${currentUrl}`)
     log(`ログイン失敗時のページ冒頭: ${cleanedText}`)
-    const errorMessage =
-      `ログインに失敗しました（ID/パスワードが正しくない可能性、またはクリックがブロックされた可能性があります）` +
-      ` [診断情報] url=${currentUrl} pageText="${cleanedText}"`
+    console.error(`[診断] ログイン失敗: url=${currentUrl} pageText="${cleanedText}"`)
+    const errorMessage = SALONBOARD_LOGIN_FAILED_MESSAGE
     if (env && userId) await recordConnectionStatus(env, userId, 'failed', errorMessage)
     throw new Error(errorMessage)
   }

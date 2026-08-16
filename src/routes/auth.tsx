@@ -243,11 +243,17 @@ auth.get('/forgot-password', (c) => {
     <AuthLayout>
       <h2 class="text-lg font-bold mb-4">パスワードをお忘れの方</h2>
       {sent ? (
-        <p class="text-sm text-gray-600 leading-relaxed">
-          ご入力いただいたメールアドレス宛に、パスワード再設定用のリンクを送信しました
-          (該当するアカウントが存在する場合のみ届きます)。メール内のリンクから
-          {PASSWORD_RESET_TOKEN_TTL_MINUTES}分以内に新しいパスワードを設定してください。
-        </p>
+        <div class="space-y-3">
+          <p class="text-sm text-gray-600 leading-relaxed">
+            ご入力いただいたメールアドレス宛に、パスワード再設定用のリンクを送信しました
+            (該当するアカウントが存在する場合のみ届きます)。メール内のリンクから
+            {PASSWORD_RESET_TOKEN_TTL_MINUTES}分以内に新しいパスワードを設定してください。
+          </p>
+          <p class="text-xs text-gray-500 leading-relaxed bg-gray-50 rounded-lg px-3 py-2.5">
+            数分経ってもメールが届かない場合は、迷惑メールフォルダをご確認いただくか、
+            お手数ですが運営までお問い合わせください。
+          </p>
+        </div>
       ) : (
         <>
           <ErrorBanner message={error} />
