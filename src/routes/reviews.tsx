@@ -196,13 +196,22 @@ reviews.get('/reviews/by-stylist', async (c) => {
                         </span>
                       </div>
                     </div>
-                    <div class="mt-2.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        class="h-full bg-gradient-to-r from-pink-400 to-pink-500 rounded-full"
-                        style={`width: ${((s.avgOverall / 5) * 100).toFixed(1)}%`}
-                      ></div>
+                    <div class="mt-3 space-y-1">
+                      {s.starCounts.map((sc) => (
+                        <div class="flex items-center gap-2">
+                          <span class="flex-shrink-0 w-6 text-right text-xs font-semibold text-gray-500">{sc.star}</span>
+                          <i class="fas fa-star text-amber-400 text-[10px] flex-shrink-0"></i>
+                          <div class="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                            <div
+                              class="h-full bg-amber-400 rounded-full"
+                              style={`width: ${s.count > 0 ? ((sc.count / s.count) * 100).toFixed(1) : 0}%`}
+                            ></div>
+                          </div>
+                          <span class="flex-shrink-0 w-8 text-right text-xs text-gray-400">{sc.count}</span>
+                        </div>
+                      ))}
                     </div>
-                    <div class="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-400">
+                    <div class="flex flex-wrap gap-x-3 gap-y-1 mt-3 text-xs text-gray-400">
                       <span>雰囲気 {s.avgAtmosphere.toFixed(2)}</span>
                       <span>接客 {s.avgService.toFixed(2)}</span>
                       <span>技術 {s.avgTechnique.toFixed(2)}</span>
