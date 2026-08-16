@@ -53,66 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // ドラッグハンドルによる並び替え(マウス・タッチ両対応、Pointer Events使用)
-  function setupDragReorder(listId, handleClass, endpoint, idKey) {
-    const list = document.getElementById(listId)
-    if (!list) return
-    list.querySelectorAll('.' + handleClass).forEach((handle) => {
-      handle.addEventListener('pointerdown', (e) => {
-        e.preventDefault()
-        const row = handle.closest('[data-image-id]')
-        if (!row) return
-        row.setPointerCapture(e.pointerId)
-        row.classList.add('opacity-50')
-
-        const onMove = (moveEvent) => {
-          const rows = Array.from(list.children).filter((el) => !el.classList.contains('hidden') || el === row)
-          const y = moveEvent.clientY
-          for (const other of rows) {
-            if (other === row) continue
-            const rect = other.getBoundingClientRect()
-            const mid = rect.top + rect.height / 2
-            if (y < mid) {
-              list.insertBefore(row, other)
-              break
-            } else if (!other.nextElementSibling || other === rows[rows.length - 1]) {
-              list.insertBefore(row, other.nextElementSibling)
-              break
-            }
-          }
-        }
-
-        const onUp = async (upEvent) => {
-          row.releasePointerCapture(upEvent.pointerId)
-          row.classList.remove('opacity-50')
-          document.removeEventListener('pointermove', onMove)
-          document.removeEventListener('pointerup', onUp)
-
-          const rows = Array.from(list.children)
-          const newIndex = rows.indexOf(row)
-          const id = Number(row.getAttribute('data-image-id'))
-          try {
-            const res = await fetch(endpoint, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ [idKey]: id, newPosition: newIndex + 1 })
-            })
-            const data = await res.json()
-            if (!data.success) alert('順番の変更に失敗しました: ' + (data.error || '不明なエラー'))
-          } catch (err) {
-            alert('通信エラーが発生しました')
-          } finally {
-            location.reload()
-          }
-        }
-
-        document.addEventListener('pointermove', onMove)
-        document.addEventListener('pointerup', onUp)
-      })
-    })
-  }
-  setupDragReorder('style-list', 'style-drag-handle', '/api/style/reorder', 'styleId')
-
   // 全選択
   const selectAllBtn = document.getElementById('select-all-btn')
   if (selectAllBtn) {
