@@ -1427,146 +1427,19 @@ style.post('/style/library/delete/:id', async (c) => {
 })
 
 // ---------- 自動投稿・手動投稿 ----------
+// 2026-08-16追記(ユーザー指定): このページ(/style/schedule)は「自動更新設定」
+// (/settings/auto-update、dashboard.tsx)に統合されたため、GETは単なる
+// リダイレクトにした。POSTの action 先・ラベル定数は自動更新設定側から
+// そのまま再利用するため残す。
 
 // 自動投稿を停止する時間帯(JST)。src/lib/style-post-runner.tsの
 // BLACKOUT_START/END_MINUTESと一致させること。
-const BLACKOUT_START_LABEL = '2:00'
-const BLACKOUT_END_LABEL = '7:00'
+export const BLACKOUT_START_LABEL = '2:00'
+export const BLACKOUT_END_LABEL = '7:00'
 // 通常運転時の投稿間隔(分)。src/lib/style-post-runner.tsのPOST_INTERVAL_MINUTESと一致させること。
-const POST_INTERVAL_MINUTES_LABEL = 60
+export const POST_INTERVAL_MINUTES_LABEL = 60
 
-style.get('/style/schedule', async (c) => {
-  const user = c.get('user')
-  const saved = c.req.query('saved')
-  const clearedCount = c.req.query('cleared')
-
-  const schedule = await c.env.DB.prepare(
-    'SELECT enabled, burst_remaining, paused_until FROM style_post_schedules WHERE user_id = ? AND salon_id = ?'
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ enabled: number; burst_remaining: number; paused_until: string | null }>()
-
-  const enabled = schedule?.enabled === 1
-  const isPaused = !!schedule?.paused_until && new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime() > Date.now()
-  const isBursting = enabled && (schedule?.burst_remaining ?? 0) > 0
-
-  const selectedRow = await c.env.DB.prepare(
-    "SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1 AND internal_save_status = 'ready'"
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ cnt: number }>()
-  const selectedCount = selectedRow?.cnt ?? 0
-
-  return c.render(
-    <PageLayout
-      seoEnabled={user.seo_enabled !== 0}
-
-      reviewEnabled={user.review_enabled !== 0}
-      active="style-schedule"
-      salonName={user.salon_name}
-      title="自動投稿・手動投稿"
-      blogEnabled={user.blog_enabled !== 0}
-    >
-      {saved && (
-        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
-          <i class="fas fa-circle-check mr-2"></i>保存しました
-        </div>
-      )}
-
-      {clearedCount !== undefined && (
-        <div class="bg-blue-50 border border-blue-200 text-blue-700 text-sm rounded-lg px-4 py-3">
-          <i class="fas fa-circle-check mr-2"></i>
-          {clearedCount === '0'
-            ? '古い進行中ジョブは見つかりませんでした(15分未満のジョブは対象外です)'
-            : `${clearedCount}件の古い進行中ジョブをリセットしました`}
-        </div>
-      )}
-
-      <p class="font-semibold text-gray-800">
-        <i class="fas fa-clock mr-2 text-pink-500"></i>自動投稿
-      </p>
-
-      <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6">
-        <label class="flex items-center gap-3 cursor-pointer w-fit">
-          <span class="relative inline-flex items-center flex-shrink-0">
-            <input
-              type="checkbox"
-              name="enabled"
-              checked={enabled}
-              onchange="this.form.submit()"
-              class="sr-only peer"
-            />
-            <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-            <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
-          </span>
-          <span class="text-sm font-medium text-gray-700">
-            自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
-          </span>
-        </label>
-      </form>
-
-      {isPaused && (
-        <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700 flex items-center justify-between gap-4 flex-wrap">
-          <span>
-            <i class="fas fa-triangle-exclamation mr-2"></i>
-            5件連続で投稿が失敗したため、自動投稿を一時停止しています。5時間経過後に自動的に再開します。
-          </span>
-          <form method="post" action="/style/schedule/clear-pause">
-            <button type="submit" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white border border-red-300 text-red-700 hover:bg-red-100">
-              今すぐ再開する
-            </button>
-          </form>
-        </div>
-      )}
-
-      {!isPaused && isBursting && (
-        <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-          <i class="fas fa-bolt mr-2"></i>
-          自動投稿を有効にした直後の動作確認として、登録順の先頭3件を間隔を空けず連続投稿しています
-          （残り{schedule?.burst_remaining}件）。完了後は通常運転（{POST_INTERVAL_MINUTES_LABEL}分おきに1件）に移ります。
-        </div>
-      )}
-
-      <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
-        <i class="fas fa-circle-info mr-2"></i>
-        自動投稿を有効にすると自動投稿対象のスタイルを登録順に{POST_INTERVAL_MINUTES_LABEL}分おきに1件ずつ「登録＋反映申請」まで自動実行します。
-        <br />
-        ※深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯
-        <br />
-        現在<b>{selectedCount}件</b>が対象です。
-      </div>
-
-      <p class="font-semibold text-gray-800 pt-2">
-        <i class="fas fa-flask mr-2 text-pink-500"></i>手動投稿
-      </p>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <button
-          id="test-run-btn"
-          class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
-        >
-          <i class="fas fa-flask mr-2"></i>手動実行する
-        </button>
-        <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
-        <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
-          <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
-            「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
-          </button>
-        </form>
-      </div>
-
-      <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-        <i class="fas fa-triangle-exclamation mr-2"></i>
-        手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
-        サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
-        実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
-      </div>
-
-      <script src="/static/test-run.js"></script>
-    </PageLayout>,
-    { title: '自動投稿・手動投稿' }
-  )
-})
+style.get('/style/schedule', (c) => c.redirect('/settings/auto-update'))
 
 style.post('/style/schedule', async (c) => {
   const user = c.get('user')
@@ -1607,7 +1480,7 @@ style.post('/style/schedule', async (c) => {
       .run()
   }
 
-  return c.redirect('/style/schedule?saved=1')
+  return c.redirect('/settings/auto-update?saved=1')
 })
 
 // 2026-08-14追記(ユーザー指定): 5件連続失敗による5時間の自動一時停止を、
@@ -1622,7 +1495,7 @@ style.post('/style/schedule/clear-pause', async (c) => {
     .bind(user.id, user.active_salon_id)
     .run()
   await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
-  return c.redirect('/style/schedule?saved=1')
+  return c.redirect('/settings/auto-update?saved=1')
 })
 
 // 2026-08-14追記(ユーザー指定): 「進行中ジョブがある」と判定され続けて

@@ -7,7 +7,6 @@ export type NavKey =
   | 'settings-account'
   | 'style-library'
   | 'style-import'
-  | 'style-schedule'
   | 'style-template'
   | 'style-test-run'
   | 'blog-salon'
@@ -16,9 +15,9 @@ export type NavKey =
   | 'blog-generate'
   | 'ranking-measure'
   | 'ranking-keywords'
-  | 'ranking-schedule'
   | 'review-trend'
   | 'review-by-stylist'
+  | 'auto-update'
 
 const NAV_ITEMS: {
   key: NavKey
@@ -31,17 +30,16 @@ const NAV_ITEMS: {
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
   { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: 'テンプレート作成・適用', group: 'style' },
-  { key: 'style-schedule', href: '/style/schedule', icon: 'fa-clock', label: '自動投稿・手動投稿', group: 'style' },
   { key: 'blog-articles', href: '/blog/articles', icon: 'fa-newspaper', label: '投稿記事一覧', group: 'blog' },
   { key: 'blog-generate', href: '/blog/generate', icon: 'fa-robot', label: 'AI記事生成', group: 'blog' },
   { key: 'blog-template', href: '/blog/template', icon: 'fa-wand-magic-sparkles', label: '生成テンプレート', group: 'blog' },
   { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'サロン基本情報', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
-  { key: 'ranking-schedule', href: '/seo/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
   { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価推移', group: 'review' },
   { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
+  { key: 'auto-update', href: '/settings/auto-update', icon: 'fa-clock', label: '自動更新設定', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' },
   { key: 'settings-account', href: '/settings/account', icon: 'fa-user-gear', label: 'アカウント設定', group: 'settings' }
 ]

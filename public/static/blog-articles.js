@@ -17,32 +17,6 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   })
 
-  // SALON BOARDへの自動投稿: 「今すぐまとめて投稿する」ボタン
-  const blogTestRunBtn = document.getElementById('blog-test-run-btn')
-  if (blogTestRunBtn) {
-    blogTestRunBtn.addEventListener('click', async () => {
-      const status = document.getElementById('blog-test-run-status')
-      blogTestRunBtn.disabled = true
-      if (status) status.textContent = '投稿処理を開始しています...'
-      try {
-        const res = await fetch('/api/blog-automation/test-run', { method: 'POST' })
-        const data = await res.json()
-        if (data.success) {
-          if (status) {
-            status.textContent =
-              (data.totalArticles || 1) + '件のブログ記事を投稿します。投稿は自動で進むので待つ必要はありません。'
-          }
-        } else {
-          if (status) status.textContent = 'エラー: ' + (data.error || '不明なエラー')
-          blogTestRunBtn.disabled = false
-        }
-      } catch (e) {
-        if (status) status.textContent = '通信エラーが発生しました'
-        blogTestRunBtn.disabled = false
-      }
-    })
-  }
-
   // 自動投稿ON/OFFトグル
   document.querySelectorAll('.blog-auto-post-toggle').forEach((checkbox) => {
     checkbox.addEventListener('change', async (e) => {
