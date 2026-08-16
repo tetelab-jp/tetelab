@@ -22,7 +22,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const data = await res.json()
         updateSelectedCount(data.selectedCount)
         const row = target.closest('[data-image-id][data-auto-post]')
-        if (row) row.setAttribute('data-auto-post', selected ? '1' : '0')
+        if (row) {
+          row.setAttribute('data-auto-post', selected ? '1' : '0')
+          const badge = row.querySelector('.auto-post-badge')
+          if (badge) {
+            badge.textContent = selected ? '自動投稿ON' : '自動投稿OFF'
+            badge.classList.toggle('bg-blue-50', selected)
+            badge.classList.toggle('text-blue-600', selected)
+            badge.classList.toggle('bg-gray-100', !selected)
+            badge.classList.toggle('text-gray-400', !selected)
+          }
+        }
       } catch (err) {
         alert('更新に失敗しました。再度お試しください。')
         target.checked = !selected
