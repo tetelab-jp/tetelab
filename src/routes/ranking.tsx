@@ -1132,63 +1132,7 @@ ranking.post('/seo/templates/:id/delete', requireAuth, requireSeoEnabled, async 
 // ============================================
 // 定期測定設定
 // ============================================
-ranking.get('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
-  const user = c.get('user')
-  const sched = await c.env.DB.prepare(
-    `SELECT enabled, frequency, run_time, last_run_at FROM ranking_schedules WHERE user_id = ? AND salon_id = ?`
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ enabled: number; frequency: string; run_time: string | null; last_run_at: string | null }>()
-
-  const saved = c.req.query('saved') === '1'
-  const enabled = sched?.enabled === 1
-  const lastRunAt = sched?.last_run_at || null
-
-  return c.render(
-    <PageLayout
-      active="ranking-schedule"
-      salonName={user.salon_name}
-      title="定期測定設定"
-      styleEnabled={user.style_enabled !== 0}
-      blogEnabled={user.blog_enabled !== 0}
-      seoEnabled={user.seo_enabled !== 0}
-
-      reviewEnabled={user.review_enabled !== 0}
-    >
-      {saved && (
-        <div class="bg-green-50 border border-green-200 rounded-xl p-4 text-sm text-green-700">
-          <i class="fas fa-circle-check mr-2"></i>定期測定設定を保存しました。
-        </div>
-      )}
-      <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
-        <p class="font-semibold mb-4">定期測定設定</p>
-        <p class="text-sm text-gray-500 mb-2">
-          「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
-        </p>
-        <p class="text-xs text-gray-400 mb-5">
-          前回の定期実行：{lastRunAt ? formatJstDateTime(lastRunAt) : 'なし'}
-        </p>
-        <form method="post" action="/seo/schedule">
-          <label class="flex items-center gap-3 cursor-pointer w-fit">
-            <span class="relative inline-flex items-center flex-shrink-0">
-              <input
-                type="checkbox"
-                name="enabled"
-                value="1"
-                checked={enabled}
-                onchange="this.form.submit()"
-                class="sr-only peer"
-              />
-              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
-            </span>
-            <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
-          </label>
-        </form>
-      </div>
-    </PageLayout>
-  )
-})
+ranking.get('/seo/schedule', (c) => c.redirect('/settings/auto-update'))
 
 ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
   const user = c.get('user')
@@ -1213,7 +1157,7 @@ ranking.post('/seo/schedule', requireAuth, requireSeoEnabled, async (c) => {
       .bind(user.id, user.active_salon_id, enabled, frequency, runTime)
       .run()
   }
-  return c.redirect('/seo/schedule?saved=1')
+  return c.redirect('/settings/auto-update?saved=1')
 })
 
 // ============================================
