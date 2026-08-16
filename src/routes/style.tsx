@@ -389,7 +389,7 @@ function StyleListSection({
                     <AutoPostStatusBadges s={s} />
                   </div>
                 </div>
-                <div class="flex items-center gap-1 md:gap-2 flex-shrink-0">
+                <div class="flex flex-col md:flex-row items-stretch md:items-center gap-1 md:gap-2 flex-shrink-0">
                   <a
                     href={`/style/${s.id}/edit`}
                     class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"

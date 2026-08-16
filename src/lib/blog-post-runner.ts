@@ -1,6 +1,6 @@
 // ============================================
 // blog-post-runner.ts
-// 「auto_post_enabled_flag=1 かつ approved状態のブログ記事を対象に、
+// 「auto_post_enabled_flag=1のブログ記事を対象に、
 //  月タグに合う日にSALON BOARDへ投稿する」ロジック。手動実行と外部Cron
 //  トリガーの両方から呼ばれる。style-post-runner.tsと同じ設計方針だが、
 //  ブログ投稿は「登録・反映する」ボタン1回で公開まで完了する1段階の
@@ -226,11 +226,11 @@ function currentJstMonth(): number {
 }
 
 /**
- * 承認済み・自動投稿ON・進行中ジョブなし・月タグが今月に合う(または未設定)、
+ * 自動投稿ON・進行中ジョブなし・月タグが今月に合う(または未設定)、
  * という共通の投稿対象条件。バインド順は (userId, salonId, currentMonth)。
  */
 const ELIGIBLE_ARTICLE_WHERE = `
-  a.user_id = ? AND a.salon_id = ? AND a.status = 'approved' AND a.auto_post_enabled_flag = 1
+  a.user_id = ? AND a.salon_id = ? AND a.auto_post_enabled_flag = 1
   AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
   AND (
     a.month_tags_json = '[]'
@@ -474,14 +474,14 @@ export async function runNextArticleForUser(env: Bindings, userId: number, salon
 
 export type BlogRetryResult = { outcome: 'dispatched' | 'failed' }
 
-/** 失敗した1件のブログ記事のみを再実行する(承認済みへ戻した上で使う想定)。 */
+/** 失敗した1件のブログ記事のみを再実行する。 */
 export async function retryBlogPost(env: Bindings, userId: number, salonId: number | null, articleId: number): Promise<BlogRetryResult> {
   await requireCredentialsConfigured(env, userId)
 
-  const row = await env.DB.prepare(`SELECT id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'approved'`)
+  const row = await env.DB.prepare(`SELECT id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?`)
     .bind(articleId, userId, salonId)
     .first<{ id: number }>()
-  if (!row) throw new Error('対象の記事が見つからないか、承認済み状態ではありません')
+  if (!row) throw new Error('対象の記事が見つかりません')
   if (await hasInFlightJob(env, articleId)) {
     throw new Error('この記事は既に処理中のジョブがあります。完了を待ってから再実行してください')
   }

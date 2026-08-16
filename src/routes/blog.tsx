@@ -313,14 +313,6 @@ const STYLE_MODE_LABEL: Record<string, string> = {
   params: '文体パラメータのみを使用（一人称・語尾・文体・トーン）'
 }
 
-const ARTICLE_STATUS_LABEL: Record<string, string> = {
-  pending_generation: '未生成',
-  generating: '生成中',
-  unapproved: '未承認',
-  approved: '承認済み',
-  posting_failed: '投稿失敗'
-}
-
 blog.get('/blog/template', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
@@ -355,36 +347,34 @@ blog.get('/blog/template', async (c) => {
       )}
 
       <div class="flex gap-6 flex-col lg:flex-row">
-        <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none">
-          <div class="p-4 border-b border-gray-100 flex items-center justify-between">
-            <p class="font-semibold text-sm">記事カテゴリ</p>
-            <span class="text-xs text-gray-400">{catList.length}/10</span>
-          </div>
-          <div class="divide-y divide-gray-50">
-            {catList.length === 0 && <p class="text-sm text-gray-400 p-4">まだありません</p>}
-            {catList.map((cat) => (
-              <a
-                href={`/blog/template?category=${cat.id}`}
-                class={`flex items-center justify-between gap-2 px-4 py-3 text-sm ${cat.id === selectedId ? 'bg-pink-50 text-pink-700 font-semibold' : 'text-gray-700 hover:bg-gray-50'}`}
-              >
-                <span class="truncate">{cat.name}</span>
-                {!cat.hpb_category_value && (
-                  <span
-                    class="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 flex-none"
-                    title="HPBブログカテゴリが未設定のため、このカテゴリの記事はSALON BOARDへ自動投稿できません"
-                  >
-                    HPB未設定
-                  </span>
-                )}
-              </a>
-            ))}
-          </div>
+        <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none p-4 space-y-4">
           {catList.length < 10 && (
-            <form method="post" action="/blog/template/categories/add" class="p-3 border-t border-gray-100 flex gap-2">
-              <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
-              <button type="submit" class="bg-gray-800 hover:bg-gray-900 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">追加</button>
+            <form method="post" action="/blog/template/categories/add" class="flex flex-col gap-2">
+              <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
+              <button type="submit" class="w-full bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">カテゴリ追加</button>
             </form>
           )}
+          <div>
+            <div class="flex items-center justify-between mb-1">
+              <p class="font-semibold text-sm">テンプレート一覧</p>
+              <span class="text-xs text-gray-400">{catList.length}/10</span>
+            </div>
+            {catList.length === 0 ? (
+              <p class="text-sm text-gray-400">まだありません</p>
+            ) : (
+              <select
+                onchange="location.href='/blog/template?category='+this.value"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              >
+                {catList.map((cat) => (
+                  <option value={cat.id} selected={cat.id === selectedId}>
+                    {cat.name}
+                    {!cat.hpb_category_value ? '(HPB未設定)' : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
         </div>
 
         {!selected ? (
@@ -398,7 +388,7 @@ blog.get('/blog/template', async (c) => {
                 <p class="font-semibold">
                   <i class="fas fa-tag mr-2 text-pink-500"></i>この記事カテゴリについて
                 </p>
-                <form method="post" action={`/blog/template/categories/${selected.id}/delete`} onsubmit="return confirm('このカテゴリと未承認の記事を削除します。よろしいですか？')">
+                <form method="post" action={`/blog/template/categories/${selected.id}/delete`} onsubmit="return confirm('このカテゴリを削除します(記事のカテゴリ設定は解除されます)。よろしいですか？')">
                   <button type="submit" class="text-xs text-gray-400 hover:text-red-500">
                     <i class="fas fa-trash mr-1"></i>削除
                   </button>
@@ -509,34 +499,6 @@ blog.get('/blog/template', async (c) => {
       <form method="post" action="/blog/template/salon-info" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
-            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="md:col-span-2">
-              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
-              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
-              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
-              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
-              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
-              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
             <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
           </p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -561,6 +523,34 @@ blog.get('/blog/template', async (c) => {
             {footerText.length}文字 / 改行{footerLines}行
             {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
           </p>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
+              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
+              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
+              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
+              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
+              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
         </div>
 
         <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
@@ -828,7 +818,6 @@ function ArticleForm({
   generatedNotice?: boolean
 }) {
   const monthTags: number[] = detail ? JSON.parse(detail.month_tags_json || '[]') : []
-  const isApproved = detail?.status === 'approved'
   const submitLabel = mode === 'new' || generatedNotice ? '投稿一覧に追加' : '保存する'
   const initialBody = detail ? detail.body || '' : footerText ? `\n\n${footerText}` : ''
 
@@ -837,14 +826,6 @@ function ArticleForm({
       {generatedNotice && (
         <div class="bg-pink-50 border border-pink-200 text-pink-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-wand-magic-sparkles mr-2"></i>AIが記事を生成しました。内容を確認・編集して「{submitLabel}」を押してください。
-        </div>
-      )}
-      {isApproved && (
-        <div class="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">
-          <span>承認済みの記事です。編集するには先に承認を解除してください。</span>
-          <button type="button" id="article-unapprove-btn" data-article-id={detail?.id} class="text-sm font-semibold underline">
-            承認を解除
-          </button>
         </div>
       )}
 
@@ -862,13 +843,12 @@ function ArticleForm({
             <img src={`/blog/article/${detail.id}/image`} class="w-32 h-32 object-cover rounded-lg bg-gray-50 mb-3" />
           )}
           <div class="flex items-center gap-3 flex-wrap">
-            <input type="file" name="image" accept="image/*" disabled={isApproved} class="text-sm" />
+            <input type="file" name="image" accept="image/*" class="text-sm" />
             {detail?.id && (
               <button
                 type="button"
                 id="article-regen-description-btn"
                 data-article-id={detail.id}
-                disabled={isApproved}
                 class="text-xs text-pink-600 hover:underline disabled:opacity-50"
               >
                 <i class="fas fa-wand-magic-sparkles mr-1"></i>画像の説明をAIで再生成
@@ -885,13 +865,12 @@ function ArticleForm({
               name="title"
               value={detail?.title || ''}
               maxlength={25}
-              disabled={isApproved}
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">本文</label>
-            <textarea name="body" id="article-body-textarea" rows={10} disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+            <textarea name="body" id="article-body-textarea" rows={10} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {initialBody}
             </textarea>
             {detail?.id && (
@@ -899,7 +878,6 @@ function ArticleForm({
                 type="button"
                 id="article-regen-body-btn"
                 data-article-id={detail.id}
-                disabled={isApproved}
                 class="mt-1 text-xs text-pink-600 hover:underline disabled:opacity-50"
               >
                 <i class="fas fa-wand-magic-sparkles mr-1"></i>本文をAIで再生成
@@ -909,7 +887,7 @@ function ArticleForm({
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
-              <select name="category_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <select name="category_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {categories.map((cat) => (
                   <option value={cat.id} selected={detail?.category_id === cat.id}>
@@ -921,7 +899,7 @@ function ArticleForm({
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">投稿者</label>
-              <select name="stylist_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {stylists.map((st) => (
                   <option value={st.id} selected={detail?.stylist_id === st.id}>{st.name}</option>
@@ -930,7 +908,7 @@ function ArticleForm({
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">クーポン</label>
-              <select name="coupon_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <select name="coupon_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {coupons.map((cp) => (
                   <option value={cp.id} selected={detail?.coupon_id === cp.id}>{cp.name}</option>
@@ -950,7 +928,6 @@ function ArticleForm({
                     name="month_tags"
                     value={m}
                     checked={monthTags.includes(m)}
-                    disabled={isApproved}
                     class="accent-pink-500"
                   />
                   {m}月
@@ -966,7 +943,6 @@ function ArticleForm({
                 name="footer_enabled"
                 checked={detail ? detail.footer_enabled_flag === 1 : true}
                 data-footer-text={footerText}
-                disabled={isApproved}
                 class="accent-pink-500"
               />
               フッターを追加する
@@ -976,7 +952,6 @@ function ArticleForm({
                 type="checkbox"
                 name="auto_post_enabled"
                 checked={detail ? detail.auto_post_enabled_flag === 1 : true}
-                disabled={isApproved}
                 class="accent-pink-500"
               />
               自動投稿の対象にする
@@ -987,24 +962,13 @@ function ArticleForm({
         <div class="flex items-center gap-3">
           <button
             type="submit"
-            disabled={isApproved}
-            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm"
           >
             {submitLabel}
           </button>
           <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
             一覧に戻る
           </a>
-          {detail && !isApproved && (
-            <button
-              type="button"
-              id="article-approve-btn"
-              data-article-id={detail.id}
-              class="ml-auto text-sm px-5 py-2 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-semibold"
-            >
-              承認する
-            </button>
-          )}
         </div>
       </form>
     </div>
@@ -1149,13 +1113,10 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const existing = await c.env.DB.prepare('SELECT status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
     .bind(id, user.id, user.active_salon_id)
-    .first<{ status: string }>()
+    .first<{ id: number }>()
   if (!existing) return c.notFound()
-  if (existing.status === 'approved') {
-    return c.redirect(`/blog/articles/${id}/edit`)
-  }
 
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
@@ -1345,7 +1306,6 @@ type ArticleListRow = {
   category_name: string | null
   stylist_name: string | null
   coupon_name: string | null
-  status: string
   month_tags_json: string
   last_posted_at: string | null
   post_count: number
@@ -1361,12 +1321,6 @@ function jstNow(): Date {
 blog.get('/blog/articles', async (c) => {
   const user = c.get('user')
 
-  const { results: couponOptions } = await c.env.DB.prepare(
-    'SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
-  )
-    .bind(user.id, user.active_salon_id)
-    .all<{ id: number; name: string }>()
-
   const { results: categoryOptions } = await c.env.DB.prepare(
     'SELECT id, name FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
   )
@@ -1376,7 +1330,7 @@ blog.get('/blog/articles', async (c) => {
   const { results: rows } = await c.env.DB.prepare(
     `SELECT
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
-       a.id, a.title, a.image_r2_key, a.status, a.month_tags_json, a.last_posted_at, a.post_count,
+       a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
        a.auto_post_enabled_flag, a.category_id,
        bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
@@ -1409,10 +1363,10 @@ blog.get('/blog/articles', async (c) => {
 
   // 投稿順(生成順=sort_order)を1日1本で巡回した場合の簡易シミュレーション
   // (Phase 2で実際の自動投稿を実装するまでは、あくまで見込み表示)。
-  // 承認済み・自動投稿ONの記事だけを対象に生成順で巡回し、各日について
+  // 自動投稿ONの記事だけを対象に生成順で巡回し、各日について
   // その月に合う(月タグが空、またはその日の月を含む)記事をカーソル位置から
   // 探して割り当てる。合う記事が無い日はスキップとして表示する。
-  const postable = articles.filter((a) => a.status === 'approved' && a.auto_post_enabled_flag === 1)
+  const postable = articles.filter((a) => a.auto_post_enabled_flag === 1)
   const calendarDays: { dateLabel: string; article: ArticleListRow | null; skipReason: string | null }[] = []
   const previewDays = 14
   let cursor = 0
@@ -1422,7 +1376,7 @@ blog.get('/blog/articles', async (c) => {
     const month = d.getMonth() + 1
 
     if (postable.length === 0) {
-      calendarDays.push({ dateLabel, article: null, skipReason: '承認済み・自動投稿ONの記事がありません' })
+      calendarDays.push({ dateLabel, article: null, skipReason: '自動投稿ONの記事がありません' })
       continue
     }
 
@@ -1447,36 +1401,11 @@ blog.get('/blog/articles', async (c) => {
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        {articles.length > 0 && (
-          <div class="flex gap-0.5 h-3 rounded overflow-hidden">
-            {articles.map((a) => (
-              <span
-                class={
-                  'flex-1 ' +
-                  (a.status === 'approved'
-                    ? 'bg-green-400'
-                    : a.status === 'unapproved'
-                    ? 'bg-pink-400'
-                    : a.status === 'generating'
-                    ? 'bg-amber-300'
-                    : a.status === 'posting_failed'
-                    ? 'bg-red-500'
-                    : 'bg-gray-200')
-                }
-                title={`No.${a.no} ${a.title || ''} (${ARTICLE_STATUS_LABEL[a.status] || a.status})`}
-              ></span>
-            ))}
-          </div>
-        )}
-        <p class="text-xs text-gray-400 mt-2">承認済み・投稿待ち / 未承認 / 生成中 / 投稿失敗 / 未生成</p>
-      </div>
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
         <div class="flex items-center justify-between flex-wrap gap-3">
           <div>
             <p class="font-semibold"><i class="fas fa-robot mr-2 text-pink-500"></i>SALON BOARDへの自動投稿</p>
             <p class="text-xs text-gray-400 mt-1">
-              承認済み・自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
+              自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
             </p>
           </div>
           <form method="post" action="/blog/articles/schedule" class="flex items-center gap-2">
@@ -1538,23 +1467,10 @@ blog.get('/blog/articles', async (c) => {
           </div>
         </div>
 
-        <div id="blog-bulk-bar" class="hidden bg-gray-800 text-white rounded-xl px-4 py-3 flex items-center gap-3 flex-wrap mb-4">
-          <span><b id="blog-selected-count">0</b>件を選択中</span>
-          <button type="button" id="blog-bulk-approve-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">まとめて承認する</button>
-          <select id="blog-bulk-coupon-select" class="bg-white/10 text-xs px-2 py-1.5 rounded-lg w-full sm:w-auto min-w-0">
-            <option value="">クーポンを設定...</option>
-            {(couponOptions || []).map((cp) => (
-              <option value={cp.id}>{cp.name}</option>
-            ))}
-          </select>
-          <button type="button" id="blog-bulk-coupon-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">設定</button>
-        </div>
-
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           {articles.length > 0 && (
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
               <span class="w-10 flex-shrink-0 text-center">No</span>
-              <span class="w-5 flex-shrink-0 text-center" title="承認チェック">承認</span>
               <span class="w-5 flex-shrink-0 text-center" title="自動投稿の対象">自動</span>
               <span class="w-20 flex-shrink-0">画像</span>
               <span class="flex-1 min-w-0">記事タイトル</span>
@@ -1582,7 +1498,6 @@ blog.get('/blog/articles', async (c) => {
                     class="blog-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                     data-article-id={a.id}
                   />
-                  <input type="checkbox" class="blog-article-checkbox w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0" data-article-id={a.id} title="承認チェック" />
                   <input
                     type="checkbox"
                     class="blog-auto-post-toggle w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
@@ -1605,24 +1520,10 @@ blog.get('/blog/articles', async (c) => {
                       <span>{a.category_name || '-'}</span>
                       <span>{a.stylist_name || '-'}</span>
                       <span>{a.coupon_name || '-'}</span>
-                      <span
-                        class={
-                          'px-1.5 py-0.5 rounded ' +
-                          (a.status === 'approved'
-                            ? 'bg-green-50 text-green-600'
-                            : a.status === 'unapproved'
-                            ? 'bg-pink-50 text-pink-600'
-                            : a.status === 'posting_failed'
-                            ? 'bg-red-50 text-red-600'
-                            : 'bg-gray-100 text-gray-500')
-                        }
-                      >
-                        {ARTICLE_STATUS_LABEL[a.status] || a.status}
-                      </span>
                       {a.last_posted_at && <span>最終投稿 {a.last_posted_at}(投稿{a.post_count}回)</span>}
                     </p>
                   </div>
-                  <div class="flex items-center gap-1 md:gap-2 flex-shrink-0">
+                  <div class="flex flex-col md:flex-row items-stretch md:items-center gap-1 md:gap-2 flex-shrink-0">
                     <a
                       href={`/blog/articles/${a.id}/edit`}
                       class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"
@@ -1666,13 +1567,13 @@ blog.get('/blog/articles', async (c) => {
               {d.skipReason ? (
                 <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">{d.skipReason}</span>
               ) : (
-                <span class="text-xs px-2 py-0.5 rounded bg-green-50 text-green-600">承認済み</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-green-50 text-green-600">投稿予定</span>
               )}
             </div>
           ))}
         </div>
         <p class="text-xs text-gray-400 mt-2">
-          ※Phase 1では実際の自動投稿はまだ行われません。承認済みの記事を投稿順に1日1本ずつ投稿した場合の見込みを表示しています。
+          ※Phase 1では実際の自動投稿はまだ行われません。自動投稿ONの記事を投稿順に1日1本ずつ投稿した場合の見込みを表示しています。
         </p>
       </div>
 
@@ -1717,35 +1618,6 @@ blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
     .bind(enabled ? 1 : 0, articleId, user.id, user.active_salon_id)
     .run()
 
-  return c.json({ success: true })
-})
-
-blog.post('/api/blog/articles/bulk-approve', async (c) => {
-  const user = c.get('user')
-  const { articleIds } = await c.req.json<{ articleIds: number[] }>()
-  let count = 0
-  for (const id of articleIds || []) {
-    const result = await c.env.DB.prepare(
-      `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, last_error = NULL
-       WHERE id = ? AND user_id = ? AND salon_id = ? AND status IN ('unapproved', 'posting_failed')`
-    )
-      .bind(id, user.id, user.active_salon_id)
-      .run()
-    if (result.success) count++
-  }
-  return c.json({ success: true, count })
-})
-
-blog.post('/api/blog/articles/bulk-set-coupon', async (c) => {
-  const user = c.get('user')
-  const { articleIds, couponId } = await c.req.json<{ articleIds: number[]; couponId: number | null }>()
-  for (const id of articleIds || []) {
-    await c.env.DB.prepare(
-      'UPDATE blog_articles SET coupon_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
-    )
-      .bind(couponId || null, id, user.id, user.active_salon_id)
-      .run()
-  }
   return c.json({ success: true })
 })
 
@@ -1797,30 +1669,6 @@ blog.post('/api/blog/articles/reorder', async (c) => {
   return c.json({ success: true })
 })
 
-blog.post('/api/blog/articles/:id/approve', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  const result = await c.env.DB.prepare(
-    `UPDATE blog_articles SET status = 'approved', approved_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP, last_error = NULL
-     WHERE id = ? AND user_id = ? AND salon_id = ? AND status IN ('unapproved', 'posting_failed')`
-  )
-    .bind(id, user.id, user.active_salon_id)
-    .run()
-  return c.json({ success: !!result.success })
-})
-
-blog.post('/api/blog/articles/:id/unapprove', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  await c.env.DB.prepare(
-    `UPDATE blog_articles SET status = 'unapproved', approved_at = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ? AND salon_id = ? AND status = 'approved'`
-  )
-    .bind(id, user.id, user.active_salon_id)
-    .run()
-  return c.json({ success: true })
-})
-
 blog.post('/api/blog/articles/:id/regenerate-description', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
@@ -1847,12 +1695,11 @@ blog.post('/api/blog/articles/:id/regenerate-body', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
   const article = await c.env.DB.prepare(
-    'SELECT category_id, image_description, status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT category_id, image_description FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(id, user.id, user.active_salon_id)
-    .first<{ category_id: number | null; image_description: string | null; status: string }>()
+    .first<{ category_id: number | null; image_description: string | null }>()
   if (!article) return c.json({ error: '記事が見つかりません' }, 404)
-  if (article.status === 'approved') return c.json({ error: '承認済みの記事は編集できません' }, 400)
   if (!article.category_id) return c.json({ error: 'カテゴリが設定されていません' }, 400)
 
   const category = await c.env.DB.prepare(
