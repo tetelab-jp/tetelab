@@ -130,8 +130,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const stylists = data.stylists
     const rowHeight = 34
     const width = 720
-    const padL = 120
-    const padR = 48
+    const MAX_NAME_CHARS = 8
+    const padL = 156
+    const padR = 92
     const padTop = 8
     const height = padTop * 2 + rowHeight * stylists.length
     const plotW = width - padL - padR
@@ -153,15 +154,33 @@ document.addEventListener('DOMContentLoaded', () => {
       const barH = 18
       const barY = y + (rowHeight - barH) / 2
       const barW = Math.max(0, xOf(s.avgOverall) - padL)
+      const rawName = s.stylistName || ''
+      const displayName = rawName.length > MAX_NAME_CHARS ? rawName.slice(0, MAX_NAME_CHARS) + '…' : rawName
+
+      const showTooltip = (target) => {
+        const rect = container.getBoundingClientRect()
+        const cx = target.getBoundingClientRect()
+        tooltip.show(
+          cx.right - rect.left - (cx.width || 0) / 2,
+          barY,
+          `<b>${s.stylistName}</b><br>総合 ${s.avgOverall.toFixed(2)}(${s.count}件)<br>` +
+            `雰囲気 ${s.avgAtmosphere.toFixed(2)} / 接客 ${s.avgService.toFixed(2)} / 技術 ${s.avgTechnique.toFixed(2)} / メニュー・料金 ${s.avgMenuPrice.toFixed(2)}`
+        )
+      }
 
       const nameLabel = svgEl('text', {
         x: padL - 10,
         y: y + rowHeight / 2 + 4,
         'text-anchor': 'end',
         'font-size': 12,
-        fill: '#374151'
+        fill: '#374151',
+        style: rawName.length > MAX_NAME_CHARS ? 'cursor:default' : ''
       })
-      nameLabel.textContent = s.stylistName
+      nameLabel.textContent = displayName
+      if (rawName.length > MAX_NAME_CHARS) {
+        nameLabel.addEventListener('mouseenter', (e) => showTooltip(e.target))
+        nameLabel.addEventListener('mouseleave', tooltip.hide)
+      }
       svg.appendChild(nameLabel)
 
       // 背景トラック(2pxのサーフェス区切りを意識し、バー本体とは別要素にする)
@@ -178,16 +197,7 @@ document.addEventListener('DOMContentLoaded', () => {
         fill: PINK,
         style: 'cursor:pointer'
       })
-      bar.addEventListener('mouseenter', (e) => {
-        const rect = container.getBoundingClientRect()
-        const cx = e.target.getBoundingClientRect()
-        tooltip.show(
-          cx.right - rect.left - barW / 2,
-          barY,
-          `<b>${s.stylistName}</b><br>総合 ${s.avgOverall.toFixed(2)}(${s.count}件)<br>` +
-            `雰囲気 ${s.avgAtmosphere.toFixed(2)} / 接客 ${s.avgService.toFixed(2)} / 技術 ${s.avgTechnique.toFixed(2)} / メニュー・料金 ${s.avgMenuPrice.toFixed(2)}`
-        )
-      })
+      bar.addEventListener('mouseenter', (e) => showTooltip(e.target))
       bar.addEventListener('mouseleave', tooltip.hide)
       svg.appendChild(bar)
 
@@ -198,7 +208,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'font-weight': 'bold',
         fill: PINK_DARK
       })
-      valueLabel.textContent = s.avgOverall.toFixed(2)
+      valueLabel.textContent = `${s.avgOverall.toFixed(2)}(${s.count}件)`
       svg.appendChild(valueLabel)
     })
 

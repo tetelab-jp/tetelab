@@ -4,6 +4,16 @@ document.addEventListener('DOMContentLoaded', () => {
   var form = document.querySelector('form[action="/blog/generate"]')
   var btn = document.getElementById('blog-generate-btn')
   var status = document.getElementById('blog-generate-status')
+
+  var imageInput = document.getElementById('blog-generate-image-input')
+  var dropzoneLabel = document.getElementById('blog-generate-dropzone-label')
+  if (imageInput && dropzoneLabel) {
+    imageInput.addEventListener('change', function () {
+      var file = imageInput.files && imageInput.files[0]
+      dropzoneLabel.textContent = file ? file.name : 'タップして画像を選択'
+    })
+  }
+
   if (!form || !btn) return
 
   form.addEventListener('submit', function () {

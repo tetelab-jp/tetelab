@@ -354,82 +354,6 @@ blog.get('/blog/template', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
-        <div class="flex-1 min-w-[240px]">
-          <p class="font-semibold text-sm">サロンボードから読み込む</p>
-          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
-          <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at || '未取得'}
-          </p>
-        </div>
-        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-          読み込む
-        </button>
-        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
-      </div>
-
-      <form method="post" action="/blog/template/salon-info" class="space-y-6">
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="md:col-span-2">
-              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
-              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
-              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
-              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
-              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
-              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-        </div>
-
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">区切り記号</label>
-              <input type="text" name="footer_separator" value={profile?.footer_separator || '＊'} maxlength={1} class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">検索されたい言葉（カンマ区切り）</label>
-              <input
-                type="text"
-                name="footer_keywords"
-                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
-                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
-                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-          <p class="text-xs font-medium text-gray-500 mb-1">プレビュー</p>
-          <pre class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">{footerText || '（サロン名・住所等を入力すると表示されます）'}</pre>
-          <p class="text-xs text-gray-400 mt-2">
-            {footerText.length}文字 / 改行{footerLines}行
-            {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
-          </p>
-        </div>
-
-        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
-          保存する
-        </button>
-      </form>
-
       <div class="flex gap-6 flex-col lg:flex-row">
         <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none">
           <div class="p-4 border-b border-gray-100 flex items-center justify-between">
@@ -567,6 +491,82 @@ blog.get('/blog/template', async (c) => {
           </div>
         )}
       </div>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
+        <div class="flex-1 min-w-[240px]">
+          <p class="font-semibold text-sm">サロンボードから読み込む</p>
+          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
+          <p class="text-xs text-gray-400 mt-1">
+            最終取得: {profile?.salonboard_synced_at || '未取得'}
+          </p>
+        </div>
+        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          読み込む
+        </button>
+        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
+      </div>
+
+      <form method="post" action="/blog/template/salon-info" class="space-y-6">
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
+              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
+              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
+              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
+              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
+              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">区切り記号</label>
+              <input type="text" name="footer_separator" value={profile?.footer_separator || '＊'} maxlength={1} class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">検索されたい言葉（カンマ区切り）</label>
+              <input
+                type="text"
+                name="footer_keywords"
+                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
+                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+          <p class="text-xs font-medium text-gray-500 mb-1">プレビュー</p>
+          <pre class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">{footerText || '（サロン名・住所等を入力すると表示されます）'}</pre>
+          <p class="text-xs text-gray-400 mt-2">
+            {footerText.length}文字 / 改行{footerLines}行
+            {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
+          </p>
+        </div>
+
+        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
+          保存する
+        </button>
+      </form>
 
       <script src="/static/blog-salon.js"></script>
       <script src="/static/blog-template.js"></script>
@@ -1217,9 +1217,12 @@ blog.get('/blog/generate', async (c) => {
           で記事カテゴリを作成してください。
         </div>
       ) : (
-        <form method="post" action="/blog/generate" enctype="multipart/form-data" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5">
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">テンプレート(記事カテゴリ)</label>
+        <form method="post" action="/blog/generate" enctype="multipart/form-data" class="space-y-4">
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="w-7 h-7 rounded-full bg-pink-500 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">1</span>
+              <p class="font-semibold">テンプレート(記事カテゴリ)を選ぶ</p>
+            </div>
             <select name="category_id" required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {catList.map((cat) => (
                 <option value={cat.id}>
@@ -1229,12 +1232,27 @@ blog.get('/blog/generate', async (c) => {
               ))}
             </select>
           </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">画像</label>
-            <input type="file" name="image" accept="image/*" required class="text-sm" />
-            <p class="text-xs text-gray-400 mt-1">この画像の内容をAIが読み取り、記事の材料にします</p>
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="w-7 h-7 rounded-full bg-pink-500 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">2</span>
+              <p class="font-semibold">画像をアップロードする</p>
+            </div>
+            <label
+              for="blog-generate-image-input"
+              id="blog-generate-dropzone"
+              class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
+            >
+              <i class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+              <span id="blog-generate-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
+              <span class="text-xs text-gray-400">この画像の内容をAIが読み取り、記事の材料にします</span>
+            </label>
+            <input type="file" id="blog-generate-image-input" name="image" accept="image/*" required class="hidden" />
           </div>
-          <button id="blog-generate-btn" type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+          <button
+            id="blog-generate-btn"
+            type="submit"
+            class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
+          >
             <i class="fas fa-wand-magic-sparkles mr-1"></i>記事を生成する
           </button>
           <p id="blog-generate-status" class="text-sm text-gray-500"></p>
@@ -1372,9 +1390,6 @@ blog.get('/blog/articles', async (c) => {
     .all<ArticleListRow>()
 
   const articles = rows || []
-  const total = articles.length
-  const approved = articles.filter((a) => a.status === 'approved').length
-  const unapproved = articles.filter((a) => a.status === 'unapproved').length
 
   const schedule = await c.env.DB.prepare(
     `SELECT enabled, paused_until FROM blog_post_schedules WHERE user_id = ? AND salon_id = ?`
@@ -1391,8 +1406,6 @@ blog.get('/blog/articles', async (c) => {
     .first<{ x: number }>()
 
   const now = jstNow()
-  const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()
-  const remainingDaysInMonth = daysInMonth - now.getDate() + 1
 
   // 投稿順(生成順=sort_order)を1日1本で巡回した場合の簡易シミュレーション
   // (Phase 2で実際の自動投稿を実装するまでは、あくまで見込み表示)。
@@ -1434,29 +1447,8 @@ blog.get('/blog/articles', async (c) => {
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex gap-8 flex-wrap">
-          <div>
-            <span class="block text-xs text-gray-400">記事総数</span>
-            <b class="text-2xl">{total}</b>
-          </div>
-          <div>
-            <span class="block text-xs text-gray-400">承認済み</span>
-            <b class="text-2xl text-green-600">{approved}</b>
-          </div>
-          <div>
-            <span class="block text-xs text-gray-400">未承認</span>
-            <b class="text-2xl text-pink-600">{unapproved}</b>
-          </div>
-          <div>
-            <span class="block text-xs text-gray-400">今月投稿できる日数</span>
-            <b class="text-2xl text-amber-600">
-              {remainingDaysInMonth}
-              <small class="text-sm text-gray-400">/{daysInMonth}</small>
-            </b>
-          </div>
-        </div>
-        {total > 0 && (
-          <div class="mt-4 flex gap-0.5 h-3 rounded overflow-hidden">
+        {articles.length > 0 && (
+          <div class="flex gap-0.5 h-3 rounded overflow-hidden">
             {articles.map((a) => (
               <span
                 class={
@@ -1519,8 +1511,8 @@ blog.get('/blog/articles', async (c) => {
 
       <div data-tab-panel="list">
         <div class="mb-3 space-y-2">
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <div class="flex items-center gap-2 flex-nowrap overflow-x-auto min-w-0">
+          <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div class="flex items-center gap-2 overflow-x-auto min-w-0">
               <select id="blog-filter-select" class="h-10 flex-shrink-0 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3">
                 <option value="all">すべて</option>
                 <option value="on">ONのみ</option>
@@ -1539,7 +1531,7 @@ blog.get('/blog/articles', async (c) => {
             </div>
             <a
               href="/blog/articles/new"
-              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap flex-shrink-0"
+              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap text-center flex-shrink-0"
             >
               <i class="fas fa-plus mr-1"></i>新規作成
             </a>
@@ -1561,7 +1553,6 @@ blog.get('/blog/articles', async (c) => {
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           {articles.length > 0 && (
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
-              <span class="w-5 flex-shrink-0"></span>
               <span class="w-10 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0 text-center" title="承認チェック">承認</span>
               <span class="w-5 flex-shrink-0 text-center" title="自動投稿の対象">自動</span>
@@ -1584,9 +1575,6 @@ blog.get('/blog/articles', async (c) => {
                   data-category-id={a.category_id ?? ''}
                   data-month-tags={a.month_tags_json || '[]'}
                 >
-                  <span class="blog-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 px-1" data-article-id={a.id}>
-                    <i class="fas fa-grip-lines"></i>
-                  </span>
                   <input
                     type="number"
                     min="1"
