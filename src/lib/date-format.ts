@@ -25,3 +25,9 @@ export function formatJstDate(sqliteTimestamp: string | null | undefined): strin
   const full = formatJstDateTime(sqliteTimestamp)
   return full.replace(/:\d{2}$/, '')
 }
+
+/** 時刻を含まない日付のみ(年-月-日)。 */
+export function formatJstDateOnly(sqliteTimestamp: string | null | undefined): string {
+  const full = formatJstDateTime(sqliteTimestamp)
+  return full.slice(0, 10)
+}

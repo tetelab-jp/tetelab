@@ -10,6 +10,7 @@ import {
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
+import { formatJstDateOnly } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -1495,7 +1496,7 @@ blog.get('/blog/articles', async (c) => {
                       <span>{a.category_name || '-'}</span>
                       <span>{a.stylist_name || '-'}</span>
                       <span>{a.coupon_name || '-'}</span>
-                      {a.last_posted_at && <span>最終投稿 {a.last_posted_at}(投稿{a.post_count}回)</span>}
+                      {a.last_posted_at && <span>最終投稿 {formatJstDateOnly(a.last_posted_at)}(投稿{a.post_count}回)</span>}
                     </p>
                     <div class="flex flex-wrap gap-1 mt-1">
                       <BlogAutoPostStatusBadges a={a} />

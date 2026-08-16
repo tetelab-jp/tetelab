@@ -381,7 +381,7 @@ function StyleListSection({
                   )}
                 </a>
                 <div class="flex-1 min-w-0">
-                  <a href={`/style/${s.id}/edit`} class="block truncate font-medium text-gray-700 hover:text-pink-600">
+                  <a href={`/style/${s.id}/edit`} class="block truncate text-sm md:text-base font-medium text-gray-700 hover:text-pink-600">
                     {s.title || '（無題）'}
                   </a>
                   <p class="text-xs text-gray-400 mt-0.5">{s.stylist_name || '担当未設定'}</p>
@@ -897,22 +897,22 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（カンマ区切り）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り）</label>
         <input
           type="text"
           name="hashtags"
-          value={hashtags.join(',')}
-          placeholder="奈良美容室,髪質改善,ブリーチ毛ケア"
+          value={hashtags.join('/')}
+          placeholder="奈良美容室/髪質改善/ブリーチ毛ケア"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          半角カンマ(,)以外の記号は使用できません。
+          半角スラッシュ(/)以外の記号は使用できません。
         </p>
       </div>
 
       <ModelAttributeFields model={model} />
 
-      <label class="flex items-center gap-2 text-sm font-medium text-gray-700">
+<label class="flex items-center gap-2 text-sm font-medium text-gray-700">
         <input type="checkbox" name="auto_post_enabled" checked={detail ? detail.auto_post_enabled_flag === 1 : true} class="w-4 h-4 accent-pink-500" />
         自動投稿対象にする
       </label>
@@ -972,7 +972,7 @@ function parseStyleForm(body: Record<string, any>) {
   const menuRaw = body.menu_values
   const menuValues: string[] = Array.isArray(menuRaw) ? menuRaw : menuRaw ? [menuRaw] : []
   const hashtags = String(body.hashtags || '')
-    .split(',')
+    .split('/')
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
@@ -1773,15 +1773,15 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（カンマ区切り）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り）</label>
         <input
           type="text"
           name="hashtags"
-          value={hashtags.join(',')}
+          value={hashtags.join('/')}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          半角カンマ(,)以外の記号は使用できません。
+          半角スラッシュ(/)以外の記号は使用できません。
         </p>
       </div>
 
@@ -1820,7 +1820,7 @@ function parseTemplateForm(body: Record<string, any>) {
   const menuRaw = body.menu_values
   const menuValues: string[] = Array.isArray(menuRaw) ? menuRaw : menuRaw ? [menuRaw] : []
   const hashtags = String(body.hashtags || '')
-    .split(',')
+    .split('/')
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
