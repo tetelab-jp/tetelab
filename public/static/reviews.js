@@ -52,10 +52,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const points = data.trend
     const width = 720
-    const height = 150
+    const height = 140
     const padL = 36
     const padR = 16
-    const padT = 28
+    const padT = 16
     const padB = 24
     const plotW = width - padL - padR
     const plotH = height - padT - padB
@@ -110,17 +110,6 @@ document.addEventListener('DOMContentLoaded', () => {
     points.forEach((p, i) => {
       const cx = xOf(i)
       const cy = yOf(p.avgOverall)
-      // 丸の上に評価の数字を常時表示する
-      const valueLabel = svgEl('text', {
-        x: cx,
-        y: cy - 8,
-        'text-anchor': 'middle',
-        'font-size': 10,
-        'font-weight': 'bold',
-        fill: PINK_DARK
-      })
-      valueLabel.textContent = p.avgOverall.toFixed(2)
-      svg.appendChild(valueLabel)
       // 可視マーカー(小さめ)+ ホバー用の当たり判定(見た目より大きい透明円、8px以上)
       svg.appendChild(svgEl('circle', { cx, cy, r: 3.5, fill: PINK_DARK, stroke: 'white', 'stroke-width': 1.5 }))
       const hitCircle = svgEl('circle', { cx, cy, r: 10, fill: 'transparent', style: 'cursor:pointer' })
