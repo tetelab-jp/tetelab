@@ -90,6 +90,8 @@ dashboard.get('/dashboard', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="dashboard"
       salonName={user.salon_name}
       title="ダッシュボード"
@@ -316,6 +318,8 @@ dashboard.get('/settings/salonboard', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="settings"
       salonName={user.salon_name}
       title="サロンボード連携設定"
@@ -534,6 +538,8 @@ dashboard.get('/settings/account', async (c) => {
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
+
+      reviewEnabled={user.review_enabled !== 0}
       active="settings-account"
       salonName={user.salon_name}
       title="アカウント設定"

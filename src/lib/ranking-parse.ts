@@ -196,3 +196,137 @@ export function findSalonRankInPage(
   }
   return null
 }
+
+// --------------------------------------------
+// 口コミ管理ツール(2026-08-16追記): HPB公開口コミ一覧ページのパース
+// --------------------------------------------
+
+export type HpbReviewItem = {
+  /** 投稿日を "YYYY-MM-DD" に正規化したもの。HPB表示は時刻を含まない(日付のみ) */
+  postedDate: string
+  nickname: string
+  /** 例: "女性/40代/会社員"。無ければ空文字 */
+  attribute: string
+  content: string
+  menuUsed: string
+  couponUsed: string
+  /** サロンからの返信文。無ければ null */
+  salonReplyContent: string | null
+  scoreOverall: number | null
+  scoreAtmosphere: number | null
+  scoreService: number | null
+  scoreTechnique: number | null
+  scoreMenuPrice: number | null
+}
+
+export type HpbReviewPageResult = {
+  items: HpbReviewItem[]
+  /** 次ページの絶対URL。無ければnull(最終ページ) */
+  nextPageUrl: string | null
+  /** ページ上部の「サロン平均」バッジの値(参考表示用)。1ページ目にのみ存在 */
+  salonAverageScore: number | null
+}
+
+/** "2026/8/15" や "2026/08/15" を "2026-08-15" に正規化する */
+function normalizeSlashDate(raw: string): string | null {
+  const m = raw.match(/(\d{4})\s*\/\s*(\d{1,2})\s*\/\s*(\d{1,2})/)
+  if (!m) return null
+  const [, y, mo, d] = m
+  return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`
+}
+
+/**
+ * ul.judgeList(総合+4軸の評点リスト)から、ラベル文字列をキーにスコアを
+ * 取り出す。ラベルは各<li>から評点用span(.fgPink)と星アイコンを除いた
+ * 残りのテキストで判定する(表示順に依存せず、ラベル文字列で確実に対応付ける)。
+ */
+function parseJudgeList($: cheerio.CheerioAPI, judgeListEl: any): Record<string, number> {
+  const scores: Record<string, number> = {}
+  $(judgeListEl)
+    .find('li')
+    .each((_, li) => {
+      const $li = $(li)
+      const scoreText = $li.find('span.fgPink').first().text().trim()
+      const score = Number(scoreText)
+      const $clone = $li.clone()
+      $clone.find('span.fgPink, span.iconStarOn, span.iconStarOff').remove()
+      const label = $clone.text().replace(/\s+/g, '').trim()
+      if (label && Number.isFinite(score)) scores[label] = score
+    })
+  return scores
+}
+
+/**
+ * HPB公開口コミ一覧ページ(https://beauty.hotpepper.jp/{hpbSlnId}/review/、
+ * および2ページ目以降の .../review/PN{n}.html)1ページ分をパースする。
+ * ログイン不要・担当スタイリスト名は含まれない(サロンボード側の一覧と
+ * 投稿日+本文で突合する設計。詳細はreview-match.ts参照)。
+ */
+export function parseHpbReviewPage(html: string): HpbReviewPageResult {
+  const $ = cheerio.load(html)
+
+  const salonAverageText = $('.reviewRatingMeanScore').first().text().trim()
+  const salonAverageScore = salonAverageText ? Number(salonAverageText) : null
+
+  const items: HpbReviewItem[] = []
+  $('li.reportCassette').each((_, li) => {
+    const $li = $(li)
+    const nickname = $li.find('.reportTitle span.b').first().text().trim()
+    const attributeRaw = $li.find('.reportTitle span.fgGray').first().text().trim()
+    const attribute = attributeRaw.replace(/[（）()]/g, '').replace(/\s+/g, '')
+
+    const postedRaw = $li.find('.fr p.fs10.fgGray').first().text()
+    const postedDate = normalizeSlashDate(postedRaw)
+    if (!postedDate) return // 投稿日が取れない行はスキップ(構造想定外)
+
+    const scores = parseJudgeList($, $li.find('ul.judgeList').get(0))
+
+    // 本文: li内の最初のp.wwbwが口コミ本文。内部にネストされたdl.mT25
+    // (クーポン・メニュー情報)は本文から除外して抽出する。2件目以降の
+    // p.wwbwがあればサロン返信文(div.bdGrayの中)。
+    const wwbwEls = $li.find('p.wwbw').toArray()
+    let content = ''
+    let menuUsed = ''
+    let couponUsed = ''
+    if (wwbwEls.length > 0) {
+      const $body = $(wwbwEls[0]).clone()
+      $body.find('br').replaceWith('\n')
+      const $dl = $body.find('dl.mT25')
+      couponUsed = $dl.find('dd p').first().text().replace(/\s+/g, ' ').trim()
+      menuUsed = $dl
+        .find('dd p.fs10')
+        .first()
+        .text()
+        .replace(/\[施術メニュー\]/, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+      $dl.remove()
+      content = $body.text().replace(/\n\s+/g, '\n').trim()
+    }
+    let salonReplyContent: string | null = null
+    if (wwbwEls.length > 1) {
+      const $reply = $(wwbwEls[1]).clone()
+      $reply.find('br').replaceWith('\n')
+      salonReplyContent = $reply.text().replace(/\n\s+/g, '\n').trim() || null
+    }
+
+    items.push({
+      postedDate,
+      nickname,
+      attribute,
+      content,
+      menuUsed,
+      couponUsed,
+      salonReplyContent,
+      scoreOverall: scores['総合'] ?? null,
+      scoreAtmosphere: scores['雰囲気'] ?? null,
+      scoreService: scores['接客サービス'] ?? null,
+      scoreTechnique: scores['技術・仕上がり'] ?? null,
+      scoreMenuPrice: scores['メニュー・料金'] ?? null
+    })
+  })
+
+  const nextPageUrl = $('link[rel="next"]').attr('href') || null
+
+  return { items, nextPageUrl, salonAverageScore }
+}

@@ -16,13 +16,15 @@ export type NavKey =
   | 'ranking-measure'
   | 'ranking-keywords'
   | 'ranking-schedule'
+  | 'review-trend'
+  | 'review-by-stylist'
 
 const NAV_ITEMS: {
   key: NavKey
   href: string
   icon: string
   label: string
-  group: 'main' | 'style' | 'blog' | 'settings' | 'ranking'
+  group: 'main' | 'style' | 'blog' | 'settings' | 'ranking' | 'review'
 }[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
@@ -35,27 +37,37 @@ const NAV_ITEMS: {
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
   { key: 'ranking-schedule', href: '/seo/schedule', icon: 'fa-clock', label: '定期測定設定', group: 'ranking' },
+  { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価推移', group: 'review' },
+  { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' },
   { key: 'settings-account', href: '/settings/account', icon: 'fa-user-gear', label: 'アカウント設定', group: 'settings' }
 ]
 
-const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' | 'ranking' }[] = [
+const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' | 'ranking' | 'review' }[] = [
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
   { title: 'フリーワード対策', key: 'ranking' },
+  { title: '口コミ管理', key: 'review' },
   { title: '設定・確認', key: 'settings' }
 ]
 
-// 管理者サイト(/admin/tool)でスタイル/ブログ/SEO機能をOFFにされたサロンでは、
-// 該当機能のナビ項目自体を非表示にする(リンク先はrequireStyleEnabled/
-// requireBlogEnabled/requireSeoEnabledでどのみちブロックされるが、押せる
-// リンクを残さないため)。
-function isNavItemVisible(item: { group: string }, styleEnabled: boolean, blogEnabled: boolean, seoEnabled: boolean) {
+// 管理者サイト(/admin/tool)でスタイル/ブログ/SEO/口コミ機能をOFFにされた
+// サロンでは、該当機能のナビ項目自体を非表示にする(リンク先はrequireStyleEnabled/
+// requireBlogEnabled/requireSeoEnabled/requireReviewEnabledでどのみちブロック
+// されるが、押せるリンクを残さないため)。
+function isNavItemVisible(
+  item: { group: string },
+  styleEnabled: boolean,
+  blogEnabled: boolean,
+  seoEnabled: boolean,
+  reviewEnabled: boolean
+) {
   if (item.group === 'style') return styleEnabled
   if (item.group === 'blog') return blogEnabled
   if (item.group === 'ranking') return seoEnabled
+  if (item.group === 'review') return reviewEnabled
   return true
 }
 
@@ -64,13 +76,15 @@ export function Sidebar({
   salonName,
   styleEnabled = true,
   blogEnabled = true,
-  seoEnabled = true
+  seoEnabled = true,
+  reviewEnabled = true
 }: {
   active: NavKey
   salonName: string | null
   styleEnabled?: boolean
   blogEnabled?: boolean
   seoEnabled?: boolean
+  reviewEnabled?: boolean
 }) {
   const groups = NAV_GROUPS
   return (
@@ -87,7 +101,7 @@ export function Sidebar({
 
       {groups.map((group) => {
         const items = NAV_ITEMS.filter(
-          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
+          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled)
         )
         if (items.length === 0) return null
         return (
@@ -126,12 +140,14 @@ function MobileNavPanel({
   active,
   styleEnabled,
   blogEnabled,
-  seoEnabled
+  seoEnabled,
+  reviewEnabled
 }: {
   active: NavKey
   styleEnabled: boolean
   blogEnabled: boolean
   seoEnabled: boolean
+  reviewEnabled: boolean
 }) {
   return (
     <div class="fixed inset-0 z-50 bg-white overflow-y-auto">
@@ -152,7 +168,7 @@ function MobileNavPanel({
         <div class="space-y-4">
           {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
             const items = NAV_ITEMS.filter(
-              (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
+              (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled)
             )
             if (items.length === 0 && group.key !== 'settings') return null
             return (
@@ -197,13 +213,15 @@ export function TopBar({
   active,
   styleEnabled = true,
   blogEnabled = true,
-  seoEnabled = true
+  seoEnabled = true,
+  reviewEnabled = true
 }: {
   title: string
   active: NavKey
   styleEnabled?: boolean
   blogEnabled?: boolean
   seoEnabled?: boolean
+  reviewEnabled?: boolean
 }) {
   return (
     <header class="sticky top-0 z-20 border-b border-gray-100 bg-white">
@@ -219,7 +237,13 @@ export function TopBar({
               <span class="hamburger-line absolute left-0 w-4 h-0.5 bg-current rounded-full"></span>
             </span>
           </summary>
-          <MobileNavPanel active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} seoEnabled={seoEnabled} />
+          <MobileNavPanel
+            active={active}
+            styleEnabled={styleEnabled}
+            blogEnabled={blogEnabled}
+            seoEnabled={seoEnabled}
+            reviewEnabled={reviewEnabled}
+          />
         </details>
       </div>
       <div class="hidden md:flex items-center gap-3 px-6 py-4">
@@ -256,6 +280,7 @@ export function PageLayout({
   styleEnabled = true,
   blogEnabled = true,
   seoEnabled = true,
+  reviewEnabled = true,
   children
 }: {
   active: NavKey
@@ -264,6 +289,7 @@ export function PageLayout({
   styleEnabled?: boolean
   blogEnabled?: boolean
   seoEnabled?: boolean
+  reviewEnabled?: boolean
   children: any
 }) {
   return (
@@ -274,9 +300,17 @@ export function PageLayout({
         styleEnabled={styleEnabled}
         blogEnabled={blogEnabled}
         seoEnabled={seoEnabled}
+        reviewEnabled={reviewEnabled}
       />
       <div class="flex-1 min-w-0">
-        <TopBar title={title} active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} seoEnabled={seoEnabled} />
+        <TopBar
+          title={title}
+          active={active}
+          styleEnabled={styleEnabled}
+          blogEnabled={blogEnabled}
+          seoEnabled={seoEnabled}
+          reviewEnabled={reviewEnabled}
+        />
         <MobileGroupNav active={active} />
         <main class="p-6 space-y-6">{children}</main>
       </div>

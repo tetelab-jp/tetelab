@@ -702,6 +702,7 @@ type ToolSalonRow = {
   style_enabled: number
   blog_enabled: number
   seo_enabled: number
+  review_enabled: number
   seq: number
 }
 
@@ -770,7 +771,7 @@ admin.get('/admin/tool', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / TOOL_PAGE_SIZE))
 
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled,
+    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled, review_enabled,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -843,6 +844,7 @@ admin.get('/admin/tool', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">スタイル機能</th>
                 <th class="px-4 py-3 text-left font-medium">ブログ機能</th>
                 <th class="px-4 py-3 text-left font-medium">SEO機能</th>
+                <th class="px-4 py-3 text-left font-medium">口コミ機能</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -886,11 +888,21 @@ admin.get('/admin/tool', async (c) => {
                       offLabel="無効"
                     />
                   </td>
+                  <td class="px-4 py-3">
+                    <FeatureToggleForm
+                      action={`/admin/tool/${salon.id}/toggle-review`}
+                      page={page}
+                      q={q}
+                      enabled={salon.review_enabled === 1}
+                      onLabel="有効"
+                      offLabel="無効"
+                    />
+                  </td>
                 </tr>
               ))}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={8} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -928,7 +940,7 @@ admin.get('/admin/tool', async (c) => {
 
 async function toggleSalonFeature(
   c: any,
-  column: 'style_enabled' | 'blog_enabled' | 'seo_enabled',
+  column: 'style_enabled' | 'blog_enabled' | 'seo_enabled' | 'review_enabled',
   actionName: string
 ) {
   const adminUser = c.get('admin')
@@ -961,6 +973,7 @@ async function toggleSalonFeature(
 admin.post('/admin/tool/:id/toggle-style', (c) => toggleSalonFeature(c, 'style_enabled', 'toggle_salon_style_enabled'))
 admin.post('/admin/tool/:id/toggle-blog', (c) => toggleSalonFeature(c, 'blog_enabled', 'toggle_salon_blog_enabled'))
 admin.post('/admin/tool/:id/toggle-seo', (c) => toggleSalonFeature(c, 'seo_enabled', 'toggle_salon_seo_enabled'))
+admin.post('/admin/tool/:id/toggle-review', (c) => toggleSalonFeature(c, 'review_enabled', 'toggle_salon_review_enabled'))
 
 // ---------- 稼働状況 ----------
 // スタイル自動投稿の連続失敗回数(users.consecutive_failure_count、

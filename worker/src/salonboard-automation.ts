@@ -1414,3 +1414,112 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
 
   log('ブログ登録が完了しました')
 }
+
+// ---------- 口コミ管理(2026-08-16追記) ----------
+// 口コミ一覧(/CLP/bt/review/reviewList/)のみを巡回する。詳細/返信ページ
+// (reviewReply/{管理番号})は使わない(評点はHPB公開ページ側から取得する
+// 設計に変更済み。docs/session-continuation参照)。
+
+export type ReviewListRow = {
+  managementNo: string
+  postedAt: string // "2026/08/15 14:07" 形式(そのまま文字列で保持し、app側でパースする)
+  visitedAt: string // "2026/07/28" 形式
+  reservationName: string
+  stylistNameRaw: string
+  bodyExcerpt: string
+  replyStatus: string
+}
+
+/**
+ * 口コミ一覧テーブル(table.mod_table03)1ページ分を抽出する。
+ * 列構成: ピックアップ / 管理番号 / 投稿日時 / 来店日 / 予約者名(お客様番号) /
+ * 担当スタイリスト / 本文 / 返信(審査状況)。実HTML(2026-08-16に実際の
+ * サロンボード画面から取得)を基にセレクタを決めている。
+ */
+async function extractReviewListRows(page: Page): Promise<ReviewListRow[]> {
+  return page.evaluate(() => {
+    const rows: ReviewListRow[] = []
+    document.querySelectorAll('table.mod_table03 tbody tr.mod_middle').forEach((tr) => {
+      const cells = tr.querySelectorAll('td')
+      if (cells.length < 8) return
+      const managementNo = (cells[1].textContent || '').trim()
+      if (!managementNo) return
+      const postedAt = (cells[2].textContent || '').replace(/\s+/g, ' ').trim()
+      const visitedAt = (cells[3].textContent || '').replace(/\s+/g, '').trim()
+      // 予約者名セルは「氏名<br />（お客様番号）」形式。氏名(1行目)だけを使う。
+      const reservationRaw = (cells[4].textContent || '').trim()
+      const reservationName = reservationRaw.split(/[\n（(]/)[0].trim()
+      const stylistNameRaw = (cells[5].textContent || '').trim()
+      const bodyExcerpt = (cells[6].textContent || '').trim()
+      const replyStatus = (cells[7].textContent || '').replace(/\s+/g, ' ').trim()
+      rows.push({ managementNo, postedAt, visitedAt, reservationName, stylistNameRaw, bodyExcerpt, replyStatus })
+    })
+    return rows
+  })
+}
+
+/** ページ下部の「次へ」リンク(pagingブロック)のhrefを返す。無ければnull(最終ページ)。 */
+async function findNextReviewListPageUrl(page: Page): Promise<string | null> {
+  const href = await page
+    .evaluate(() => {
+      const link = document.querySelector('.paging p.next a') as HTMLAnchorElement | null
+      return link ? link.getAttribute('href') : null
+    })
+    .catch(() => null)
+  if (!href) return null
+  return new URL(href, SALONBOARD_BASE_URL).toString()
+}
+
+export type FetchReviewListOptions = {
+  /** この管理番号に到達したら、それより前(=それ以降の巡回)は取得済みとみなして打ち切る(月次差分同期用) */
+  stopAtManagementNo?: string | null
+  /** 安全弁。全件バックフィルでも実際は462件/24ページ程度(2026-08-16確認)なので十分な余裕を持たせる */
+  maxPages?: number
+}
+
+const DEFAULT_MAX_REVIEW_PAGES = 200
+const REVIEW_LIST_PAGE_DELAY_MS = 1300
+
+/**
+ * 口コミ一覧を先頭ページから巡回して全行を取得する。
+ * stopAtManagementNoを指定した場合、その管理番号の行に到達した時点で
+ * (その行は含めず)巡回を打ち切る。一覧は新しい投稿順に並んでいるため、
+ * 前回同期済みの管理番号に到達すれば、それ以降は既知のデータで良い。
+ */
+export async function fetchReviewList(
+  page: Page,
+  log: AutomationLogger,
+  options: FetchReviewListOptions = {}
+): Promise<ReviewListRow[]> {
+  const maxPages = options.maxPages ?? DEFAULT_MAX_REVIEW_PAGES
+  const allRows: ReviewListRow[] = []
+
+  log('口コミ一覧ページへ遷移中...')
+  await page.goto(`${SALONBOARD_BASE_URL}/CLP/bt/review/reviewList/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
+  await page.waitForSelector('table.mod_table03', { timeout: 15000 })
+
+  for (let pageNum = 1; pageNum <= maxPages; pageNum++) {
+    const rows = await extractReviewListRows(page)
+    let stopped = false
+    for (const row of rows) {
+      if (options.stopAtManagementNo && row.managementNo === options.stopAtManagementNo) {
+        stopped = true
+        break
+      }
+      allRows.push(row)
+    }
+    log(`口コミ一覧 ${pageNum}ページ目: ${rows.length}件取得(累計${allRows.length}件)`)
+    if (stopped) {
+      log('前回同期済みの口コミに到達したため、一覧の巡回を打ち切ります')
+      break
+    }
+
+    const nextUrl = await findNextReviewListPageUrl(page)
+    if (!nextUrl) break
+    await sleep(REVIEW_LIST_PAGE_DELAY_MS)
+    await page.goto(nextUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
+    await page.waitForSelector('table.mod_table03', { timeout: 15000 })
+  }
+
+  return allRows
+}

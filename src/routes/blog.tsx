@@ -147,7 +147,7 @@ blog.get('/blog/salon', async (c) => {
   const footerLines = footerText ? footerText.split('\n').length : 0
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="サロン基本情報" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="サロン基本情報" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -469,7 +469,7 @@ blog.get('/blog/template', async (c) => {
   }
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
       <div class="flex gap-6 flex-col lg:flex-row">
         <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none">
           <div class="p-4 border-b border-gray-100 flex items-center justify-between">
@@ -1118,7 +1118,7 @@ blog.get('/blog/articles', async (c) => {
   }
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
       <div class="bg-white rounded-xl border border-gray-100 p-6">
         <div class="flex gap-8 flex-wrap">
           <div>

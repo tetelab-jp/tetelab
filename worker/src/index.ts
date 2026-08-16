@@ -17,12 +17,14 @@ import {
   draftRegisterStyle,
   submitReflectApplication,
   postBlogArticle,
+  fetchReviewList,
   launchBrowser,
   closeAnonymizedProxy,
   handleGroupTopIfPresent,
   ReflectionBlockedError,
   type StylePostInput,
   type BlogPostInput,
+  type ReviewListRow,
   type LaunchedBrowser
 } from './salonboard-automation'
 import type { Page } from 'puppeteer'
@@ -70,7 +72,8 @@ async function main(): Promise<void> {
   const apiBase = requireEnv('JOB_API_BASE')
   const jobId = requireEnv('JOB_ID')
   const jobToken = requireEnv('JOB_TOKEN')
-  const jobType = process.env.JOB_TYPE === 'blog' ? 'blog' : 'style'
+  const jobType =
+    process.env.JOB_TYPE === 'blog' ? 'blog' : process.env.JOB_TYPE === 'review_sync' ? 'review_sync' : 'style'
 
   const logs: string[] = []
   const log = (msg: string) => {
@@ -92,6 +95,23 @@ async function main(): Promise<void> {
     }
     await postBlogResult(apiBase, jobId, jobToken, { ...blogResult, logs })
     process.exit(blogResult.success ? 0 : 1)
+  }
+
+  if (jobType === 'review_sync') {
+    let reviewResult: Omit<ReviewSyncJobResult, 'logs'>
+    try {
+      const payload = await fetchReviewSyncJob(apiBase, jobId, jobToken)
+      reviewResult = await runReviewSyncJob(payload, log)
+    } catch (err: any) {
+      reviewResult = {
+        success: false,
+        step: 'login',
+        message: `ジョブ実行中に予期しないエラーが発生しました: ${String(err?.message || err)}`,
+        rows: []
+      }
+    }
+    await postReviewSyncResult(apiBase, jobId, jobToken, { ...reviewResult, logs })
+    process.exit(reviewResult.success ? 0 : 1)
   }
 
   let result: Omit<JobResult, 'logs'>
@@ -248,6 +268,116 @@ async function runBlogJob(payload: BlogJobPayload, log: (msg: string) => void): 
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
   const binary = Buffer.from(base64, 'base64')
   return binary.buffer.slice(binary.byteOffset, binary.byteOffset + binary.byteLength) as ArrayBuffer
+}
+
+// ---------- 口コミ管理ツール 同期ジョブ(2026-08-16追記) ----------
+// サロンボード口コミ一覧の巡回のみを行う(Puppeteer/ログインが必要な部分)。
+// HPB公開口コミ一覧との突合はアプリ側(fetch()のみで完結、ログイン不要)で
+// 行うため、ワーカーはHPBには一切アクセスしない。
+
+type ReviewSyncJobPayload = {
+  loginId: string
+  password: string
+  proxySessionCandidates?: string[] | null
+  targetStoreId?: string | null
+  /** この管理番号に到達したら打ち切る(月次差分同期用)。全件バックフィルはnull */
+  stopAtManagementNo?: string | null
+}
+
+type ReviewSyncJobStep = 'login' | 'navigate' | 'list_fetch' | 'done'
+
+type ReviewSyncJobResult = {
+  success: boolean
+  step: ReviewSyncJobStep
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: LoginAttempt[]
+  rows: ReviewListRow[]
+}
+
+async function fetchReviewSyncJob(apiBase: string, jobId: string, jobToken: string): Promise<ReviewSyncJobPayload> {
+  const res = await fetch(`${apiBase}/api/review-automation/jobs/${jobId}`, {
+    headers: { Authorization: `Bearer ${jobToken}` }
+  })
+  if (!res.ok) throw new Error(`ジョブ取得に失敗しました(status=${res.status})`)
+  return (await res.json()) as ReviewSyncJobPayload
+}
+
+async function postReviewSyncResult(
+  apiBase: string,
+  jobId: string,
+  jobToken: string,
+  result: ReviewSyncJobResult
+): Promise<void> {
+  try {
+    await fetch(`${apiBase}/api/review-automation/jobs/${jobId}/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    })
+  } catch (err) {
+    console.error('結果の送信に失敗しました:', err)
+  }
+}
+
+/**
+ * 口コミ一覧の巡回は読み取り専用(何かを送信・登録するわけではない)ため、
+ * blog側のような「同一セッション内での複数回リトライ」は不要。ログイン
+ * セッション単位でのプロキシ候補切り替えのみ行う。
+ */
+async function runReviewSyncJob(
+  payload: ReviewSyncJobPayload,
+  log: (msg: string) => void
+): Promise<Omit<ReviewSyncJobResult, 'logs'>> {
+  const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
+  const loginAttempts: LoginAttempt[] = []
+
+  const styleLikePayload = { loginId: payload.loginId, password: payload.password, targetStoreId: payload.targetStoreId }
+
+  let attempt = await attemptLogin(styleLikePayload, log, candidates[0])
+  if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
+
+  let rows: ReviewListRow[] = []
+  let fetchError: any = attempt.error ? null : new Error('未試行')
+  if (!attempt.error) {
+    try {
+      rows = await fetchReviewList(attempt.page!, log, { stopAtManagementNo: payload.stopAtManagementNo })
+      fetchError = null
+    } catch (err: any) {
+      fetchError = err
+    }
+  }
+
+  for (let i = 1; i < candidates.length && (attempt.error || fetchError); i++) {
+    const reason = attempt.error ? 'ログイン' : '口コミ一覧の取得'
+    log(`[プロキシ] セッションID(${candidates[i - 1]})での${reason}に失敗したため、次の候補セッションID(${candidates[i]})へ切り替えて再ログインします...`)
+    await closeAttempt(attempt)
+    attempt = await attemptLogin(styleLikePayload, log, candidates[i])
+    loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+    fetchError = attempt.error ? null : new Error('未試行')
+    if (!attempt.error) {
+      try {
+        rows = await fetchReviewList(attempt.page!, log, { stopAtManagementNo: payload.stopAtManagementNo })
+        fetchError = null
+      } catch (err: any) {
+        fetchError = err
+      }
+    }
+  }
+
+  try {
+    const { proxySessionId, error: loginError } = attempt
+    if (loginError) {
+      return { success: false, step: 'login', message: String(loginError?.message || loginError), proxySessionId: null, loginAttempts, rows: [] }
+    }
+    if (fetchError) {
+      return { success: false, step: 'list_fetch', message: String(fetchError?.message || fetchError), proxySessionId, loginAttempts, rows: [] }
+    }
+    return { success: true, step: 'done', message: `口コミ一覧を${rows.length}件取得しました`, proxySessionId, loginAttempts, rows }
+  } finally {
+    await closeAttempt(attempt)
+  }
 }
 
 type LoginAttemptResult = LaunchedBrowser & { page: Page | null; error: any; topPageUrl: string | null }
