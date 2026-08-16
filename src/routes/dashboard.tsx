@@ -47,10 +47,10 @@ dashboard.get('/dashboard', async (c) => {
   const isConnected = cred?.connection_status === 'success'
 
   const blogArticlesRow = await c.env.DB.prepare(
-    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE status = 'approved') as approved FROM blog_articles WHERE user_id = ? AND salon_id = ?"
+    'SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE auto_post_enabled_flag = 1) as auto_post_on FROM blog_articles WHERE user_id = ? AND salon_id = ?'
   )
     .bind(user.id, user.active_salon_id)
-    .first<{ total: number; approved: number }>()
+    .first<{ total: number; auto_post_on: number }>()
 
   const styleTotalRow = await c.env.DB.prepare('SELECT COUNT(*) as total FROM styles WHERE user_id = ? AND salon_id = ?')
     .bind(user.id, user.active_salon_id)
@@ -208,7 +208,7 @@ dashboard.get('/dashboard', async (c) => {
             <i class="fas fa-pen-to-square mr-2 text-pink-500"></i>ブログ投稿
           </p>
           <p class="text-sm text-gray-600 mb-3">
-            カテゴリ別テンプレートで画像から記事をAI生成し、承認した記事を投稿できます。
+            カテゴリ別テンプレートで画像から記事をAI生成し、自動投稿できます。
           </p>
           <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
             投稿記事一覧を開く <i class="fas fa-arrow-right ml-1"></i>
@@ -247,9 +247,9 @@ dashboard.get('/dashboard', async (c) => {
           </p>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">ブログ記事（承認済み/総数）</p>
+          <p class="text-xs text-gray-400 mb-1">ブログ記事（自動投稿ON/総数）</p>
           <p class="text-lg font-bold text-gray-800">
-            {blogArticlesRow?.approved ?? 0} / {blogArticlesRow?.total ?? 0} 件
+            {blogArticlesRow?.auto_post_on ?? 0} / {blogArticlesRow?.total ?? 0} 件
           </p>
         </div>
       </div>
