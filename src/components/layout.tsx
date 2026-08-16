@@ -214,7 +214,7 @@ export function TopBar({
         </a>
         <details class="relative justify-self-end">
           <summary class="list-none cursor-pointer w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
-            <span class="hamburger-icon relative inline-block w-4 h-4">
+            <span class="hamburger-icon relative inline-block w-4 h-2.5">
               <span class="hamburger-line absolute left-0 w-4 h-0.5 bg-current rounded-full"></span>
               <span class="hamburger-line absolute left-0 w-4 h-0.5 bg-current rounded-full"></span>
             </span>
