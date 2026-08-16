@@ -1520,19 +1520,19 @@ blog.get('/blog/articles', async (c) => {
       <div data-tab-panel="list">
         <div class="mb-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
-            <div class="flex items-center gap-2 flex-wrap">
-              <select id="blog-filter-select" class="h-10 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3">
+            <div class="flex items-center gap-2 flex-nowrap overflow-x-auto min-w-0">
+              <select id="blog-filter-select" class="h-10 flex-shrink-0 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3">
                 <option value="all">すべて</option>
                 <option value="on">ONのみ</option>
                 <option value="off">OFFのみ</option>
               </select>
-              <select id="blog-category-filter" class="h-10 text-xs border border-gray-200 rounded-lg px-2">
+              <select id="blog-category-filter" class="h-10 flex-shrink-0 text-xs border border-gray-200 rounded-lg px-2">
                 <option value="">すべての記事カテゴリ</option>
                 {(categoryOptions || []).map((cat) => (
                   <option value={cat.id}>{cat.name}</option>
                 ))}
               </select>
-              <select id="blog-sort-select" class="h-10 text-xs border border-gray-200 rounded-lg px-2">
+              <select id="blog-sort-select" class="h-10 flex-shrink-0 text-xs border border-gray-200 rounded-lg px-2">
                 <option value="generated">生成順に表示</option>
                 <option value="season">季節柄でソート</option>
               </select>
@@ -1668,7 +1668,7 @@ blog.get('/blog/articles', async (c) => {
                 {d.skipReason ? (
                   <span class="text-amber-700">投稿されません</span>
                 ) : d.article ? (
-                  <a href={`/blog/articles/${d.article.id}/edit`} class="hover:text-pink-600 hover:underline">
+                  <a href={`/blog/articles/${d.article.id}/edit`} class="text-pink-600 underline decoration-pink-300 underline-offset-2 hover:text-pink-700 hover:decoration-pink-600">
                     {d.article.title || '（未生成）'}
                   </a>
                 ) : (
