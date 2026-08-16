@@ -176,7 +176,41 @@ reviews.get('/reviews/by-stylist', async (c) => {
             {breakdown.stylists.length === 0 ? (
               <p class="text-sm text-gray-400 text-center py-10">この期間に評点付きの口コミがありません</p>
             ) : (
-              <div id="review-stylist-chart"></div>
+              <div class="divide-y divide-gray-50">
+                {breakdown.stylists.map((s, i) => (
+                  <div class="py-4">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="flex items-center gap-3 min-w-0">
+                        <span class="flex-shrink-0 w-7 h-7 rounded-full bg-pink-50 text-pink-600 text-xs font-bold flex items-center justify-center">
+                          {i + 1}
+                        </span>
+                        <p class="font-semibold text-gray-800 truncate" title={s.stylistName}>
+                          {s.stylistName}
+                        </p>
+                      </div>
+                      <div class="flex items-baseline gap-1.5 flex-shrink-0">
+                        <i class="fas fa-star text-amber-400 text-sm"></i>
+                        <span class="text-2xl font-bold text-gray-800">{s.avgOverall.toFixed(2)}</span>
+                        <span class="text-xs font-semibold text-gray-400 bg-gray-50 rounded-full px-2 py-0.5 ml-1">
+                          {s.count}件
+                        </span>
+                      </div>
+                    </div>
+                    <div class="mt-2.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-gradient-to-r from-pink-400 to-pink-500 rounded-full"
+                        style={`width: ${((s.avgOverall / 5) * 100).toFixed(1)}%`}
+                      ></div>
+                    </div>
+                    <div class="flex flex-wrap gap-x-3 gap-y-1 mt-2 text-xs text-gray-400">
+                      <span>雰囲気 {s.avgAtmosphere.toFixed(2)}</span>
+                      <span>接客 {s.avgService.toFixed(2)}</span>
+                      <span>技術 {s.avgTechnique.toFixed(2)}</span>
+                      <span>メニュー・料金 {s.avgMenuPrice.toFixed(2)}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
           {breakdown.unmatchedStylistCount > 0 && (
@@ -188,11 +222,6 @@ reviews.get('/reviews/by-stylist', async (c) => {
         </>
       )}
 
-      <script
-        id="review-stylist-data"
-        type="application/json"
-        dangerouslySetInnerHTML={{ __html: escapeJsonForScript({ stylists: breakdown.stylists }) }}
-      ></script>
       <script src="/static/reviews.js"></script>
     </PageLayout>,
     { title: 'スタイリスト別評価' }

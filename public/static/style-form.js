@@ -52,7 +52,7 @@ document.addEventListener('DOMContentLoaded', () => {
       setValue('title', t.title_template)
       setValue('comment', t.comment_template)
       setValue('menu_detail_text', t.menu_detail_text)
-      setValue('hashtags', (JSON.parse(t.hashtags_json || '[]') || []).join(','))
+      setValue('hashtags', (JSON.parse(t.hashtags_json || '[]') || []).join('/'))
       setValue('stylist_id', t.stylist_id != null ? String(t.stylist_id) : '')
       setValue('coupon_id', t.coupon_id != null ? String(t.coupon_id) : '')
 
@@ -86,11 +86,12 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // ハッシュタグ欄: 半角カンマ(,)以外の記号が入力された場合はエラー表示する。
-  // 文字・数字・カンマ・空白のみを許可し、それ以外の記号(#!?など)を弾く。
+  // ハッシュタグ欄: 半角スラッシュ(/)以外の記号が入力された場合はエラー表示する。
+  // 文字・数字・半角スラッシュ・空白のみを許可し、全角スラッシュ(／)や
+  // それ以外の記号(#!?など)を弾く。
   const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
   const hashtagsError = form ? form.querySelector('.hashtags-error') : null
-  const HASHTAGS_ALLOWED_PATTERN = /^[\p{L}\p{N},\s]*$/u
+  const HASHTAGS_ALLOWED_PATTERN = /^[\p{L}\p{N}/\s]*$/u
 
   function isHashtagsValid() {
     if (!hashtagsInput) return true
@@ -176,7 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isHashtagsValid()) {
         e.preventDefault()
         updateHashtagsError()
-        alert('ハッシュタグに半角カンマ(,)以外の記号が含まれています。')
+        alert('ハッシュタグに半角スラッシュ(/)以外の記号が含まれています。')
         return
       }
       if (!isRequiredFieldsFilled()) {
