@@ -397,7 +397,6 @@ admin.get('/admin/salons', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">サロン名(HPB)</th>
                 <th class="px-4 py-3 text-left font-medium">ログイン</th>
                 <th class="px-4 py-3 text-left font-medium">有効化</th>
-                <th class="px-4 py-3 text-left font-medium">契約</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
@@ -415,6 +414,12 @@ admin.get('/admin/salons', async (c) => {
                             </td>
                             <td class="px-4 py-2.5 font-medium text-gray-800" rowspan={rowspan}>
                               {group.accountSalonName || '(未設定)'}
+                              {group.isActive === 0 && group.accountDeletionRequestedAt && (
+                                <p class="text-xs text-red-600 mt-1 font-normal whitespace-nowrap">
+                                  有効なサロンが無いため、あと{daysUntilDeletion(group.accountDeletionRequestedAt)}
+                                  日でこのアカウントは削除されます
+                                </p>
+                              )}
                             </td>
                             <td class="px-4 py-2.5 text-gray-500" rowspan={rowspan}>
                               {group.email}
@@ -453,63 +458,27 @@ admin.get('/admin/salons', async (c) => {
                             <span class="text-xs text-gray-300">-</span>
                           )}
                         </td>
-                        {i === 0 && (
-                          <td class="px-4 py-2.5" rowspan={rowspan}>
-                            <form method="post" action={`/admin/salons/${group.accountId}/toggle-active`}>
-                              <input type="hidden" name="page" value={page} />
-                              <input type="hidden" name="q" value={q} />
-                              <label class="flex items-center gap-2 cursor-pointer w-fit">
-                                <span class="relative inline-flex items-center flex-shrink-0">
-                                  <input
-                                    type="checkbox"
-                                    checked={group.isActive === 1}
-                                    onchange="this.form.submit()"
-                                    class="sr-only peer"
-                                  />
-                                  <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                                  <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-                                </span>
-                                <span
-                                  class={
-                                    'text-xs font-semibold ' + (group.isActive === 1 ? 'text-pink-600' : 'text-gray-400')
-                                  }
-                                >
-                                  {group.isActive === 1 ? '契約中' : '契約外'}
-                                </span>
-                              </label>
-                            </form>
-                            {group.isActive === 0 && group.accountDeletionRequestedAt && (
-                              <p class="text-xs text-red-600 mt-1 whitespace-nowrap">
-                                あと{daysUntilDeletion(group.accountDeletionRequestedAt)}日で削除されます
-                              </p>
-                            )}
-                          </td>
-                        )}
                       </tr>
                     ))}
                     {group.inactiveSalons.length > 0 && (
                       <tr>
-                        <td colspan={8} class="px-4 py-2 bg-gray-50">
-                          <details>
-                            <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-700 select-none">
-                              無効化中のサロンを表示({group.inactiveSalons.length}件)
-                            </summary>
-                            <div class="mt-2 space-y-1.5">
-                              {group.inactiveSalons.map((sub) => (
-                                <div class="flex flex-wrap items-center justify-between gap-3 text-xs bg-white rounded-lg border border-gray-100 px-3 py-2">
-                                  <span class="font-mono text-gray-600">{sub.salon_key || '(未確定)'}</span>
-                                  <span class="text-gray-500">{sub.salon_name || '(未取得)'}</span>
-                                  <WorkspaceToggle
-                                    accountId={group.accountId}
-                                    salonId={sub.id}
-                                    isActiveWorkspace={false}
-                                    page={page}
-                                    q={q}
-                                  />
-                                </div>
-                              ))}
-                            </div>
-                          </details>
+                        <td colspan={7} class="px-4 py-3 bg-gray-50">
+                          <p class="text-xs text-gray-500 mb-2">無効化中のサロン({group.inactiveSalons.length}件)</p>
+                          <div class="space-y-1.5">
+                            {group.inactiveSalons.map((sub) => (
+                              <div class="flex flex-wrap items-center justify-between gap-3 text-xs bg-white rounded-lg border border-gray-200 px-3 py-2">
+                                <span class="font-mono text-gray-600">{sub.salon_key || '(未確定)'}</span>
+                                <span class="text-gray-500">{sub.salon_name || '(未取得)'}</span>
+                                <WorkspaceToggle
+                                  accountId={group.accountId}
+                                  salonId={sub.id}
+                                  isActiveWorkspace={false}
+                                  page={page}
+                                  q={q}
+                                />
+                              </div>
+                            ))}
+                          </div>
                         </td>
                       </tr>
                     )}
@@ -518,7 +487,7 @@ admin.get('/admin/salons', async (c) => {
               })}
               {groups.length === 0 && (
                 <tr>
-                  <td colspan={8} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={7} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>
@@ -554,52 +523,6 @@ admin.get('/admin/salons', async (c) => {
   )
 })
 
-// 2026-08-14追記(ユーザー指定): サロン単位の個別削除ボタンは撤去し、この
-// 「契約」トグルに削除操作を一本化した。契約中→契約外にした瞬間に
-// deletion_requested_atを記録し、3日間操作がなければ自動的にアカウント
-// (紐づく全サロン)を削除する(src/lib/account-deletion.ts参照)。
-// 契約外→契約中に戻せば削除は自動的にキャンセルされる(中止ボタン不要)。
-admin.post('/admin/salons/:id/toggle-active', async (c) => {
-  const adminUser = c.get('admin')
-  const targetId = Number(c.req.param('id'))
-  const body = await c.req.parseBody()
-  const page = String(body.page || '1')
-  const q = String(body.q || '')
-
-  const target = await c.env.DB.prepare('SELECT id, email, is_active FROM users WHERE id = ?')
-    .bind(targetId)
-    .first<{ id: number; email: string; is_active: number }>()
-  if (target) {
-    const nextActive = target.is_active === 1 ? 0 : 1
-    if (nextActive === 0) {
-      await c.env.DB.prepare(
-        `UPDATE users SET is_active = 0, deletion_requested_at = CURRENT_TIMESTAMP,
-           deletion_requested_by_admin_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-      )
-        .bind(adminUser.id, targetId)
-        .run()
-    } else {
-      await c.env.DB.prepare(
-        `UPDATE users SET is_active = 1, deletion_requested_at = NULL,
-           deletion_requested_by_admin_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
-      )
-        .bind(targetId)
-        .run()
-    }
-    await logAdminAction(
-      c,
-      adminUser.id,
-      'toggle_salon_active',
-      'user',
-      targetId,
-      `${target.email}: is_active ${target.is_active} -> ${nextActive}` +
-        (nextActive === 0 ? ' (3日後に自動削除)' : ' (削除キャンセル)')
-    )
-  }
-
-  return c.redirect(buildSalonsListUrl(Number(page) || 1, q))
-})
-
 admin.post('/admin/salons/:id/impersonate', async (c) => {
   const adminUser = c.get('admin')
   const targetId = Number(c.req.param('id'))
@@ -621,6 +544,10 @@ admin.post('/admin/salons/:id/impersonate', async (c) => {
 // 両方向切り替えられるようにした。有効化と同時にsalon_slot_limitを新しい
 // 有効サロン数以上に自動調整する(以前の「枠数を+1するだけ」という抽象的な
 // 操作から変更した経緯を踏襲)。
+// 2026-08-16追記(ユーザー指定): 別途あった「契約」トグル(アカウント単位の
+// is_active・3日後自動削除)を廃止し、この「有効化」トグルに一本化した。
+// 有効なサロンが1件も無くなったアカウントを自動的にis_active=0・削除猶予
+// 開始とし、1件でも有効化されれば自動的に削除猶予をキャンセルする。
 admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) => {
   const adminUser = c.get('admin')
   const userId = Number(c.req.param('userId'))
@@ -662,6 +589,13 @@ admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) =>
       await c.env.DB.prepare('UPDATE users SET active_salon_id = COALESCE(active_salon_id, ?) WHERE id = ?')
         .bind(salonId, userId)
         .run()
+      // 有効なサロンが1件でもできたので、is_active=1に戻し削除猶予をキャンセルする。
+      await c.env.DB.prepare(
+        `UPDATE users SET is_active = 1, deletion_requested_at = NULL,
+           deletion_requested_by_admin_id = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+      )
+        .bind(userId)
+        .run()
     } else {
       // 無効化した場合、それが利用中サロン(active_salon_id)だったなら、
       // 同アカウントの他の有効サロンへ re-point する(無ければNULLのまま)。
@@ -673,6 +607,24 @@ admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) =>
       )
         .bind(userId, salonId, userId, salonId)
         .run()
+
+      // 有効なサロンが1件も無くなった場合のみ、is_active=0にして削除猶予を開始する
+      // (既に開始済みなら日付は上書きしない)。
+      const remainingActiveRow = await c.env.DB.prepare(
+        'SELECT COUNT(*) AS cnt FROM salonboard_salons WHERE user_id = ? AND is_active_workspace = 1'
+      )
+        .bind(userId)
+        .first<{ cnt: number }>()
+      if ((remainingActiveRow?.cnt ?? 0) === 0) {
+        await c.env.DB.prepare(
+          `UPDATE users SET is_active = 0,
+             deletion_requested_at = COALESCE(deletion_requested_at, CURRENT_TIMESTAMP),
+             deletion_requested_by_admin_id = COALESCE(deletion_requested_by_admin_id, ?),
+             updated_at = CURRENT_TIMESTAMP WHERE id = ?`
+        )
+          .bind(adminUser.id, userId)
+          .run()
+      }
     }
 
     await logAdminAction(
