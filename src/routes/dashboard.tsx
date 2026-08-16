@@ -861,36 +861,37 @@ dashboard.get('/settings/auto-update', async (c) => {
 
       {blogEnabled && (
         <AutoUpdateSection icon="fa-newspaper" colorClasses="bg-blue-100 text-blue-600" title="ブログ投稿">
-          <div class="bg-gray-50 rounded-lg p-4">
-            <div class="flex items-center justify-between flex-wrap gap-3">
-              <div>
-                <p class="text-sm font-semibold text-gray-700">SALON BOARDへの自動投稿</p>
-                <p class="text-xs text-gray-400 mt-1">
-                  自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
-                </p>
-              </div>
-              <form method="post" action="/blog/articles/schedule" class="flex items-center gap-2">
-                <label class="relative inline-flex items-center cursor-pointer">
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">自動投稿</p>
+            <form method="post" action="/blog/articles/schedule" class="bg-gray-50 rounded-lg p-4">
+              <label class="flex items-center gap-3 cursor-pointer w-fit">
+                <span class="relative inline-flex items-center flex-shrink-0">
                   <input type="checkbox" name="enabled" checked={blogScheduleEnabled} onchange="this.form.submit()" class="sr-only peer" />
-                  <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                  <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-                </label>
-                <span class={'text-sm font-semibold ' + (blogScheduleEnabled ? 'text-pink-600' : 'text-gray-400')}>
-                  {blogScheduleEnabled ? '自動投稿 ON' : '自動投稿 OFF'}
+                  <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                  <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
-              </form>
+                <span class="text-sm font-medium text-gray-700">
+                  自動投稿を有効にする（SALON BOARDへ、月タグに合う記事を1日1本の目安で自動投稿。深夜2:00〜7:00は停止）
+                </span>
+              </label>
+            </form>
+          </div>
+
+          {blogIsPaused && (
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+              <i class="fas fa-triangle-exclamation mr-2"></i>
+              連続で投稿に失敗したため、一時的に自動投稿を停止しています(しばらくすると自動的に再開します)。
             </div>
-            {blogIsPaused && (
-              <p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
-                連続で投稿に失敗したため、一時的に自動投稿を停止しています(しばらくすると自動的に再開します)。
-              </p>
-            )}
-            <div class="flex items-center gap-3 mt-4">
-              <button type="button" id="blog-test-run-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg" disabled={!!inFlightBlogJob}>
-                今すぐまとめて投稿する
+          )}
+
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿</p>
+            <div class="bg-gray-50 rounded-lg p-4">
+              <button type="button" id="blog-test-run-btn" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50" disabled={!!inFlightBlogJob}>
+                <i class="fas fa-flask mr-2"></i>今すぐまとめて投稿する
               </button>
-              {inFlightBlogJob && <span class="text-xs text-gray-400">投稿処理が進行中です...</span>}
-              <p id="blog-test-run-status" class="text-sm text-gray-500"></p>
+              {inFlightBlogJob && <p class="text-xs text-gray-400 mt-3">投稿処理が進行中です...</p>}
+              <p id="blog-test-run-status" class="text-sm text-gray-500 mt-3"></p>
             </div>
           </div>
         </AutoUpdateSection>
