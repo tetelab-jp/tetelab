@@ -12,6 +12,7 @@
 import type { Bindings } from '../types'
 import { runBlogPostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
+import { getFooterTextForSalon } from './blog-footer'
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
 
@@ -100,9 +101,15 @@ export type ReadyArticleRow = {
   stylist_select_value: string | null
 }
 
+type ReadyArticleRowInternal = ReadyArticleRow & {
+  user_id: number
+  salon_id: number | null
+  footer_enabled_flag: number
+}
+
 const READY_ARTICLE_SELECT = `
   SELECT
-    a.id, a.title, a.body, a.image_r2_key, a.image_file_name,
+    a.id, a.user_id, a.salon_id, a.title, a.body, a.footer_enabled_flag, a.image_r2_key, a.image_file_name,
     bc.hpb_category_value, bc.name AS category_name,
     st.salonboard_stylist_key AS stylist_select_value
   FROM blog_articles a
@@ -110,9 +117,22 @@ const READY_ARTICLE_SELECT = `
   LEFT JOIN stylists st ON st.id = a.stylist_id
 `
 
-/** ジョブ取得API(GET /api/blog-automation/jobs/:id)が記事の中身を組み立てる際に使う */
+/**
+ * ジョブ取得API(GET /api/blog-automation/jobs/:id)が記事の中身を組み立てる際に使う。
+ * 2026-08-16追記: 記事のfooter_enabled_flagが1の場合、実際にSALON BOARDへ
+ * 投稿する本文の末尾にフッター(サロン基本情報+検索されたい言葉)を付ける。
+ * 従来はフッターが文字数上限の計算(computeBodyMaxChars)にのみ使われ、実際の
+ * 投稿本文には反映されていなかった(UIプレビュー専用だった)ため、ここで
+ * 初めて実際の投稿内容に反映させる。
+ */
 export async function getArticleRowForJob(env: Bindings, articleId: number): Promise<ReadyArticleRow | null> {
-  return env.DB.prepare(`${READY_ARTICLE_SELECT} WHERE a.id = ?`).bind(articleId).first<ReadyArticleRow>()
+  const row = await env.DB.prepare(`${READY_ARTICLE_SELECT} WHERE a.id = ?`).bind(articleId).first<ReadyArticleRowInternal>()
+  if (!row) return null
+  if (row.footer_enabled_flag === 1 && row.body) {
+    const footerText = await getFooterTextForSalon(env, row.user_id, row.salon_id)
+    if (footerText) row.body = `${row.body}\n\n${footerText}`
+  }
+  return row
 }
 
 function randomJobToken(): string {

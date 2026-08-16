@@ -9,6 +9,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
+import { buildFooterText } from '../lib/blog-footer'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -81,25 +82,6 @@ async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfi
     .first<SalonProfileRow>()
 }
 
-function buildFooterText(salonName: string | null, profile: SalonProfileRow | null): string {
-  if (!profile) return ''
-  const sep = (profile.footer_separator || '＊').repeat(16)
-  const lines = [sep, salonName || '']
-  if (profile.address || profile.nearest_station) {
-    lines.push('', '【アクセス】')
-    if (profile.address) lines.push(profile.address)
-    if (profile.nearest_station) lines.push(`${profile.nearest_station}${profile.walk_minutes ? ` 徒歩${profile.walk_minutes}` : ''}`)
-  }
-  if (profile.business_hours || profile.closing_days) {
-    lines.push('', '【営業時間】')
-    if (profile.business_hours) lines.push(profile.business_hours)
-    if (profile.closing_days) lines.push(`※定休：${profile.closing_days}`)
-  }
-  const keywords: string[] = JSON.parse(profile.footer_keywords_json || '[]')
-  if (keywords.length > 0) lines.push('', `[${keywords.join('/')}]`)
-  return lines.join('\n')
-}
-
 type SalonAreaLookupRow = { salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }
 
 // 複数サロンワークスペース対応: 現在アクティブなサロン(user.active_salon_id)を
@@ -142,9 +124,7 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
-  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
-  const footerText = buildFooterText(salon?.salon_name || null, profile)
-  const footerLines = footerText ? footerText.split('\n').length : 0
+  const profile = await getSalonProfile(c, user)
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="サロン基本情報" styleEnabled={user.style_enabled !== 0}>
@@ -154,49 +134,7 @@ blog.get('/blog/salon', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
-        <div class="flex-1 min-w-[240px]">
-          <p class="font-semibold text-sm">サロンボードから読み込む</p>
-          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
-          <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at || '未取得'}
-          </p>
-        </div>
-        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-          読み込む
-        </button>
-        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
-      </div>
-
       <form method="post" action="/blog/salon" class="space-y-6">
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div class="md:col-span-2">
-              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
-              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
-              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
-              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
-              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
-              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-        </div>
-
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
             <i class="fas fa-heart mr-2 text-pink-500"></i>サロンの人格<span class="text-xs text-gray-400 ml-2">AI生成の材料になります</span>
@@ -254,40 +192,16 @@ blog.get('/blog/salon', async (c) => {
           </div>
         </div>
 
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">全記事の末尾に付きます</span>
-          </p>
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">区切り記号</label>
-              <input type="text" name="footer_separator" value={profile?.footer_separator || '＊'} maxlength={1} class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">検索されたい言葉（カンマ区切り）</label>
-              <input
-                type="text"
-                name="footer_keywords"
-                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
-                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
-                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
-            </div>
-          </div>
-          <p class="text-xs font-medium text-gray-500 mb-1">プレビュー</p>
-          <pre class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">{footerText || '（サロン名・住所等を入力すると表示されます）'}</pre>
-          <p class="text-xs text-gray-400 mt-2">
-            {footerText.length}文字 / 改行{footerLines}行
-            {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
-          </p>
-        </div>
-
         <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
           保存する
         </button>
       </form>
+      <p class="text-xs text-gray-400">
+        住所・営業時間などの基本情報とフッター設定は
+        <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
+        画面に移動しました。
+      </p>
 
-      <script src="/static/blog-salon.js"></script>
     </PageLayout>,
     { title: 'サロン基本情報' }
   )
@@ -297,11 +211,6 @@ blog.post('/blog/salon', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const fields = {
-    address: String(body.address || '').trim(),
-    nearest_station: String(body.nearest_station || '').trim(),
-    walk_minutes: String(body.walk_minutes || '').trim(),
-    business_hours: String(body.business_hours || '').trim(),
-    closing_days: String(body.closing_days || '').trim(),
     concept: String(body.concept || '').trim(),
     strengths: String(body.strengths || '').trim(),
     target_customer: String(body.target_customer || '').trim(),
@@ -310,51 +219,28 @@ blog.post('/blog/salon', async (c) => {
     first_person: String(body.first_person || '').trim(),
     sentence_ending: String(body.sentence_ending || '').trim(),
     writing_tone: String(body.writing_tone || '').trim(),
-    ng_words: String(body.ng_words || '').trim(),
-    footer_separator: String(body.footer_separator || '＊').trim().slice(0, 1) || '＊',
-    footer_keywords_json: JSON.stringify(
-      String(body.footer_keywords || '')
-        .split(',')
-        .map((k) => k.trim())
-        .filter(Boolean)
-    )
+    ng_words: String(body.ng_words || '').trim()
   }
 
-  const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ? AND salon_id = ?')
-    .bind(user.id, user.active_salon_id)
-    .first()
-  if (existing) {
-    await c.env.DB.prepare(
-      `UPDATE salon_profiles SET
-         address=?, nearest_station=?, walk_minutes=?, business_hours=?, closing_days=?,
-         concept=?, strengths=?, target_customer=?, price_range=?, reference_text=?,
-         first_person=?, sentence_ending=?, writing_tone=?, ng_words=?,
-         footer_separator=?, footer_keywords_json=?, updated_at=CURRENT_TIMESTAMP
-       WHERE user_id=? AND salon_id=?`
+  // 2026-08-16追記(ブログ機能再設計): このページは「サロンの人格」「書き方」の
+  // 列だけを更新する。「基本情報」「フッター」は/blog/templateページ側の
+  // POSTハンドラが担当し、同じsalon_profiles行の別の列を更新するため、
+  // ON CONFLICT DO UPDATEで自分が担当する列だけを書き換え、相手の列には触れない。
+  await c.env.DB.prepare(
+    `INSERT INTO salon_profiles (user_id, salon_id, concept, strengths, target_customer, price_range, reference_text, first_person, sentence_ending, writing_tone, ng_words)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (salon_id) DO UPDATE SET
+       concept = EXCLUDED.concept, strengths = EXCLUDED.strengths, target_customer = EXCLUDED.target_customer,
+       price_range = EXCLUDED.price_range, reference_text = EXCLUDED.reference_text, first_person = EXCLUDED.first_person,
+       sentence_ending = EXCLUDED.sentence_ending, writing_tone = EXCLUDED.writing_tone, ng_words = EXCLUDED.ng_words,
+       updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(
+      user.id, user.active_salon_id, fields.concept, fields.strengths, fields.target_customer,
+      fields.price_range, fields.reference_text, fields.first_person, fields.sentence_ending,
+      fields.writing_tone, fields.ng_words
     )
-      .bind(
-        fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
-        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
-        fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
-        fields.footer_separator, fields.footer_keywords_json, user.id, user.active_salon_id
-      )
-      .run()
-  } else {
-    await c.env.DB.prepare(
-      `INSERT INTO salon_profiles (
-         user_id, salon_id, address, nearest_station, walk_minutes, business_hours, closing_days,
-         concept, strengths, target_customer, price_range, reference_text,
-         first_person, sentence_ending, writing_tone, ng_words, footer_separator, footer_keywords_json
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-      .bind(
-        user.id, user.active_salon_id, fields.address, fields.nearest_station, fields.walk_minutes, fields.business_hours, fields.closing_days,
-        fields.concept, fields.strengths, fields.target_customer, fields.price_range, fields.reference_text,
-        fields.first_person, fields.sentence_ending, fields.writing_tone, fields.ng_words,
-        fields.footer_separator, fields.footer_keywords_json
-      )
-      .run()
-  }
+    .run()
 
   return c.redirect('/blog/salon?saved=1')
 })
@@ -437,6 +323,7 @@ const ARTICLE_STATUS_LABEL: Record<string, string> = {
 
 blog.get('/blog/template', async (c) => {
   const user = c.get('user')
+  const saved = c.req.query('saved')
 
   const { results: categories } = await c.env.DB.prepare(
     `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode, season_months_json
@@ -455,21 +342,94 @@ blog.get('/blog/template', async (c) => {
     .bind(user.id, user.active_salon_id)
     .all<{ id: number; name: string }>()
 
-  let articles: { id: number; image_description: string | null; status: string; title: string | null }[] = []
-  let counts = { total: 0, generated: 0 }
-  if (selected) {
-    const { results } = await c.env.DB.prepare(
-      `SELECT id, image_description, status, title FROM blog_articles
-       WHERE user_id = ? AND salon_id = ? AND category_id = ? ORDER BY sort_order ASC, id ASC`
-    )
-      .bind(user.id, user.active_salon_id, selected.id)
-      .all<{ id: number; image_description: string | null; status: string; title: string | null }>()
-    articles = results || []
-    counts = { total: articles.length, generated: articles.filter((a) => a.status !== 'pending_generation').length }
-  }
+  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
+  const footerText = buildFooterText(salon?.salon_name || null, profile)
+  const footerLines = footerText ? footerText.split('\n').length : 0
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
+      {saved && (
+        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-check mr-2"></i>保存しました
+        </div>
+      )}
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
+        <div class="flex-1 min-w-[240px]">
+          <p class="font-semibold text-sm">サロンボードから読み込む</p>
+          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
+          <p class="text-xs text-gray-400 mt-1">
+            最終取得: {profile?.salonboard_synced_at || '未取得'}
+          </p>
+        </div>
+        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          読み込む
+        </button>
+        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
+      </div>
+
+      <form method="post" action="/blog/template/salon-info" class="space-y-6">
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-shop mr-2 text-pink-500"></i>基本情報<span class="text-xs text-gray-400 ml-2">フッターに差し込まれます</span>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="md:col-span-2">
+              <label class="block text-sm font-medium text-gray-700 mb-1">住所</label>
+              <input type="text" name="address" value={profile?.address || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">最寄駅</label>
+              <input type="text" name="nearest_station" value={profile?.nearest_station || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">徒歩</label>
+              <input type="text" name="walk_minutes" value={profile?.walk_minutes || ''} placeholder="例）3分" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">営業時間</label>
+              <input type="text" name="business_hours" value={profile?.business_hours || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">定休日</label>
+              <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
+          </p>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">区切り記号</label>
+              <input type="text" name="footer_separator" value={profile?.footer_separator || '＊'} maxlength={1} class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">検索されたい言葉（カンマ区切り）</label>
+              <input
+                type="text"
+                name="footer_keywords"
+                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
+                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              />
+            </div>
+          </div>
+          <p class="text-xs font-medium text-gray-500 mb-1">プレビュー</p>
+          <pre class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">{footerText || '（サロン名・住所等を入力すると表示されます）'}</pre>
+          <p class="text-xs text-gray-400 mt-2">
+            {footerText.length}文字 / 改行{footerLines}行
+            {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
+          </p>
+        </div>
+
+        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
+          保存する
+        </button>
+      </form>
+
       <div class="flex gap-6 flex-col lg:flex-row">
         <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none">
           <div class="p-4 border-b border-gray-100 flex items-center justify-between">
@@ -599,80 +559,58 @@ blog.get('/blog/template', async (c) => {
                 <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg">保存する</button>
               </form>
             </div>
-
-            <div class="bg-white rounded-xl border border-gray-100 p-6">
-              <div class="flex items-center justify-between mb-3">
-                <p class="font-semibold">
-                  <i class="fas fa-images mr-2 text-pink-500"></i>写真<span class="text-xs text-gray-400 ml-2">1枚 = 記事1本</span>
-                </p>
-                <span class="text-xs text-gray-400">写真 {counts.total} / 記事 {counts.generated}</span>
-              </div>
-
-              <form id="blog-image-upload-form" method="post" action={`/blog/template/categories/${selected.id}/images`} enctype="multipart/form-data" class="mb-4">
-                <input type="file" name="images" accept="image/*" multiple id="blog-image-input" class="hidden" />
-                <label for="blog-image-input" class="block border-2 border-dashed border-gray-200 rounded-lg p-6 text-center text-sm text-gray-400 cursor-pointer hover:border-pink-300">
-                  クリックして写真を選択(複数可)、または読み込むと自動で250〜300KBに圧縮します
-                </label>
-                <p id="blog-image-upload-status" class="text-xs text-gray-500 mt-2"></p>
-              </form>
-
-              {articles.length === 0 ? (
-                <p class="text-sm text-gray-400">まだ写真がありません</p>
-              ) : (
-                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {articles.map((a) => (
-                    <div class="border border-gray-100 rounded-lg overflow-hidden">
-                      <img src={`/blog/article/${a.id}/image`} class="w-full aspect-square object-cover bg-gray-50" />
-                      <div class="p-2 space-y-1">
-                        <p class="text-xs text-gray-500 truncate">{a.image_description || a.title || '(説明未設定)'}</p>
-                        <span
-                          class={
-                            'text-xs px-1.5 py-0.5 rounded ' +
-                            (a.status === 'approved'
-                              ? 'bg-green-50 text-green-600'
-                              : a.status === 'unapproved'
-                              ? 'bg-pink-50 text-pink-600'
-                              : a.status === 'posting_failed'
-                              ? 'bg-red-50 text-red-600'
-                              : 'bg-gray-100 text-gray-500')
-                          }
-                        >
-                          {ARTICLE_STATUS_LABEL[a.status] || a.status}
-                        </span>
-                        <form method="post" action={`/blog/template/articles/${a.id}/delete`}>
-                          <button type="submit" class="text-xs text-gray-300 hover:text-red-500">
-                            <i class="fas fa-trash"></i>
-                          </button>
-                        </form>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-3 flex-wrap">
-              <button type="button" id="generate-preview-btn" data-category-id={selected.id} class="bg-white border border-gray-300 hover:bg-gray-50 text-sm font-semibold px-4 py-2 rounded-lg">
-                1本だけ試しに書かせる
-              </button>
-              <button type="button" id="generate-batch-btn" data-category-id={selected.id} class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-                この記事カテゴリの記事を書く（{counts.total - counts.generated}本）
-              </button>
-              <span class="text-xs text-gray-400">まだ記事になっていない写真だけが対象です</span>
-              <p id="generate-status" class="text-sm text-gray-500 w-full"></p>
-              <div id="generate-preview-result" class="hidden w-full bg-gray-50 border border-gray-100 rounded-lg p-4 text-sm space-y-2">
-                <p class="font-semibold" id="generate-preview-title"></p>
-                <p class="whitespace-pre-wrap text-gray-600" id="generate-preview-body"></p>
-              </div>
-            </div>
+            <p class="text-xs text-gray-400">
+              このテンプレートを使って記事を作るには
+              <a href="/blog/generate" class="text-pink-600 hover:underline">AI記事生成</a>
+              画面を開いてください。
+            </p>
           </div>
         )}
       </div>
 
+      <script src="/static/blog-salon.js"></script>
       <script src="/static/blog-template.js"></script>
     </PageLayout>,
     { title: '生成テンプレート' }
   )
+})
+
+blog.post('/blog/template/salon-info', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const fields = {
+    address: String(body.address || '').trim(),
+    nearest_station: String(body.nearest_station || '').trim(),
+    walk_minutes: String(body.walk_minutes || '').trim(),
+    business_hours: String(body.business_hours || '').trim(),
+    closing_days: String(body.closing_days || '').trim(),
+    footer_separator: String(body.footer_separator || '＊').trim().slice(0, 1) || '＊',
+    footer_keywords_json: JSON.stringify(
+      String(body.footer_keywords || '')
+        .split(',')
+        .map((k) => k.trim())
+        .filter(Boolean)
+    )
+  }
+
+  // /blog/salonのPOSTハンドラと同じ理由で、この画面が担当する列(基本情報・
+  // フッター)だけを更新する(ON CONFLICT DO UPDATEで相手の列には触れない)。
+  await c.env.DB.prepare(
+    `INSERT INTO salon_profiles (user_id, salon_id, address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (salon_id) DO UPDATE SET
+       address = EXCLUDED.address, nearest_station = EXCLUDED.nearest_station, walk_minutes = EXCLUDED.walk_minutes,
+       business_hours = EXCLUDED.business_hours, closing_days = EXCLUDED.closing_days,
+       footer_separator = EXCLUDED.footer_separator, footer_keywords_json = EXCLUDED.footer_keywords_json,
+       updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(
+      user.id, user.active_salon_id, fields.address, fields.nearest_station, fields.walk_minutes,
+      fields.business_hours, fields.closing_days, fields.footer_separator, fields.footer_keywords_json
+    )
+    .run()
+
+  return c.redirect('/blog/template?saved=1')
 })
 
 blog.post('/blog/template/categories/add', async (c) => {
@@ -775,58 +713,6 @@ blog.post('/api/blog/categories/:id/generate-draft', async (c) => {
   }
 })
 
-blog.post('/blog/template/categories/:id/images', async (c) => {
-  const user = c.get('user')
-  const categoryId = Number(c.req.param('id'))
-  const category = await c.env.DB.prepare('SELECT id FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
-    .bind(categoryId, user.id, user.active_salon_id)
-    .first()
-  if (!category) return c.redirect('/blog/template')
-
-  const body = await c.req.parseBody({ all: true })
-  const files = Array.isArray(body.images) ? body.images : body.images ? [body.images] : []
-
-  const nextOrderRow = await c.env.DB.prepare(
-    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ n: number }>()
-  let nextOrder = nextOrderRow?.n ?? 0
-
-  for (const f of files) {
-    if (!(f instanceof File) || f.size === 0) continue
-    const arrayBuffer = await f.arrayBuffer()
-    const { buffer, contentType } = await processBlogArticleImage(arrayBuffer)
-    const key = `blog/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
-    const fileName = `${(f.name || 'blog').replace(/\.[^./\\]+$/, '')}.jpg`
-    await c.env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
-    await c.env.DB.prepare(
-      `INSERT INTO blog_articles (user_id, salon_id, category_id, image_r2_key, image_file_name, sort_order, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending_generation')`
-    )
-      .bind(user.id, user.active_salon_id, categoryId, key, fileName, nextOrder)
-      .run()
-    nextOrder += 1
-  }
-
-  return c.redirect(`/blog/template?category=${categoryId}`)
-})
-
-blog.post('/blog/template/articles/:id/delete', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  const article = await c.env.DB.prepare('SELECT category_id, image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
-    .bind(id, user.id, user.active_salon_id)
-    .first<{ category_id: number | null; image_r2_key: string | null }>()
-  if (!article) return c.redirect('/blog/template')
-
-  if (article.image_r2_key) await c.env.STYLE_IMAGES.delete(article.image_r2_key).catch(() => {})
-  await c.env.DB.prepare('DELETE FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
-    .bind(id, user.id, user.active_salon_id)
-    .run()
-  return c.redirect(`/blog/template?category=${article.category_id || ''}`)
-})
-
 blog.get('/blog/article/:id/image', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
@@ -889,120 +775,531 @@ async function generateOneArticle(
     .run()
 }
 
-blog.post('/api/blog/categories/:id/generate-preview', async (c) => {
+// ---------- 3. 投稿記事一覧 ----------
+
+// ---------- 記事編集フォーム(新規作成・編集・AI生成後の確認で共通利用) ----------
+
+type ArticleFormDetail = {
+  id: number
+  title: string | null
+  body: string | null
+  image_r2_key: string | null
+  category_id: number | null
+  stylist_id: number | null
+  coupon_id: number | null
+  month_tags_json: string
+  footer_enabled_flag: number
+  auto_post_enabled_flag: number
+  status: string
+}
+
+async function loadArticleFormMasters(c: AppContext, user: AppUser) {
+  const [categories, stylists, coupons] = await Promise.all([
+    c.env.DB.prepare(
+      'SELECT id, name, hpb_category_value FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
+    )
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string; hpb_category_value: string | null }>(),
+    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string }>(),
+    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
+      .bind(user.id, user.active_salon_id)
+      .all<{ id: number; name: string }>()
+  ])
+  return { categories: categories.results || [], stylists: stylists.results || [], coupons: coupons.results || [] }
+}
+
+function ArticleForm({
+  mode,
+  detail,
+  categories,
+  stylists,
+  coupons,
+  generatedNotice
+}: {
+  mode: 'new' | 'edit'
+  detail: ArticleFormDetail | null
+  categories: { id: number; name: string; hpb_category_value: string | null }[]
+  stylists: { id: number; name: string }[]
+  coupons: { id: number; name: string }[]
+  generatedNotice?: boolean
+}) {
+  const monthTags: number[] = detail ? JSON.parse(detail.month_tags_json || '[]') : []
+  const isApproved = detail?.status === 'approved'
+  const submitLabel = mode === 'new' || generatedNotice ? '投稿一覧に追加' : '保存する'
+
+  return (
+    <div class="space-y-6">
+      {generatedNotice && (
+        <div class="bg-pink-50 border border-pink-200 text-pink-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-wand-magic-sparkles mr-2"></i>AIが記事を生成しました。内容を確認・編集して「{submitLabel}」を押してください。
+        </div>
+      )}
+      {isApproved && (
+        <div class="bg-amber-50 border border-amber-200 text-amber-700 text-sm rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">
+          <span>承認済みの記事です。編集するには先に承認を解除してください。</span>
+          <button type="button" id="article-unapprove-btn" data-article-id={detail?.id} class="text-sm font-semibold underline">
+            承認を解除
+          </button>
+        </div>
+      )}
+
+      <form
+        method="post"
+        action={mode === 'new' ? '/blog/articles/new' : `/blog/articles/${detail?.id}/edit`}
+        enctype="multipart/form-data"
+        class="space-y-6"
+      >
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="font-semibold mb-3">
+            <i class="fas fa-image mr-2 text-pink-500"></i>画像
+          </p>
+          {detail?.image_r2_key && (
+            <img src={`/blog/article/${detail.id}/image`} class="w-32 h-32 object-cover rounded-lg bg-gray-50 mb-3" />
+          )}
+          <div class="flex items-center gap-3 flex-wrap">
+            <input type="file" name="image" accept="image/*" disabled={isApproved} class="text-sm" />
+            {detail?.id && (
+              <button
+                type="button"
+                id="article-regen-description-btn"
+                data-article-id={detail.id}
+                disabled={isApproved}
+                class="text-xs text-pink-600 hover:underline disabled:opacity-50"
+              >
+                <i class="fas fa-wand-magic-sparkles mr-1"></i>画像の説明をAIで再生成
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
+            <input
+              type="text"
+              name="title"
+              value={detail?.title || ''}
+              maxlength={25}
+              disabled={isApproved}
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            />
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">本文</label>
+            <textarea name="body" rows={10} disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              {detail?.body || ''}
+            </textarea>
+            {detail?.id && (
+              <button
+                type="button"
+                id="article-regen-body-btn"
+                data-article-id={detail.id}
+                disabled={isApproved}
+                class="mt-1 text-xs text-pink-600 hover:underline disabled:opacity-50"
+              >
+                <i class="fas fa-wand-magic-sparkles mr-1"></i>本文をAIで再生成
+              </button>
+            )}
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
+              <select name="category_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                <option value="">選択しない</option>
+                {categories.map((cat) => (
+                  <option value={cat.id} selected={detail?.category_id === cat.id}>
+                    {cat.name}
+                    {!cat.hpb_category_value ? '(HPB未設定)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">投稿者</label>
+              <select name="stylist_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                <option value="">選択しない</option>
+                {stylists.map((st) => (
+                  <option value={st.id} selected={detail?.stylist_id === st.id}>{st.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">クーポン</label>
+              <select name="coupon_id" disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                <option value="">選択しない</option>
+                {coupons.map((cp) => (
+                  <option value={cp.id} selected={detail?.coupon_id === cp.id}>{cp.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">
+              月タグ<span class="text-xs text-gray-400 ml-2">選んだ月だけ投稿対象になります(未選択なら毎月対象)</span>
+            </label>
+            <div class="flex flex-wrap gap-2">
+              {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                <label class="flex items-center gap-1 text-sm border border-gray-200 rounded px-2 py-1">
+                  <input
+                    type="checkbox"
+                    name="month_tags"
+                    value={m}
+                    checked={monthTags.includes(m)}
+                    disabled={isApproved}
+                    class="accent-pink-500"
+                  />
+                  {m}月
+                </label>
+              ))}
+            </div>
+          </div>
+          <div class="flex items-center gap-6 pt-3 border-t border-gray-100">
+            <label class="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="footer_enabled"
+                checked={detail ? detail.footer_enabled_flag === 1 : true}
+                disabled={isApproved}
+                class="accent-pink-500"
+              />
+              フッターを追加する
+            </label>
+            <label class="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                name="auto_post_enabled"
+                checked={detail ? detail.auto_post_enabled_flag === 1 : true}
+                disabled={isApproved}
+                class="accent-pink-500"
+              />
+              自動投稿の対象にする
+            </label>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={isApproved}
+            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-50"
+          >
+            {submitLabel}
+          </button>
+          <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
+            一覧に戻る
+          </a>
+          {detail && !isApproved && (
+            <button
+              type="button"
+              id="article-approve-btn"
+              data-article-id={detail.id}
+              class="ml-auto text-sm px-5 py-2 rounded-lg bg-gray-800 hover:bg-gray-900 text-white font-semibold"
+            >
+              承認する
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  )
+}
+
+function parseArticleForm(body: Record<string, any>) {
+  const monthTagsRaw = body.month_tags
+  const monthTagsList = Array.isArray(monthTagsRaw) ? monthTagsRaw : monthTagsRaw ? [monthTagsRaw] : []
+  const monthTags = monthTagsList.map((v) => Number(v)).filter((n) => Number.isInteger(n) && n >= 1 && n <= 12)
+
+  return {
+    title: String(body.title || '').trim().slice(0, 25),
+    body: String(body.body || '').trim(),
+    categoryId: body.category_id ? Number(body.category_id) : null,
+    stylistId: body.stylist_id ? Number(body.stylist_id) : null,
+    couponId: body.coupon_id ? Number(body.coupon_id) : null,
+    monthTags,
+    footerEnabled: body.footer_enabled === 'on' || body.footer_enabled === 'true',
+    autoPostEnabled: body.auto_post_enabled === 'on' || body.auto_post_enabled === 'true'
+  }
+}
+
+async function saveArticleImageIfProvided(c: AppContext, user: AppUser, articleId: number, body: Record<string, any>) {
+  const file = body.image as File | undefined
+  if (!file || !(file instanceof File) || file.size === 0) return
+
+  const arrayBuffer = await file.arrayBuffer()
+  const { buffer, contentType } = await processBlogArticleImage(arrayBuffer)
+  const key = `blog/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
+  const fileName = `${(file.name || 'blog').replace(/\.[^./\\]+$/, '')}.jpg`
+
+  const existing = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ?')
+    .bind(articleId)
+    .first<{ image_r2_key: string | null }>()
+  if (existing?.image_r2_key) await c.env.STYLE_IMAGES.delete(existing.image_r2_key).catch(() => {})
+
+  await c.env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
+  // 新しい画像に差し替えたら、古い画像用のAI説明文は意味を持たなくなるためクリアする
+  await c.env.DB.prepare('UPDATE blog_articles SET image_r2_key = ?, image_file_name = ?, image_description = NULL WHERE id = ?')
+    .bind(key, fileName, articleId)
+    .run()
+}
+
+blog.get('/blog/articles/new', async (c) => {
+  const user = c.get('user')
+  const { categories, stylists, coupons } = await loadArticleFormMasters(c, user)
+  return c.render(
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      reviewEnabled={user.review_enabled !== 0}
+      active="blog-articles"
+      salonName={user.salon_name}
+      title="記事の新規作成"
+      styleEnabled={user.style_enabled !== 0}
+    >
+      <ArticleForm mode="new" detail={null} categories={categories} stylists={stylists} coupons={coupons} />
+    </PageLayout>,
+    { title: '記事の新規作成' }
+  )
+})
+
+blog.post('/blog/articles/new', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const parsed = parseArticleForm(body)
+
+  const nextOrderRow = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ n: number }>()
+
+  const insert = await c.env.DB.prepare(
+    `INSERT INTO blog_articles (
+       user_id, salon_id, category_id, stylist_id, coupon_id, title, body, month_tags_json,
+       footer_enabled_flag, auto_post_enabled_flag, status, sort_order
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unapproved', ?)`
+  )
+    .bind(
+      user.id, user.active_salon_id, parsed.categoryId, parsed.stylistId, parsed.couponId,
+      parsed.title, parsed.body, JSON.stringify(parsed.monthTags),
+      parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
+    )
+    .run()
+
+  const articleId = Number(insert.meta.last_row_id)
+  await saveArticleImageIfProvided(c, user, articleId, body)
+
+  return c.redirect('/blog/articles?saved=1')
+})
+
+blog.get('/blog/articles/:id/edit', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
+  const detail = await c.env.DB.prepare(
+    `SELECT id, title, body, image_r2_key, category_id, stylist_id, coupon_id, month_tags_json, footer_enabled_flag, auto_post_enabled_flag, status
+     FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?`
+  )
+    .bind(id, user.id, user.active_salon_id)
+    .first<ArticleFormDetail>()
+  if (!detail) return c.notFound()
+
+  const { categories, stylists, coupons } = await loadArticleFormMasters(c, user)
+
+  return c.render(
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      reviewEnabled={user.review_enabled !== 0}
+      active="blog-articles"
+      salonName={user.salon_name}
+      title="記事の編集"
+      styleEnabled={user.style_enabled !== 0}
+    >
+      <ArticleForm
+        mode="edit"
+        detail={detail}
+        categories={categories}
+        stylists={stylists}
+        coupons={coupons}
+        generatedNotice={c.req.query('generated') === '1'}
+      />
+      <script src="/static/blog-article-form.js"></script>
+    </PageLayout>,
+    { title: '記事の編集' }
+  )
+})
+
+blog.post('/blog/articles/:id/edit', async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+
+  const existing = await c.env.DB.prepare('SELECT status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .first<{ status: string }>()
+  if (!existing) return c.notFound()
+  if (existing.status === 'approved') {
+    return c.redirect(`/blog/articles/${id}/edit`)
+  }
+
+  const body = await c.req.parseBody()
+  const parsed = parseArticleForm(body)
+
+  await c.env.DB.prepare(
+    `UPDATE blog_articles SET
+       category_id=?, stylist_id=?, coupon_id=?, title=?, body=?, month_tags_json=?,
+       footer_enabled_flag=?, auto_post_enabled_flag=?, updated_at=CURRENT_TIMESTAMP
+     WHERE id=? AND user_id=? AND salon_id=?`
+  )
+    .bind(
+      parsed.categoryId, parsed.stylistId, parsed.couponId, parsed.title, parsed.body,
+      JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0,
+      id, user.id, user.active_salon_id
+    )
+    .run()
+
+  await saveArticleImageIfProvided(c, user, id, body)
+
+  return c.redirect('/blog/articles?saved=1')
+})
+
+// ---------- 4. AI記事生成 ----------
+// 流れ: テンプレート(記事カテゴリ)を選択→画像をアップロード→AIが1本生成→
+// 記事編集フォーム(新規作成/編集と共通)へ遷移して内容を確認・編集→保存すると
+// 投稿記事一覧に反映される。生成した時点でblog_articles行(status='unapproved')
+// を作成するため、途中で編集画面を離れても生成結果は失われない。
+
+blog.get('/blog/generate', async (c) => {
+  const user = c.get('user')
+  const { results: categories } = await c.env.DB.prepare(
+    'SELECT id, name, hpb_category_value FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ id: number; name: string; hpb_category_value: string | null }>()
+
+  const catList = categories || []
+  const error = c.req.query('error')
+
+  return c.render(
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      reviewEnabled={user.review_enabled !== 0}
+      active="blog-generate"
+      salonName={user.salon_name}
+      title="AI記事生成"
+      styleEnabled={user.style_enabled !== 0}
+    >
+      {error && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-triangle-exclamation mr-2"></i>{decodeURIComponent(error)}
+        </div>
+      )}
+
+      {catList.length === 0 ? (
+        <div class="bg-white rounded-xl border border-gray-100 p-6 text-sm text-gray-400">
+          まだ記事カテゴリがありません。先に
+          <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
+          で記事カテゴリを作成してください。
+        </div>
+      ) : (
+        <form method="post" action="/blog/generate" enctype="multipart/form-data" class="bg-white rounded-xl border border-gray-100 p-6 space-y-5">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">テンプレート(記事カテゴリ)</label>
+            <select name="category_id" required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              {catList.map((cat) => (
+                <option value={cat.id}>
+                  {cat.name}
+                  {!cat.hpb_category_value ? '(HPB未設定)' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">画像</label>
+            <input type="file" name="image" accept="image/*" required class="text-sm" />
+            <p class="text-xs text-gray-400 mt-1">この画像の内容をAIが読み取り、記事の材料にします</p>
+          </div>
+          <button id="blog-generate-btn" type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+            <i class="fas fa-wand-magic-sparkles mr-1"></i>記事を生成する
+          </button>
+          <p id="blog-generate-status" class="text-sm text-gray-500"></p>
+        </form>
+      )}
+
+      <script src="/static/blog-generate.js"></script>
+    </PageLayout>,
+    { title: 'AI記事生成' }
+  )
+})
+
+blog.post('/blog/generate', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+
+  const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
     'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
-    .bind(id, user.id, user.active_salon_id)
+    .bind(categoryId, user.id, user.active_salon_id)
     .first<CategoryRow>()
-  if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
+  if (!category) return c.redirect(`/blog/generate?error=${encodeURIComponent('記事カテゴリを選択してください')}`)
+
+  const file = body.image as File | undefined
+  if (!file || !(file instanceof File) || file.size === 0) {
+    return c.redirect(`/blog/generate?error=${encodeURIComponent('画像を選択してください')}`)
+  }
+
+  const nextOrderRow = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ n: number }>()
+
+  const arrayBuffer = await file.arrayBuffer()
+  const { buffer, contentType } = await processBlogArticleImage(arrayBuffer)
+  const key = `blog/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
+  const fileName = `${(file.name || 'blog').replace(/\.[^./\\]+$/, '')}.jpg`
+  await c.env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
 
   try {
-    const sampleArticle = await c.env.DB.prepare(
-      `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? ORDER BY sort_order ASC LIMIT 1`
-    )
-      .bind(user.id, user.active_salon_id, id)
-      .first<{ id: number; image_description: string | null }>()
+    const imageDescription = await generateImageDescription(c.env, Buffer.from(buffer))
 
     const profile = await getSalonProfileForGeneration(c, user)
     const bodyMaxChars = await computeBodyMaxChars(c, user)
     const stylistRow = category.default_stylist_id
       ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
       : null
+    const seasonMonths = parseSeasonMonths(category.season_months_json)
 
     const result = await generateArticleContent(c.env, {
       categoryName: category.name,
       keyMessage: category.key_message,
       bodyPrompt: category.body_prompt,
-      imageDescription: sampleArticle?.image_description || null,
+      imageDescription,
       stylistName: stylistRow?.name || null,
       couponName: null,
       bodyMaxChars,
       profile,
       styleMode: (category.style_mode as any) || 'params',
-      seasonMonths: parseSeasonMonths(category.season_months_json)
+      seasonMonths
     })
-    return c.json({ success: true, ...result })
-  } catch (err: any) {
-    return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
-  }
-})
 
-blog.post('/api/blog/categories/:id/generate-batch', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
-  )
-    .bind(id, user.id, user.active_salon_id)
-    .first<CategoryRow>()
-  if (!category) return c.json({ error: 'カテゴリが見つかりません' }, 404)
-
-  const { results: targets } = await c.env.DB.prepare(
-    `SELECT id, image_description FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? AND status = 'pending_generation' ORDER BY sort_order ASC`
-  )
-    .bind(user.id, user.active_salon_id, id)
-    .all<{ id: number; image_description: string | null }>()
-
-  const list = targets || []
-  if (list.length === 0) return c.json({ success: true, count: 0 })
-
-  for (const article of list) {
-    await c.env.DB.prepare(`UPDATE blog_articles SET status = 'generating' WHERE id = ? AND user_id = ? AND salon_id = ?`)
-      .bind(article.id, user.id, user.active_salon_id)
+    const insert = await c.env.DB.prepare(
+      `INSERT INTO blog_articles (
+         user_id, salon_id, category_id, stylist_id, image_r2_key, image_file_name, image_description,
+         title, body, month_tags_json, footer_enabled_flag, auto_post_enabled_flag, status, sort_order
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 'unapproved', ?)`
+    )
+      .bind(
+        user.id, user.active_salon_id, categoryId, category.default_stylist_id || null, key, fileName, imageDescription,
+        result.title, result.body, JSON.stringify(seasonMonths), nextOrderRow?.n ?? 0
+      )
       .run()
+
+    return c.redirect(`/blog/articles/${insert.meta.last_row_id}/edit?generated=1`)
+  } catch (err: any) {
+    await c.env.STYLE_IMAGES.delete(key).catch(() => {})
+    return c.redirect(`/blog/generate?error=${encodeURIComponent(String(err?.message || err) || 'AI生成に失敗しました')}`)
   }
-
-  // ALBのアイドルタイムアウト内にレスポンスを返すため、生成本体はawaitせず
-  // バックグラウンドで進める(進捗はクライアント側のポーリングで確認する)。
-  void (async () => {
-    for (const article of list) {
-      // 説明文が未設定の画像は、AI生成前にvisionで説明文を作っておく
-      if (!article.image_description) {
-        try {
-          const row = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ?').bind(article.id).first<{ image_r2_key: string | null }>()
-          if (row?.image_r2_key) {
-            const obj = await c.env.STYLE_IMAGES.get(row.image_r2_key)
-            if (obj) {
-              const buf = Buffer.from(await obj.arrayBuffer())
-              const desc = await generateImageDescription(c.env, buf)
-              article.image_description = desc
-              await c.env.DB.prepare('UPDATE blog_articles SET image_description = ? WHERE id = ?').bind(desc, article.id).run()
-            }
-          }
-        } catch (err) {
-          console.error(`画像説明の生成に失敗しました(article=${article.id}):`, err)
-        }
-      }
-
-      try {
-        await generateOneArticle(c, user, category, article)
-      } catch (err: any) {
-        await c.env.DB.prepare(`UPDATE blog_articles SET status = 'pending_generation', last_error = ? WHERE id = ?`)
-          .bind(String(err?.message || err).slice(0, 500), article.id)
-          .run()
-      }
-    }
-  })()
-
-  return c.json({ success: true, count: list.length })
 })
-
-// 一覧側で進捗をポーリングするための軽量ステータスAPI
-blog.get('/api/blog/categories/:id/generation-status', async (c) => {
-  const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  const { results } = await c.env.DB.prepare(
-    `SELECT status, COUNT(*) as cnt FROM blog_articles WHERE user_id = ? AND salon_id = ? AND category_id = ? GROUP BY status`
-  )
-    .bind(user.id, user.active_salon_id, id)
-    .all<{ status: string; cnt: number }>()
-  return c.json({ success: true, counts: results || [] })
-})
-
-// ---------- 3. 投稿記事一覧 ----------
 
 type ArticleListRow = {
   id: number
@@ -1207,11 +1504,11 @@ blog.get('/blog/articles', async (c) => {
         <div class="mb-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <div class="flex items-center gap-2 flex-wrap">
-              <div class="flex items-center gap-1 border border-gray-200 rounded-lg p-0.5">
-                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="all">すべて</button>
-                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="on">ONのみ</button>
-                <button type="button" class="blog-filter-btn text-xs font-semibold px-2 py-1 rounded" data-filter="off">OFFのみ</button>
-              </div>
+              <select id="blog-filter-select" class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2">
+                <option value="all">すべて</option>
+                <option value="on">ONのみ</option>
+                <option value="off">OFFのみ</option>
+              </select>
               <select id="blog-category-filter" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
                 <option value="">すべての記事カテゴリ</option>
                 {(categoryOptions || []).map((cat) => (
@@ -1223,20 +1520,12 @@ blog.get('/blog/articles', async (c) => {
                 <option value="season">季節柄でソート</option>
               </select>
             </div>
-            <span class="text-xs text-gray-400">生成した順番に表示しています</span>
-          </div>
-
-          <div class="flex items-center gap-4 flex-wrap">
-            <div class="flex items-center gap-1.5">
-              <span class="text-xs text-gray-400">承認チェック</span>
-              <button type="button" id="blog-select-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600">全選択</button>
-              <button type="button" id="blog-deselect-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-gray-300 hover:bg-gray-50 text-gray-600">全解除</button>
-            </div>
-            <div class="flex items-center gap-1.5">
-              <span class="text-xs text-blue-500"><i class="fas fa-paper-plane mr-1"></i>自動投稿</span>
-              <button type="button" id="blog-auto-post-select-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 text-blue-600">全てON</button>
-              <button type="button" id="blog-auto-post-deselect-all-btn" class="text-xs font-semibold px-2 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 text-blue-600">全てOFF</button>
-            </div>
+            <a
+              href="/blog/articles/new"
+              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap flex-shrink-0"
+            >
+              <i class="fas fa-plus mr-1"></i>新規作成
+            </a>
           </div>
         </div>
 
@@ -1252,60 +1541,104 @@ blog.get('/blog/articles', async (c) => {
           <button type="button" id="blog-bulk-coupon-btn" class="bg-white/10 hover:bg-white/20 text-xs font-semibold px-3 py-1.5 rounded-lg">設定</button>
         </div>
 
-        <div id="blog-article-list" class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
-          {articles.length === 0 && <p class="text-sm text-gray-400 p-6">まだ記事がありません。生成テンプレートから写真をアップロードしてください。</p>}
-          {articles.map((a) => (
-            <div
-              class="flex items-start gap-3 p-4"
-              data-article-id={a.id}
-              data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
-              data-category-id={a.category_id ?? ''}
-              data-month-tags={a.month_tags_json || '[]'}
-            >
-              <input type="checkbox" class="blog-article-checkbox mt-1 accent-pink-500" data-article-id={a.id} />
-              <span class="text-xs text-gray-300 font-mono w-6 text-center mt-1.5 flex-none">{a.no}</span>
-              <label class="flex flex-col items-center mt-1 flex-none" title="自動投稿の対象">
-                <input
-                  type="checkbox"
-                  class="blog-auto-post-toggle accent-pink-500"
-                  data-article-id={a.id}
-                  checked={a.auto_post_enabled_flag === 1}
-                />
-                <span class="text-[10px] text-gray-400 mt-0.5">自動投稿</span>
-              </label>
-              {a.image_r2_key ? (
-                <img src={`/blog/article/${a.id}/image`} class="w-14 h-14 rounded-lg object-cover bg-gray-50 flex-none" />
-              ) : (
-                <div class="w-14 h-14 rounded-lg bg-gray-50 flex-none"></div>
-              )}
-              <div class="flex-1 min-w-0">
-                <p class="font-semibold text-sm truncate">{a.title || '(未生成)'}</p>
-                <p class="text-xs text-gray-400 flex gap-2 flex-wrap mt-1">
-                  <span>{a.category_name || '-'}</span>
-                  <span>{a.stylist_name || '-'}</span>
-                  <span>{a.coupon_name || '-'}</span>
-                  <span
-                    class={
-                      'px-1.5 py-0.5 rounded ' +
-                      (a.status === 'approved'
-                        ? 'bg-green-50 text-green-600'
-                        : a.status === 'unapproved'
-                        ? 'bg-pink-50 text-pink-600'
-                        : a.status === 'posting_failed'
-                        ? 'bg-red-50 text-red-600'
-                        : 'bg-gray-100 text-gray-500')
-                    }
-                  >
-                    {ARTICLE_STATUS_LABEL[a.status] || a.status}
-                  </span>
-                  {a.last_posted_at && <span>最終投稿 {a.last_posted_at}(投稿{a.post_count}回)</span>}
-                </p>
-              </div>
-              <button type="button" class="blog-open-article-btn text-xs text-pink-600 hover:underline flex-none" data-article-id={a.id}>
-                開く
-              </button>
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          {articles.length > 0 && (
+            <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
+              <span class="w-5 flex-shrink-0"></span>
+              <span class="w-10 flex-shrink-0 text-center">No</span>
+              <span class="w-5 flex-shrink-0 text-center" title="承認チェック">承認</span>
+              <span class="w-5 flex-shrink-0 text-center" title="自動投稿の対象">自動</span>
+              <span class="w-20 flex-shrink-0">画像</span>
+              <span class="flex-1 min-w-0">記事タイトル</span>
+              <span class="flex-shrink-0">操作</span>
             </div>
-          ))}
+          )}
+          {articles.length === 0 ? (
+            <p class="text-sm text-gray-400 text-center py-10">
+              まだ記事がありません。「新規作成」または「AI記事生成」から追加してください。
+            </p>
+          ) : (
+            <div id="blog-article-list" class="divide-y divide-gray-100">
+              {articles.map((a) => (
+                <div
+                  class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3"
+                  data-article-id={a.id}
+                  data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
+                  data-category-id={a.category_id ?? ''}
+                  data-month-tags={a.month_tags_json || '[]'}
+                >
+                  <span class="blog-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 px-1" data-article-id={a.id}>
+                    <i class="fas fa-grip-lines"></i>
+                  </span>
+                  <input
+                    type="number"
+                    min="1"
+                    value={a.no}
+                    class="blog-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    data-article-id={a.id}
+                  />
+                  <input type="checkbox" class="blog-article-checkbox w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0" data-article-id={a.id} title="承認チェック" />
+                  <input
+                    type="checkbox"
+                    class="blog-auto-post-toggle w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
+                    data-article-id={a.id}
+                    checked={a.auto_post_enabled_flag === 1}
+                    title="自動投稿の対象"
+                  />
+                  {a.image_r2_key ? (
+                    <img src={`/blog/article/${a.id}/image`} class="w-10 h-14 md:w-16 md:h-16 object-cover rounded-lg bg-gray-50 border border-gray-200 flex-shrink-0" />
+                  ) : (
+                    <div class="w-10 h-14 md:w-16 md:h-16 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300 flex-shrink-0">
+                      <i class="fas fa-image text-xl"></i>
+                    </div>
+                  )}
+                  <div class="flex-1 min-w-0">
+                    <a href={`/blog/articles/${a.id}/edit`} class="block truncate font-medium text-gray-700 hover:text-pink-600">
+                      {a.title || '（未生成）'}
+                    </a>
+                    <p class="text-xs text-gray-400 flex gap-2 flex-wrap mt-0.5">
+                      <span>{a.category_name || '-'}</span>
+                      <span>{a.stylist_name || '-'}</span>
+                      <span>{a.coupon_name || '-'}</span>
+                      <span
+                        class={
+                          'px-1.5 py-0.5 rounded ' +
+                          (a.status === 'approved'
+                            ? 'bg-green-50 text-green-600'
+                            : a.status === 'unapproved'
+                            ? 'bg-pink-50 text-pink-600'
+                            : a.status === 'posting_failed'
+                            ? 'bg-red-50 text-red-600'
+                            : 'bg-gray-100 text-gray-500')
+                        }
+                      >
+                        {ARTICLE_STATUS_LABEL[a.status] || a.status}
+                      </span>
+                      {a.last_posted_at && <span>最終投稿 {a.last_posted_at}(投稿{a.post_count}回)</span>}
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-1 md:gap-2 flex-shrink-0">
+                    <a
+                      href={`/blog/articles/${a.id}/edit`}
+                      class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"
+                    >
+                      <i class="fas fa-pen md:mr-1"></i>
+                      <span class="hidden md:inline">編集</span>
+                    </a>
+                    <button
+                      type="button"
+                      class="blog-delete-btn text-xs font-semibold text-red-500 hover:bg-red-50 border border-red-200 rounded w-8 h-8 md:w-auto md:h-auto flex items-center justify-center md:px-3 md:py-1.5"
+                      data-article-id={a.id}
+                      title="削除"
+                    >
+                      <i class="fas fa-xmark md:mr-1"></i>
+                      <span class="hidden md:inline">削除</span>
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 
@@ -1326,64 +1659,6 @@ blog.get('/blog/articles', async (c) => {
         <p class="text-xs text-gray-400 mt-2">
           ※Phase 1では実際の自動投稿はまだ行われません。承認済みの記事を投稿順に1日1本ずつ投稿した場合の見込みを表示しています。
         </p>
-      </div>
-
-      {/* 記事確認モーダル */}
-      <div id="blog-reviewer" class="hidden fixed inset-0 bg-black/50 z-50 items-center justify-center p-4">
-        <div class="bg-white rounded-xl w-full max-w-3xl max-h-full overflow-auto">
-          <div class="flex items-center gap-3 px-5 py-3 border-b border-gray-100">
-            <span class="text-xs text-gray-400 font-mono">No.<span id="rv-no"></span></span>
-            <span id="rv-status" class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500"></span>
-            <button type="button" id="rv-close-btn" class="ml-auto text-gray-400 hover:text-gray-600"><i class="fas fa-xmark"></i></button>
-          </div>
-          <div class="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-0">
-            <div class="p-5 border-r border-gray-100 bg-gray-50">
-              <img id="rv-image" class="w-full aspect-square object-cover rounded-lg bg-white mb-3" />
-              <label class="block text-xs font-medium text-gray-500 mb-1">画像の説明</label>
-              <input id="rv-description" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs mb-2" />
-              <button type="button" id="rv-regen-description-btn" class="text-xs text-pink-600 hover:underline">AIで再生成</button>
-            </div>
-            <div class="p-5 space-y-3">
-              <div>
-                <input id="rv-title" class="w-full text-lg font-semibold border-0 border-b border-gray-200 px-0 py-1 focus:outline-none focus:border-pink-400" />
-                <p class="text-xs text-gray-400 mt-1"><span id="rv-title-len">0</span>/25文字</p>
-              </div>
-              <div>
-                <textarea id="rv-body" rows={8} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"></textarea>
-                <p class="text-xs text-gray-400 mt-1"><span id="rv-body-len">0</span>/1000文字(フッター込み) / 改行<span id="rv-body-lines">0</span>行</p>
-              </div>
-              <details>
-                <summary class="text-xs text-gray-400 cursor-pointer">フッターを見る</summary>
-                <pre id="rv-footer" class="text-xs text-gray-500 bg-gray-50 rounded-lg p-3 mt-2 whitespace-pre-wrap"></pre>
-              </details>
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">カテゴリ</label>
-                  <select id="rv-category" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"></select>
-                  <p id="rv-hpb-category-hint" class="text-xs mt-1"></p>
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">投稿者</label>
-                  <select id="rv-stylist" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"></select>
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">クーポン</label>
-                  <select id="rv-coupon" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-sm"></select>
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-gray-500 mb-1">月タグ</label>
-                  <div id="rv-month-tags" class="flex flex-wrap gap-1"></div>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="flex items-center gap-2 px-5 py-3 border-t border-gray-100">
-            <button type="button" id="rv-regen-body-btn" class="text-sm px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">本文を再生成</button>
-            <button type="button" id="rv-save-btn" class="text-sm px-4 py-2 rounded-lg border border-gray-300 hover:bg-gray-50">保存</button>
-            <button type="button" id="rv-approve-btn" class="ml-auto text-sm px-5 py-2 rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-semibold">承認する</button>
-            <button type="button" id="rv-unapprove-btn" class="hidden text-sm px-4 py-2 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-50">承認を解除</button>
-          </div>
-        </div>
       </div>
 
       <script src="/static/blog-articles.js"></script>
@@ -1459,93 +1734,50 @@ blog.post('/api/blog/articles/bulk-set-coupon', async (c) => {
   return c.json({ success: true })
 })
 
-blog.get('/api/blog/articles/:id', async (c) => {
+blog.post('/blog/articles/:id/delete', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
+  const article = await c.env.DB.prepare('SELECT image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .first<{ image_r2_key: string | null }>()
+  if (!article) return c.json({ success: false, error: '記事が見つかりません' }, 404)
 
-  const [article, categories, stylists, coupons, profile, salon] = await Promise.all([
-    c.env.DB.prepare(
-      `SELECT id, category_id, title, body, image_description, coupon_id, stylist_id, month_tags_json, status
-       FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?`
-    )
-      .bind(id, user.id, user.active_salon_id)
-      .first<{
-        id: number
-        category_id: number | null
-        title: string | null
-        body: string | null
-        image_description: string | null
-        coupon_id: number | null
-        stylist_id: number | null
-        month_tags_json: string
-        status: string
-      }>(),
-    c.env.DB.prepare('SELECT id, name, hpb_category_value FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC')
-      .bind(user.id, user.active_salon_id)
-      .all<{ id: number; name: string; hpb_category_value: string | null }>(),
-    c.env.DB.prepare('SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
-      .bind(user.id, user.active_salon_id)
-      .all<{ id: number; name: string }>(),
-    c.env.DB.prepare('SELECT id, name FROM coupons WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC')
-      .bind(user.id, user.active_salon_id)
-      .all<{ id: number; name: string }>(),
-    getSalonProfile(c, user),
-    getSalonForProfile(c, user)
-  ])
-
-  if (!article) return c.json({ error: '記事が見つかりません' }, 404)
-
-  return c.json({
-    success: true,
-    article,
-    categories: categories.results || [],
-    stylists: stylists.results || [],
-    coupons: coupons.results || [],
-    footer: buildFooterText(salon?.salon_name || null, profile)
-  })
+  if (article.image_r2_key) await c.env.STYLE_IMAGES.delete(article.image_r2_key).catch(() => {})
+  await c.env.DB.prepare('DELETE FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+    .bind(id, user.id, user.active_salon_id)
+    .run()
+  return c.json({ success: true })
 })
 
-blog.patch('/api/blog/articles/:id', async (c) => {
+// No.欄の手入力・ドラッグ並べ替え用(style.tsxの/api/style/reorderと同じ方式)。
+// 対象記事を指定位置(1始まり)へ移動し、残りをsort_orderへ連番で書き戻す。
+blog.post('/api/blog/articles/reorder', async (c) => {
   const user = c.get('user')
-  const id = Number(c.req.param('id'))
-  const body = await c.req.json<{
-    title?: string
-    body?: string
-    image_description?: string
-    category_id?: number | null
-    stylist_id?: number | null
-    coupon_id?: number | null
-    month_tags?: number[]
-  }>()
+  const { articleId, newPosition } = await c.req.json<{ articleId: number; newPosition: number }>()
 
-  const existing = await c.env.DB.prepare('SELECT status FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
-    .bind(id, user.id, user.active_salon_id)
-    .first<{ status: string }>()
-  if (!existing) return c.json({ success: false, error: '記事が見つかりません' }, 404)
-  if (existing.status === 'approved') {
-    return c.json({ success: false, error: '承認済みの記事は編集できません。先に承認を解除してください' }, 400)
+  const { results } = await c.env.DB.prepare(
+    'SELECT id FROM blog_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC'
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ id: number }>()
+
+  const ids = (results || []).map((r) => r.id)
+  const currentIndex = ids.indexOf(articleId)
+  if (currentIndex === -1) {
+    return c.json({ success: false, error: '対象の記事が見つかりません' }, 404)
   }
 
-  await c.env.DB.prepare(
-    `UPDATE blog_articles SET
-       title = COALESCE(?, title), body = COALESCE(?, body), image_description = COALESCE(?, image_description),
-       category_id = ?, stylist_id = ?, coupon_id = ?, month_tags_json = COALESCE(?, month_tags_json),
-       updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND user_id = ? AND salon_id = ?`
-  )
-    .bind(
-      body.title ?? null,
-      body.body ?? null,
-      body.image_description ?? null,
-      body.category_id ?? null,
-      body.stylist_id ?? null,
-      body.coupon_id ?? null,
-      body.month_tags ? JSON.stringify(body.month_tags) : null,
-      id,
-      user.id,
-      user.active_salon_id
+  ids.splice(currentIndex, 1)
+  const targetIndex = Math.min(Math.max(Math.trunc(newPosition) - 1, 0), ids.length)
+  ids.splice(targetIndex, 0, articleId)
+
+  for (let i = 0; i < ids.length; i++) {
+    await c.env.DB.prepare(
+      'UPDATE blog_articles SET sort_order = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
     )
-    .run()
+      .bind(i, ids[i], user.id, user.active_salon_id)
+      .run()
+  }
 
   return c.json({ success: true })
 })
