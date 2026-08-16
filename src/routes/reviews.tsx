@@ -10,8 +10,7 @@
 import { Hono, type Context } from 'hono'
 import { requireAuth, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
-import { getMonthlyTrend, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
-import { fetchHpbReviewList } from '../lib/ranking-scraper'
+import { getTrendSnapshots, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
 import type { Bindings, AppUser } from '../types'
 
 const reviews = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -71,21 +70,8 @@ reviews.get('/reviews/trend', async (c) => {
   const state = await getBackfillState(c, salonId)
   const backfillDone = !!state?.backfill_completed_at
 
-  const trend = backfillDone ? await getMonthlyTrend(c.env, salonId) : []
-
-  let hpbAverageScore: number | null = null
-  if (backfillDone) {
-    const salon = await c.env.DB.prepare('SELECT hpb_sln_id FROM salonboard_salons WHERE id = ?')
-      .bind(salonId)
-      .first<{ hpb_sln_id: string | null }>()
-    if (salon?.hpb_sln_id) {
-      // ページ1件だけ取得すれば「サロン平均」バッジが得られる(参考表示用、
-      // 一覧全件の取得は不要)。取得に失敗しても致命的ではないので握りつぶす。
-      hpbAverageScore = await fetchHpbReviewList(salon.hpb_sln_id, { maxPages: 1, proxyUrl: c.env.RANKING_PROXY_URL })
-        .then((r) => r.salonAverageScore)
-        .catch(() => null)
-    }
-  }
+  const trend = backfillDone ? await getTrendSnapshots(c.env, salonId) : []
+  const trendByNewest = [...trend].reverse()
 
   return c.render(
     <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価推移" reviewEnabled={true}>
@@ -94,25 +80,43 @@ reviews.get('/reviews/trend', async (c) => {
       {backfillDone && (
         <>
           <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
-              <p class="font-semibold">
-                <i class="fas fa-chart-line mr-2 text-pink-500"></i>月次評価推移(総合スコア平均)
-              </p>
-              {hpbAverageScore != null && (
-                <p class="text-sm text-gray-600">
-                  現在の掲載評点(HPB): <span class="font-bold text-pink-600">{hpbAverageScore.toFixed(2)}</span>
-                </p>
-              )}
-            </div>
+            <p class="font-semibold mb-4">
+              <i class="fas fa-chart-line mr-2 text-pink-500"></i>評価推移(総合スコア平均)
+            </p>
             {trend.length === 0 ? (
-              <p class="text-sm text-gray-400 text-center py-10">まだ評点付きの口コミがありません</p>
+              <p class="text-sm text-gray-400 text-center py-10">まだ計測結果がありません</p>
             ) : (
               <div id="review-trend-chart"></div>
             )}
           </div>
           <p class="text-xs text-gray-400">
-            ※月次推移は、サロンボード・HPB双方から取得・突合した口コミデータをもとに当ツールが独自に算出したものです。HPBの「現在の掲載評点」は算出基準(集計期間)が公開されていないため、参考値として別途表示しています。
+            ※同期(計測)を実行した日ごとに、その時点の口コミ評価(サロンボード・HPB双方から取得・突合)を記録したものです。
           </p>
+
+          {trendByNewest.length > 0 && (
+            <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+              <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                  <thead class="bg-gray-50 text-gray-500 text-xs">
+                    <tr>
+                      <th class="px-4 py-3 text-left font-medium">計測日</th>
+                      <th class="px-4 py-3 text-left font-medium">評価(総合スコア平均)</th>
+                      <th class="px-4 py-3 text-left font-medium">件数</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-gray-50">
+                    {trendByNewest.map((p) => (
+                      <tr>
+                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{p.date}</td>
+                        <td class="px-4 py-2.5 font-semibold text-gray-800">{p.avgOverall.toFixed(2)}</td>
+                        <td class="px-4 py-2.5 text-gray-500">{p.count}件</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </>
       )}
 

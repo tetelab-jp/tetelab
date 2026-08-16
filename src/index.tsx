@@ -789,6 +789,29 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(口コミ管理ツール)に失敗しました:', err)
   }
   try {
+    // 2026-08-16追記(ユーザー指定): 口コミ評価推移は、蓄積した全レビューを
+    // posted_at基準で遡って集計するのではなく、SEOの順位測定と同じ考え方で
+    // 「同期(計測)した日ごとのスナップショット」を記録・表示する方式に変更する。
+    // processReviewSyncResult(review-sync-runner.ts)が同期完了のたびに
+    // その時点の平均・件数を1日1行(同日は上書き)で記録する。
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS review_trend_snapshots (
+         id SERIAL PRIMARY KEY,
+         salon_id INTEGER NOT NULL REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         measured_at DATE NOT NULL,
+         avg_overall NUMERIC NOT NULL,
+         review_count INTEGER NOT NULL,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE(salon_id, measured_at)
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_review_trend_snapshots_salon ON review_trend_snapshots(salon_id, measured_at)`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(review_trend_snapshots)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。

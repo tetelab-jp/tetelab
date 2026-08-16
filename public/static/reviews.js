@@ -52,11 +52,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const points = data.trend
     const width = 720
-    const height = 260
+    const height = 140
     const padL = 36
     const padR = 16
     const padT = 16
-    const padB = 32
+    const padB = 24
     const plotW = width - padL - padR
     const plotH = height - padT - padB
 
@@ -83,18 +83,18 @@ document.addEventListener('DOMContentLoaded', () => {
       svg.appendChild(label)
     }
 
-    // X軸ラベル(件数が多い場合は間引く。2〜3ヶ月おき程度を目安に)
+    // X軸ラベル(件数が多い場合は間引く)
     const labelEvery = Math.max(1, Math.ceil(points.length / 8))
     points.forEach((p, i) => {
       if (i % labelEvery !== 0 && i !== points.length - 1) return
       const label = svgEl('text', {
         x: xOf(i),
-        y: height - padB + 18,
+        y: height - padB + 16,
         'text-anchor': 'middle',
         'font-size': 10,
         fill: AXIS_TEXT
       })
-      label.textContent = p.month.slice(2).replace('-', '/')
+      label.textContent = p.date.slice(5).replace('-', '/')
       svg.appendChild(label)
     })
 
@@ -111,7 +111,7 @@ document.addEventListener('DOMContentLoaded', () => {
       svg.appendChild(svgEl('circle', { cx, cy, r: 3.5, fill: PINK_DARK, stroke: 'white', 'stroke-width': 1.5 }))
       const hitCircle = svgEl('circle', { cx, cy, r: 10, fill: 'transparent', style: 'cursor:pointer' })
       hitCircle.addEventListener('mouseenter', () => {
-        tooltip.show(cx, cy, `${p.month}<br>平均 <b>${p.avgOverall.toFixed(2)}</b>(${p.count}件)`)
+        tooltip.show(cx, cy, `${p.date}<br>平均 <b>${p.avgOverall.toFixed(2)}</b>(${p.count}件)`)
       })
       hitCircle.addEventListener('mouseleave', tooltip.hide)
       svg.appendChild(hitCircle)
