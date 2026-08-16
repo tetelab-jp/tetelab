@@ -38,6 +38,20 @@ export function buildFooterText(salonName: string | null, profile: SalonProfileF
   return lines.join('\n')
 }
 
+/**
+ * bodyの末尾にfooterTextがそのまま(前後の空白のみ挟んで)含まれている場合、その部分を取り除く。
+ * 新規作成フォームでは本文欄に最初からフッター文字列を入力済みの状態で表示するため、
+ * 保存時にそれをDBへ焼き込んでしまうと投稿時(getArticleRowForJob)のフッター付加と重複するのを防ぐ。
+ */
+export function stripTrailingFooterText(body: string, footerText: string): string {
+  if (!footerText) return body
+  const idx = body.lastIndexOf(footerText)
+  if (idx === -1) return body
+  const tail = body.slice(idx + footerText.length)
+  if (tail.trim() !== '') return body
+  return body.slice(0, idx).replace(/\s+$/, '')
+}
+
 /** user_id/salon_idから、投稿本文に付けるフッター文字列を組み立てる(salon_profiles + salonboard_salons.salon_name を参照)。 */
 export async function getFooterTextForSalon(env: Bindings, userId: number, salonId: number | null): Promise<string> {
   const [profile, salon] = await Promise.all([

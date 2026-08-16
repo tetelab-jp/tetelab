@@ -1,5 +1,25 @@
-// 記事編集ページ(/blog/articles/:id/edit)の承認・AI再生成ボタン用JS
+// 記事編集ページ(/blog/articles/:id/edit)・新規作成ページ(/blog/articles/new)の
+// 承認・AI再生成ボタン、フッター追加チェックボックス用JS
 document.addEventListener('DOMContentLoaded', () => {
+  // フッターを追加するチェックボックス: ON/OFFで本文欄末尾にフッター文言を挿入/削除
+  var footerCheckbox = document.getElementById('footer-enabled-checkbox')
+  var bodyTextarea = document.getElementById('article-body-textarea')
+  if (footerCheckbox && bodyTextarea) {
+    var footerText = footerCheckbox.getAttribute('data-footer-text') || ''
+    footerCheckbox.addEventListener('change', function () {
+      if (!footerText) return
+      var idx = bodyTextarea.value.lastIndexOf(footerText)
+      var alreadyAtEnd = idx !== -1 && bodyTextarea.value.slice(idx + footerText.length).trim() === ''
+      if (footerCheckbox.checked) {
+        if (!alreadyAtEnd) {
+          bodyTextarea.value = bodyTextarea.value.replace(/\s+$/, '') + '\n\n' + footerText
+        }
+      } else if (alreadyAtEnd) {
+        bodyTextarea.value = bodyTextarea.value.slice(0, idx).replace(/\s+$/, '')
+      }
+    })
+  }
+
   var approveBtn = document.getElementById('article-approve-btn')
   if (approveBtn) {
     approveBtn.addEventListener('click', async function () {

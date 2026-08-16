@@ -338,7 +338,6 @@ function StyleListSection({
         ) : (
           <>
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
-              <span class="w-5 flex-shrink-0"></span>
               <span class="w-10 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0"></span>
               <span class="w-20 flex-shrink-0">画像</span>
@@ -352,11 +351,6 @@ function StyleListSection({
                 data-image-id={s.id}
                 data-auto-post={s.auto_post_enabled_flag === 1 ? '1' : '0'}
               >
-                {!isTemplateMode && (
-                  <span class="style-drag-handle touch-none cursor-grab active:cursor-grabbing text-gray-300 hover:text-gray-500 flex-shrink-0 px-1" data-image-id={s.id}>
-                    <i class="fas fa-grip-lines"></i>
-                  </span>
-                )}
                 <input
                   type="number"
                   min="1"

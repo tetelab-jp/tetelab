@@ -9,7 +9,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
-import { buildFooterText } from '../lib/blog-footer'
+import { buildFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -816,6 +816,7 @@ function ArticleForm({
   categories,
   stylists,
   coupons,
+  footerText,
   generatedNotice
 }: {
   mode: 'new' | 'edit'
@@ -823,11 +824,13 @@ function ArticleForm({
   categories: { id: number; name: string; hpb_category_value: string | null }[]
   stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
+  footerText: string
   generatedNotice?: boolean
 }) {
   const monthTags: number[] = detail ? JSON.parse(detail.month_tags_json || '[]') : []
   const isApproved = detail?.status === 'approved'
   const submitLabel = mode === 'new' || generatedNotice ? '投稿一覧に追加' : '保存する'
+  const initialBody = detail ? detail.body || '' : footerText ? `\n\n${footerText}` : ''
 
   return (
     <div class="space-y-6">
@@ -888,8 +891,8 @@ function ArticleForm({
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">本文</label>
-            <textarea name="body" rows={10} disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-              {detail?.body || ''}
+            <textarea name="body" id="article-body-textarea" rows={10} disabled={isApproved} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              {initialBody}
             </textarea>
             {detail?.id && (
               <button
@@ -959,8 +962,10 @@ function ArticleForm({
             <label class="flex items-center gap-2 text-sm">
               <input
                 type="checkbox"
+                id="footer-enabled-checkbox"
                 name="footer_enabled"
                 checked={detail ? detail.footer_enabled_flag === 1 : true}
+                data-footer-text={footerText}
                 disabled={isApproved}
                 class="accent-pink-500"
               />
@@ -1046,7 +1051,10 @@ async function saveArticleImageIfProvided(c: AppContext, user: AppUser, articleI
 
 blog.get('/blog/articles/new', async (c) => {
   const user = c.get('user')
-  const { categories, stylists, coupons } = await loadArticleFormMasters(c, user)
+  const [{ categories, stylists, coupons }, footerText] = await Promise.all([
+    loadArticleFormMasters(c, user),
+    getFooterTextForSalon(c.env, user.id, user.active_salon_id)
+  ])
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -1056,7 +1064,8 @@ blog.get('/blog/articles/new', async (c) => {
       title="記事の新規作成"
       styleEnabled={user.style_enabled !== 0}
     >
-      <ArticleForm mode="new" detail={null} categories={categories} stylists={stylists} coupons={coupons} />
+      <ArticleForm mode="new" detail={null} categories={categories} stylists={stylists} coupons={coupons} footerText={footerText} />
+      <script src="/static/blog-article-form.js"></script>
     </PageLayout>,
     { title: '記事の新規作成' }
   )
@@ -1066,6 +1075,10 @@ blog.post('/blog/articles/new', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
+  if (parsed.footerEnabled) {
+    const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripTrailingFooterText(parsed.body, footerText)
+  }
 
   const nextOrderRow = await c.env.DB.prepare(
     'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
@@ -1103,7 +1116,10 @@ blog.get('/blog/articles/:id/edit', async (c) => {
     .first<ArticleFormDetail>()
   if (!detail) return c.notFound()
 
-  const { categories, stylists, coupons } = await loadArticleFormMasters(c, user)
+  const [{ categories, stylists, coupons }, footerText] = await Promise.all([
+    loadArticleFormMasters(c, user),
+    getFooterTextForSalon(c.env, user.id, user.active_salon_id)
+  ])
 
   return c.render(
     <PageLayout
@@ -1120,6 +1136,7 @@ blog.get('/blog/articles/:id/edit', async (c) => {
         categories={categories}
         stylists={stylists}
         coupons={coupons}
+        footerText={footerText}
         generatedNotice={c.req.query('generated') === '1'}
       />
       <script src="/static/blog-article-form.js"></script>
@@ -1504,18 +1521,18 @@ blog.get('/blog/articles', async (c) => {
         <div class="mb-3 space-y-2">
           <div class="flex items-center justify-between flex-wrap gap-2">
             <div class="flex items-center gap-2 flex-wrap">
-              <select id="blog-filter-select" class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2">
+              <select id="blog-filter-select" class="h-10 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3">
                 <option value="all">すべて</option>
                 <option value="on">ONのみ</option>
                 <option value="off">OFFのみ</option>
               </select>
-              <select id="blog-category-filter" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+              <select id="blog-category-filter" class="h-10 text-xs border border-gray-200 rounded-lg px-2">
                 <option value="">すべての記事カテゴリ</option>
                 {(categoryOptions || []).map((cat) => (
                   <option value={cat.id}>{cat.name}</option>
                 ))}
               </select>
-              <select id="blog-sort-select" class="text-xs border border-gray-200 rounded-lg px-2 py-1.5">
+              <select id="blog-sort-select" class="h-10 text-xs border border-gray-200 rounded-lg px-2">
                 <option value="generated">生成順に表示</option>
                 <option value="season">季節柄でソート</option>
               </select>
@@ -1647,7 +1664,17 @@ blog.get('/blog/articles', async (c) => {
           {calendarDays.map((d) => (
             <div class={'flex items-center gap-3 px-4 py-3 text-sm ' + (d.skipReason ? 'bg-amber-50' : '')}>
               <span class="w-16 text-xs text-gray-400 font-mono">{d.dateLabel}</span>
-              <span class="flex-1 min-w-0 truncate">{d.skipReason ? <span class="text-amber-700">投稿されません</span> : d.article?.title || '-'}</span>
+              <span class="flex-1 min-w-0 truncate">
+                {d.skipReason ? (
+                  <span class="text-amber-700">投稿されません</span>
+                ) : d.article ? (
+                  <a href={`/blog/articles/${d.article.id}/edit`} class="hover:text-pink-600 hover:underline">
+                    {d.article.title || '（未生成）'}
+                  </a>
+                ) : (
+                  '-'
+                )}
+              </span>
               {d.skipReason ? (
                 <span class="text-xs px-2 py-0.5 rounded bg-amber-100 text-amber-700">{d.skipReason}</span>
               ) : (
