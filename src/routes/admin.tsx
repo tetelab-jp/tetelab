@@ -285,7 +285,12 @@ function WorkspaceToggle({
       <input type="hidden" name="q" value={q} />
       <label class="flex items-center gap-2 cursor-pointer w-fit">
         <span class="relative inline-flex items-center flex-shrink-0">
-          <input type="checkbox" checked={isActiveWorkspace} onchange="this.form.submit()" class="sr-only peer" />
+          <input
+            type="checkbox"
+            checked={isActiveWorkspace}
+            onchange="if (confirm(this.checked ? 'このサロンを有効化しますか？' : 'このサロンを無効化しますか？')) { this.form.submit() } else { this.checked = !this.checked }"
+            class="sr-only peer"
+          />
           <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
           <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
         </span>
@@ -666,18 +671,31 @@ admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) =>
 // OFFにすると、salon側のrequireStyleEnabled/requireBlogEnabledミドルウェアに
 // より該当ルート・API・バッチ(cronの投稿対象)から完全にブロックされる
 // (src/lib/auth-middleware.ts、src/routes/automation.tsxの/api/cron/run-style-posts参照)。
+//
+// 2026-08-16追記(ユーザー指定・至急対応): 以前はONOFFの実体がusers側の
+// アカウント単位の列だったため、複数店舗を持つアカウントで1店舗だけ切る
+// つもりが全店舗が同時に切れてしまう不具合があった。機能フラグの実体を
+// salonboard_salons側(サロン単位)へ移し、/admin/salonsと同じ
+// 「サロン(salonboard_salons)単位の行」構成に揃える。
 
 const TOOL_PAGE_SIZE = 20
 
-type ToolSalonRow = {
+type ToolAccountRow = {
   id: number
   email: string
+  salon_name: string | null
+  seq: number
+}
+
+type ToolSalonSubRow = {
+  id: number
+  user_id: number
+  salon_key: string | null
   salon_name: string | null
   style_enabled: number
   blog_enabled: number
   seo_enabled: number
   review_enabled: number
-  seq: number
 }
 
 function buildToolListUrl(page: number, q: string) {
@@ -744,8 +762,8 @@ admin.get('/admin/tool', async (c) => {
   const totalCount = countRow?.cnt ?? 0
   const totalPages = Math.max(1, Math.ceil(totalCount / TOOL_PAGE_SIZE))
 
-  const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, style_enabled, blog_enabled, seo_enabled, review_enabled,
+  const { results: accounts } = await c.env.DB.prepare(
+    `SELECT id, email, salon_name,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -753,30 +771,26 @@ admin.get('/admin/tool', async (c) => {
      LIMIT ? OFFSET ?`
   )
     .bind(q, likePattern, likePattern, TOOL_PAGE_SIZE, offset)
-    .all<ToolSalonRow>()
+    .all<ToolAccountRow>()
 
-  // 契約中(is_active_workspace=1)のサロンのみをアカウントごとにまとめて取得する
-  // (/admin/salonsと同じN+1回避パターン)。サロンIDとHPB上の実際のサロン名の両方を持つ。
-  const toolAccountIds = salons.map((s) => s.id)
-  const activeSalonKeysByAccount = new Map<number, string[]>()
-  const activeSalonNamesByAccount = new Map<number, string[]>()
+  // 契約中(is_active_workspace=1)のサロンをアカウントごとにまとめて取得する
+  // (/admin/salonsと同じN+1回避パターン)。機能フラグはサロン単位で持つ。
+  const toolAccountIds = accounts.map((a) => a.id)
+  const activeSalonsByAccount = new Map<number, ToolSalonSubRow[]>()
   if (toolAccountIds.length > 0) {
     const placeholders = toolAccountIds.map(() => '?').join(',')
     const { results: activeSalons } = await c.env.DB.prepare(
-      `SELECT user_id, salon_key, salon_name FROM salonboard_salons
+      `SELECT id, user_id, salon_key, salon_name, style_enabled, blog_enabled, seo_enabled, review_enabled
+       FROM salonboard_salons
        WHERE user_id IN (${placeholders}) AND is_active_workspace = 1
        ORDER BY user_id, id`
     )
       .bind(...toolAccountIds)
-      .all<{ user_id: number; salon_key: string | null; salon_name: string | null }>()
+      .all<ToolSalonSubRow>()
     for (const row of activeSalons || []) {
-      const keyList = activeSalonKeysByAccount.get(row.user_id) || []
-      if (row.salon_key) keyList.push(row.salon_key)
-      activeSalonKeysByAccount.set(row.user_id, keyList)
-
-      const nameList = activeSalonNamesByAccount.get(row.user_id) || []
-      if (row.salon_name) nameList.push(row.salon_name)
-      activeSalonNamesByAccount.set(row.user_id, nameList)
+      const list = activeSalonsByAccount.get(row.user_id) || []
+      list.push(row)
+      activeSalonsByAccount.set(row.user_id, list)
     }
   }
 
@@ -808,7 +822,17 @@ admin.get('/admin/tool', async (c) => {
 
       <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div class="overflow-x-auto">
-          <table class="w-full text-sm">
+          <table class="w-full text-sm table-fixed">
+            <colgroup>
+              <col style="width:6%" />
+              <col style="width:16%" />
+              <col style="width:13%" />
+              <col style="width:20%" />
+              <col style="width:11.25%" />
+              <col style="width:11.25%" />
+              <col style="width:11.25%" />
+              <col style="width:11.25%" />
+            </colgroup>
             <thead class="bg-gray-50 text-gray-500 text-xs">
               <tr>
                 <th class="px-4 py-3 text-left font-medium">No.</th>
@@ -822,59 +846,77 @@ admin.get('/admin/tool', async (c) => {
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
-              {salons.map((salon) => (
-                <tr>
-                  <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
-                  <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
-                  <td class="px-4 py-3 font-mono text-xs text-gray-600">
-                    {(activeSalonKeysByAccount.get(salon.id) || []).join(', ') || '(未確定)'}
-                  </td>
-                  <td class="px-4 py-3 text-gray-600">
-                    {(activeSalonNamesByAccount.get(salon.id) || []).join(', ') || '(未取得)'}
-                  </td>
-                  <td class="px-4 py-3">
-                    <FeatureToggleForm
-                      action={`/admin/tool/${salon.id}/toggle-style`}
-                      page={page}
-                      q={q}
-                      enabled={salon.style_enabled === 1}
-                      onLabel="有効"
-                      offLabel="無効"
-                    />
-                  </td>
-                  <td class="px-4 py-3">
-                    <FeatureToggleForm
-                      action={`/admin/tool/${salon.id}/toggle-blog`}
-                      page={page}
-                      q={q}
-                      enabled={salon.blog_enabled === 1}
-                      onLabel="有効"
-                      offLabel="無効"
-                    />
-                  </td>
-                  <td class="px-4 py-3">
-                    <FeatureToggleForm
-                      action={`/admin/tool/${salon.id}/toggle-seo`}
-                      page={page}
-                      q={q}
-                      enabled={salon.seo_enabled === 1}
-                      onLabel="有効"
-                      offLabel="無効"
-                    />
-                  </td>
-                  <td class="px-4 py-3">
-                    <FeatureToggleForm
-                      action={`/admin/tool/${salon.id}/toggle-review`}
-                      page={page}
-                      q={q}
-                      enabled={salon.review_enabled === 1}
-                      onLabel="有効"
-                      offLabel="無効"
-                    />
-                  </td>
-                </tr>
-              ))}
-              {salons.length === 0 && (
+              {accounts.map((account) => {
+                const salons = activeSalonsByAccount.get(account.id) || []
+                const rowspan = Math.max(1, salons.length)
+                return salons.length === 0 ? (
+                  <tr>
+                    <td class="px-4 py-3 text-gray-400">{account.seq}</td>
+                    <td class="px-4 py-3 font-medium text-gray-800 break-words">{account.salon_name || '(未設定)'}</td>
+                    <td class="px-4 py-3 font-mono text-xs text-gray-600" colspan={5}>
+                      有効なサロンがありません
+                    </td>
+                  </tr>
+                ) : (
+                  salons.map((salon, i) => (
+                    <tr>
+                      {i === 0 && (
+                        <>
+                          <td class="px-4 py-3 text-gray-400" rowspan={rowspan}>
+                            {account.seq}
+                          </td>
+                          <td class="px-4 py-3 font-medium text-gray-800 break-words" rowspan={rowspan}>
+                            {account.salon_name || '(未設定)'}
+                          </td>
+                        </>
+                      )}
+                      <td class="px-4 py-3 font-mono text-xs text-gray-600 break-words">{salon.salon_key || '(未確定)'}</td>
+                      <td class="px-4 py-3 text-gray-600 break-words">{salon.salon_name || '(未取得)'}</td>
+                      <td class="px-4 py-3">
+                        <FeatureToggleForm
+                          action={`/admin/tool/${salon.id}/toggle-style`}
+                          page={page}
+                          q={q}
+                          enabled={salon.style_enabled === 1}
+                          onLabel="有効"
+                          offLabel="無効"
+                        />
+                      </td>
+                      <td class="px-4 py-3">
+                        <FeatureToggleForm
+                          action={`/admin/tool/${salon.id}/toggle-blog`}
+                          page={page}
+                          q={q}
+                          enabled={salon.blog_enabled === 1}
+                          onLabel="有効"
+                          offLabel="無効"
+                        />
+                      </td>
+                      <td class="px-4 py-3">
+                        <FeatureToggleForm
+                          action={`/admin/tool/${salon.id}/toggle-seo`}
+                          page={page}
+                          q={q}
+                          enabled={salon.seo_enabled === 1}
+                          onLabel="有効"
+                          offLabel="無効"
+                        />
+                      </td>
+                      <td class="px-4 py-3">
+                        <FeatureToggleForm
+                          action={`/admin/tool/${salon.id}/toggle-review`}
+                          page={page}
+                          q={q}
+                          enabled={salon.review_enabled === 1}
+                          onLabel="有効"
+                          offLabel="無効"
+                        />
+                      </td>
+                    </tr>
+                  ))
+                )
+              })}
+              {accounts.length === 0 && (
                 <tr>
                   <td colspan={8} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
@@ -918,26 +960,29 @@ async function toggleSalonFeature(
   actionName: string
 ) {
   const adminUser = c.get('admin')
-  const targetId = Number(c.req.param('id'))
+  const salonId = Number(c.req.param('id'))
   const body = await c.req.parseBody()
   const page = String(body.page || '1')
   const q = String(body.q || '')
 
-  const target = (await c.env.DB.prepare(`SELECT id, email, ${column} as current_value FROM users WHERE id = ?`)
-    .bind(targetId)
-    .first()) as { id: number; email: string; current_value: number } | null
+  const target = (await c.env.DB.prepare(
+    `SELECT s.id, s.salon_key, s.salon_name, s.${column} as current_value, u.email
+     FROM salonboard_salons s JOIN users u ON u.id = s.user_id WHERE s.id = ?`
+  )
+    .bind(salonId)
+    .first()) as { id: number; salon_key: string | null; salon_name: string | null; current_value: number; email: string } | null
   if (target) {
     const nextValue = target.current_value === 1 ? 0 : 1
-    await c.env.DB.prepare(`UPDATE users SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(nextValue, targetId)
+    await c.env.DB.prepare(`UPDATE salonboard_salons SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .bind(nextValue, salonId)
       .run()
     await logAdminAction(
       c,
       adminUser.id,
       actionName,
-      'user',
-      targetId,
-      `${target.email}: ${column} ${target.current_value} -> ${nextValue}`
+      'salon',
+      salonId,
+      `${target.email} / ${target.salon_key || target.salon_name || '(未確定)'}: ${column} ${target.current_value} -> ${nextValue}`
     )
   }
 

@@ -812,6 +812,50 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(review_trend_snapshots)に失敗しました:', err)
   }
   try {
+    // 2026-08-16追記(ユーザー指定・至急対応): 管理者サイト「機能設定」
+    // (/admin/tool)の見た目はサロン単位だったが、実際のON/OFFはusers側の
+    // アカウント単位の列(style_enabled等)で管理していたため、複数サロンを
+    // 持つアカウントで1店舗だけ切るつもりが全店舗が同時に切れてしまう不具合が
+    // あった。機能フラグの実体をsalonboard_salons側(サロン単位)へ移す。
+    // requireAuth(auth-middleware.ts)がuser.active_salon_idの行から読むように
+    // 変更したため、既存の呼び出し側(user.style_enabled等を参照する全箇所)は
+    // 変更不要。列追加直後は既存サロン全員がDEFAULT 0になってしまうため、
+    // 一度限り、既存usersの現在値をそのまま該当サロンへコピーして救済する
+    // (salon_workspace_backfill_v1と同じパターン)。
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS style_enabled INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS blog_enabled INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS seo_enabled INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE salonboard_salons ADD COLUMN IF NOT EXISTS review_enabled INTEGER NOT NULL DEFAULT 0`
+    ).run()
+
+    const salonFeatureFlagsBackfillDone = await bindings.DB.prepare(
+      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'salon_feature_flags_backfill_v1'`
+    ).first()
+    if (!salonFeatureFlagsBackfillDone) {
+      await bindings.DB.prepare(
+        `UPDATE salonboard_salons s SET
+           style_enabled = u.style_enabled,
+           blog_enabled = u.blog_enabled,
+           seo_enabled = u.seo_enabled,
+           review_enabled = u.review_enabled
+         FROM users u
+         WHERE s.user_id = u.id`
+      ).run()
+      await bindings.DB.prepare(
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_feature_flags_backfill_v1') ON CONFLICT (flag_key) DO NOTHING`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(salonboard_salons機能フラグ)に失敗しました:', err)
+  }
+  try {
     // 初期管理者アカウントのシード。admin_usersが空の場合のみ、
     // ADMIN_INITIAL_PASSWORD(環境変数)をハッシュ化して1件だけ投入する。
     // コード内に平文パスワードをハードコードしないための仕組み。
