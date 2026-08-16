@@ -664,9 +664,36 @@ dashboard.post('/settings/account', async (c) => {
 // ---------- 自動更新設定 ----------
 // 2026-08-16追記(ユーザー指定): ①スタイル投稿の自動投稿・手動投稿(旧/style/schedule)、
 // ②ブログ投稿記事一覧のSALON BOARDへの自動投稿(旧/blog/articlesに埋め込み)、
-// ③フリーワード対策の定期測定設定(旧/seo/schedule)の3つを1ページに統合する。
+// ③SEOの定期測定設定(旧/seo/schedule)の3つを1ページに統合する。
 // 各セクションのフォームは既存のaction先(/style/schedule等)へそのままPOSTし、
 // 保存後の戻り先だけをこのページに変更している(DBロジック・機能フラグ制御は変更なし)。
+
+// 3カテゴリ(スタイル投稿/ブログ投稿/SEO)を同一の見た目のルール(色付きアイコン
+// バッジ付きヘッダー+はっきりした枠線を持つ1枚のカード)で統一して並べるための
+// 共通ラッパー。カテゴリごとの識別はcolorClasses(アイコンバッジの配色)のみで行う。
+function AutoUpdateSection({
+  icon,
+  colorClasses,
+  title,
+  children
+}: {
+  icon: string
+  colorClasses: string
+  title: string
+  children: any
+}) {
+  return (
+    <div class="bg-white rounded-xl border-2 border-gray-100 overflow-hidden">
+      <div class="flex items-center gap-3 px-6 py-4 border-b-2 border-gray-100">
+        <span class={'w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 ' + colorClasses}>
+          <i class={`fas ${icon}`}></i>
+        </span>
+        <p class="font-bold text-gray-800">{title}</p>
+      </div>
+      <div class="p-6 space-y-4">{children}</div>
+    </div>
+  )
+}
 
 dashboard.get('/settings/auto-update', async (c) => {
   const user = c.get('user')
@@ -751,29 +778,28 @@ dashboard.get('/settings/auto-update', async (c) => {
       )}
 
       {styleEnabled && (
-        <>
-          <p class="font-semibold text-gray-800">
-            <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿: 自動投稿
-          </p>
-
-          <form method="post" action="/style/schedule" class="bg-white rounded-xl border border-gray-100 p-6">
-            <label class="flex items-center gap-3 cursor-pointer w-fit">
-              <span class="relative inline-flex items-center flex-shrink-0">
-                <input
-                  type="checkbox"
-                  name="enabled"
-                  checked={styleEnabledOn}
-                  onchange="this.form.submit()"
-                  class="sr-only peer"
-                />
-                <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
-              </span>
-              <span class="text-sm font-medium text-gray-700">
-                自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
-              </span>
-            </label>
-          </form>
+        <AutoUpdateSection icon="fa-images" colorClasses="bg-pink-100 text-pink-600" title="スタイル投稿">
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">自動投稿</p>
+            <form method="post" action="/style/schedule" class="bg-gray-50 rounded-lg p-4">
+              <label class="flex items-center gap-3 cursor-pointer w-fit">
+                <span class="relative inline-flex items-center flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    name="enabled"
+                    checked={styleEnabledOn}
+                    onchange="this.form.submit()"
+                    class="sr-only peer"
+                  />
+                  <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                  <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+                </span>
+                <span class="text-sm font-medium text-gray-700">
+                  自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
+                </span>
+              </label>
+            </form>
+          </div>
 
           {styleIsPaused && (
             <div class="bg-red-50 border border-red-200 rounded-xl p-5 text-sm text-red-700 flex items-center justify-between gap-4 flex-wrap">
@@ -806,23 +832,22 @@ dashboard.get('/settings/auto-update', async (c) => {
             現在<b>{styleSelectedCount}件</b>が対象です。
           </div>
 
-          <p class="font-semibold text-gray-800 pt-2">
-            <i class="fas fa-flask mr-2 text-pink-500"></i>スタイル投稿: 手動投稿
-          </p>
-
-          <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <button
-              id="test-run-btn"
-              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
-            >
-              <i class="fas fa-flask mr-2"></i>手動実行する
-            </button>
-            <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
-            <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
-              <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
-                「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿</p>
+            <div class="bg-gray-50 rounded-lg p-4">
+              <button
+                id="test-run-btn"
+                class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
+              >
+                <i class="fas fa-flask mr-2"></i>手動実行する
               </button>
-            </form>
+              <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+              <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
+                <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
+                  「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
+                </button>
+              </form>
+            </div>
           </div>
 
           <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
@@ -831,71 +856,75 @@ dashboard.get('/settings/auto-update', async (c) => {
             サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
             実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
           </div>
-        </>
+        </AutoUpdateSection>
       )}
 
       {blogEnabled && (
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <div class="flex items-center justify-between flex-wrap gap-3">
-            <div>
-              <p class="font-semibold"><i class="fas fa-robot mr-2 text-pink-500"></i>ブログ投稿: SALON BOARDへの自動投稿</p>
-              <p class="text-xs text-gray-400 mt-1">
-                自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
-              </p>
+        <AutoUpdateSection icon="fa-newspaper" colorClasses="bg-blue-100 text-blue-600" title="ブログ投稿">
+          <div class="bg-gray-50 rounded-lg p-4">
+            <div class="flex items-center justify-between flex-wrap gap-3">
+              <div>
+                <p class="text-sm font-semibold text-gray-700">SALON BOARDへの自動投稿</p>
+                <p class="text-xs text-gray-400 mt-1">
+                  自動投稿ONの記事の中から、月タグに合うものを1日1本の目安で自動投稿します(深夜2:00〜7:00は投稿しません)。
+                </p>
+              </div>
+              <form method="post" action="/blog/articles/schedule" class="flex items-center gap-2">
+                <label class="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" name="enabled" checked={blogScheduleEnabled} onchange="this.form.submit()" class="sr-only peer" />
+                  <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                  <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
+                </label>
+                <span class={'text-sm font-semibold ' + (blogScheduleEnabled ? 'text-pink-600' : 'text-gray-400')}>
+                  {blogScheduleEnabled ? '自動投稿 ON' : '自動投稿 OFF'}
+                </span>
+              </form>
             </div>
-            <form method="post" action="/blog/articles/schedule" class="flex items-center gap-2">
-              <label class="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" name="enabled" checked={blogScheduleEnabled} onchange="this.form.submit()" class="sr-only peer" />
-                <span class="w-11 h-6 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                <span class="absolute left-1 top-1 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-5"></span>
-              </label>
-              <span class={'text-sm font-semibold ' + (blogScheduleEnabled ? 'text-pink-600' : 'text-gray-400')}>
-                {blogScheduleEnabled ? '自動投稿 ON' : '自動投稿 OFF'}
-              </span>
-            </form>
+            {blogIsPaused && (
+              <p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
+                連続で投稿に失敗したため、一時的に自動投稿を停止しています(しばらくすると自動的に再開します)。
+              </p>
+            )}
+            <div class="flex items-center gap-3 mt-4">
+              <button type="button" id="blog-test-run-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg" disabled={!!inFlightBlogJob}>
+                今すぐまとめて投稿する
+              </button>
+              {inFlightBlogJob && <span class="text-xs text-gray-400">投稿処理が進行中です...</span>}
+              <p id="blog-test-run-status" class="text-sm text-gray-500"></p>
+            </div>
           </div>
-          {blogIsPaused && (
-            <p class="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
-              連続で投稿に失敗したため、一時的に自動投稿を停止しています(しばらくすると自動的に再開します)。
-            </p>
-          )}
-          <div class="flex items-center gap-3 mt-4">
-            <button type="button" id="blog-test-run-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg" disabled={!!inFlightBlogJob}>
-              今すぐまとめて投稿する
-            </button>
-            {inFlightBlogJob && <span class="text-xs text-gray-400">投稿処理が進行中です...</span>}
-            <p id="blog-test-run-status" class="text-sm text-gray-500"></p>
-          </div>
-        </div>
+        </AutoUpdateSection>
       )}
 
       {seoEnabled && (
-        <div class="bg-white rounded-xl border border-gray-100 p-6 max-w-lg">
-          <p class="font-semibold mb-4">フリーワード対策: 定期測定設定</p>
-          <p class="text-sm text-gray-500 mb-2">
-            「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
-          </p>
-          <p class="text-xs text-gray-400 mb-5">
-            前回の定期実行：{rankingLastRunAt ? formatJstDateTime(rankingLastRunAt) : 'なし'}
-          </p>
-          <form method="post" action="/seo/schedule">
-            <label class="flex items-center gap-3 cursor-pointer w-fit">
-              <span class="relative inline-flex items-center flex-shrink-0">
-                <input
-                  type="checkbox"
-                  name="enabled"
-                  value="1"
-                  checked={rankingEnabledOn}
-                  onchange="this.form.submit()"
-                  class="sr-only peer"
-                />
-                <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-                <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
-              </span>
-              <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
-            </label>
-          </form>
-        </div>
+        <AutoUpdateSection icon="fa-magnifying-glass-chart" colorClasses="bg-amber-100 text-amber-600" title="SEO">
+          <div class="bg-gray-50 rounded-lg p-4">
+            <p class="text-sm font-semibold text-gray-700 mb-2">定期測定設定</p>
+            <p class="text-sm text-gray-500 mb-2">
+              「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
+            </p>
+            <p class="text-xs text-gray-400 mb-4">
+              前回の定期実行：{rankingLastRunAt ? formatJstDateTime(rankingLastRunAt) : 'なし'}
+            </p>
+            <form method="post" action="/seo/schedule">
+              <label class="flex items-center gap-3 cursor-pointer w-fit">
+                <span class="relative inline-flex items-center flex-shrink-0">
+                  <input
+                    type="checkbox"
+                    name="enabled"
+                    value="1"
+                    checked={rankingEnabledOn}
+                    onchange="this.form.submit()"
+                    class="sr-only peer"
+                  />
+                  <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                  <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+                </span>
+                <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
+              </label>
+            </form>
+          </div>
+        </AutoUpdateSection>
       )}
 
       <script src="/static/auto-update.js"></script>

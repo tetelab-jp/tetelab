@@ -1417,7 +1417,13 @@ blog.get('/blog/articles', async (c) => {
       <div data-tab-panel="list">
         <div class="mb-3 space-y-2">
           <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-            <div class="flex items-center gap-2 overflow-x-auto min-w-0">
+            <a
+              href="/blog/articles/new"
+              class="order-1 sm:order-2 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap text-center flex-shrink-0"
+            >
+              <i class="fas fa-plus mr-1"></i>新規作成
+            </a>
+            <div class="order-2 sm:order-1 flex items-center gap-2 overflow-x-auto min-w-0">
               <select id="blog-filter-select" class="h-10 flex-shrink-0 text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3">
                 <option value="all">すべて</option>
                 <option value="on">ONのみ</option>
@@ -1434,12 +1440,6 @@ blog.get('/blog/articles', async (c) => {
                 <option value="season">季節柄でソート</option>
               </select>
             </div>
-            <a
-              href="/blog/articles/new"
-              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap text-center flex-shrink-0"
-            >
-              <i class="fas fa-plus mr-1"></i>新規作成
-            </a>
           </div>
         </div>
 
