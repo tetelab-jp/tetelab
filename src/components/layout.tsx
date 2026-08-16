@@ -134,45 +134,59 @@ function MobileNavPanel({
   seoEnabled: boolean
 }) {
   return (
-    <div class="absolute right-0 top-full mt-2 w-72 max-h-[calc(100vh-5rem)] overflow-y-auto bg-white border border-gray-100 rounded-xl shadow-lg p-3 z-30">
-      <div id="salon-switcher-area-mobile" class="mb-2"></div>
-      <div class="space-y-4">
-        {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
-          const items = NAV_ITEMS.filter(
-            (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
-          )
-          if (items.length === 0 && group.key !== 'settings') return null
-          return (
-            <div>
-              <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
-              <nav class="space-y-1">
-                {items.map((item) => (
-                  <a
-                    href={item.href}
-                    class={
-                      'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition ' +
-                      (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
-                    }
-                  >
-                    <i class={`fas ${item.icon} w-4`}></i>
-                    <span>{item.label}</span>
-                  </a>
-                ))}
-                {group.key === 'settings' && (
-                  <form method="post" action="/logout">
-                    <button
-                      type="submit"
-                      class="w-full flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition text-gray-600 hover:bg-gray-50"
+    <div class="fixed inset-0 z-50 bg-white overflow-y-auto">
+      <div class="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+        <span class="font-bold text-gray-900">メニュー</span>
+        {/* ヘッダー側のハンバーガーボタンはこのパネルの下に隠れて押せなくなるため、
+            パネル内に専用の閉じるボタンを用意する(<details>のopen属性を外して閉じる)。 */}
+        <button
+          type="button"
+          onclick="this.closest('details').removeAttribute('open')"
+          class="w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50"
+        >
+          <i class="fas fa-xmark text-2xl"></i>
+        </button>
+      </div>
+      <div class="p-4">
+        <div id="salon-switcher-area-mobile" class="mb-2"></div>
+        <div class="space-y-4">
+          {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
+            const items = NAV_ITEMS.filter(
+              (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled)
+            )
+            if (items.length === 0 && group.key !== 'settings') return null
+            return (
+              <div>
+                <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
+                <nav class="space-y-1">
+                  {items.map((item) => (
+                    <a
+                      href={item.href}
+                      class={
+                        'flex items-center gap-3 px-2 py-2.5 rounded-lg text-sm font-medium transition ' +
+                        (item.key === active ? 'bg-pink-50 text-pink-600' : 'text-gray-600 hover:bg-gray-50')
+                      }
                     >
-                      <i class="fas fa-arrow-right-from-bracket w-4"></i>
-                      <span>ログアウト</span>
-                    </button>
-                  </form>
-                )}
-              </nav>
-            </div>
-          )
-        })}
+                      <i class={`fas ${item.icon} w-4`}></i>
+                      <span>{item.label}</span>
+                    </a>
+                  ))}
+                  {group.key === 'settings' && (
+                    <form method="post" action="/logout">
+                      <button
+                        type="submit"
+                        class="w-full flex items-center gap-3 px-2 py-2.5 rounded-lg text-sm font-medium transition text-gray-600 hover:bg-gray-50"
+                      >
+                        <i class="fas fa-arrow-right-from-bracket w-4"></i>
+                        <span>ログアウト</span>
+                      </button>
+                    </form>
+                  )}
+                </nav>
+              </div>
+            )
+          })}
+        </div>
       </div>
     </div>
   )
@@ -200,7 +214,10 @@ export function TopBar({
         </a>
         <details class="relative justify-self-end">
           <summary class="list-none cursor-pointer w-11 h-11 -mr-1 flex items-center justify-center rounded-lg text-gray-600 hover:bg-gray-50">
-            <i class="fas fa-bars text-xl"></i>
+            <span class="hamburger-icon relative inline-block w-5 h-4">
+              <span class="hamburger-line absolute left-0 w-5 h-0.5 bg-current rounded-full"></span>
+              <span class="hamburger-line absolute left-0 w-5 h-0.5 bg-current rounded-full"></span>
+            </span>
           </summary>
           <MobileNavPanel active={active} styleEnabled={styleEnabled} blogEnabled={blogEnabled} seoEnabled={seoEnabled} />
         </details>

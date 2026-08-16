@@ -1,1 +1,21 @@
 @import "tailwindcss";
+
+/* モバイルのハンバーガーメニュー(2本線)アイコン。開いた状態(<details open>)
+   では2本線がバツ(×)の形に回転する。パネル自体はheader内の<details>を
+   開くと画面全体を覆うfixed全画面表示になるため、この回転アニメーション
+   自体は開いた瞬間に隠れてしまうが、開閉の意図を示す表現として残す。 */
+.hamburger-line:first-child {
+  top: 0;
+}
+.hamburger-line:last-child {
+  top: 100%;
+  transform: translateY(-100%);
+}
+details[open] > summary .hamburger-line:first-child {
+  top: 50%;
+  transform: translateY(-50%) rotate(45deg);
+}
+details[open] > summary .hamburger-line:last-child {
+  top: 50%;
+  transform: translateY(-50%) rotate(-45deg);
+}
