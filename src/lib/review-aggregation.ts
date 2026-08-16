@@ -8,29 +8,29 @@
 
 import type { Bindings } from '../types'
 
-export type MonthlyTrendPoint = {
-  month: string // "YYYY-MM"
+export type TrendSnapshotPoint = {
+  date: string // "YYYY-MM-DD"
   avgOverall: number
   count: number
 }
 
-/** ①口コミ評価推移: 投稿月ごとのscore_overall平均を古い順に返す */
-export async function getMonthlyTrend(env: Bindings, salonId: number): Promise<MonthlyTrendPoint[]> {
+/**
+ * ①口コミ評価推移: SEOの順位測定と同じ「計測日ベース」の考え方で、
+ * review_trend_snapshots(同期のたびに1日1行で記録)を古い順に返す。
+ * 過去の投稿月へ遡って再集計するのではなく、実際に計測した日のみを表示する。
+ */
+export async function getTrendSnapshots(env: Bindings, salonId: number): Promise<TrendSnapshotPoint[]> {
   const { results } = await env.DB.prepare(
-    `SELECT
-       to_char(posted_at, 'YYYY-MM') AS month,
-       AVG(score_overall) AS avg_overall,
-       COUNT(*) AS cnt
-     FROM reviews
-     WHERE salon_id = ? AND matched_at IS NOT NULL AND posted_at IS NOT NULL
-     GROUP BY month
-     ORDER BY month ASC`
+    `SELECT to_char(measured_at, 'YYYY-MM-DD') AS date, avg_overall, review_count AS cnt
+     FROM review_trend_snapshots
+     WHERE salon_id = ?
+     ORDER BY measured_at ASC`
   )
     .bind(salonId)
-    .all<{ month: string; avg_overall: string | number; cnt: number }>()
+    .all<{ date: string; avg_overall: string | number; cnt: number }>()
 
   return (results || []).map((r) => ({
-    month: r.month,
+    date: r.date,
     avgOverall: Math.round(Number(r.avg_overall) * 100) / 100,
     count: r.cnt
   }))

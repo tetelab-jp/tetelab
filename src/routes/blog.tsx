@@ -1297,6 +1297,27 @@ blog.post('/blog/generate', async (c) => {
   }
 })
 
+// 登録スタイル一覧(style.tsx)のAutoPostStatusBadgesと同じ見た目で、
+// 自動投稿ON/OFFと直近の投稿結果(公開/エラー)をタグ表示する。
+function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
+  const isOn = a.auto_post_enabled_flag === 1
+  return (
+    <>
+      <span
+        class={
+          'text-xs px-2 py-0.5 rounded font-semibold ' + (isOn ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400')
+        }
+      >
+        自動投稿{isOn ? 'ON' : 'OFF'}
+      </span>
+      {a.last_posted_at && !a.last_error && (
+        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+      )}
+      {a.last_error && <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>}
+    </>
+  )
+}
+
 type ArticleListRow = {
   id: number
   no: number
@@ -1310,6 +1331,7 @@ type ArticleListRow = {
   last_posted_at: string | null
   post_count: number
   auto_post_enabled_flag: number
+  last_error: string | null
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -1331,7 +1353,7 @@ blog.get('/blog/articles', async (c) => {
     `SELECT
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
-       a.auto_post_enabled_flag, a.category_id,
+       a.auto_post_enabled_flag, a.category_id, a.last_error,
        bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
      LEFT JOIN blog_categories bc ON bc.id = a.category_id
@@ -1522,6 +1544,9 @@ blog.get('/blog/articles', async (c) => {
                       <span>{a.coupon_name || '-'}</span>
                       {a.last_posted_at && <span>最終投稿 {a.last_posted_at}(投稿{a.post_count}回)</span>}
                     </p>
+                    <div class="flex flex-wrap gap-1 mt-1">
+                      <BlogAutoPostStatusBadges a={a} />
+                    </div>
                   </div>
                   <div class="flex flex-col md:flex-row items-stretch md:items-center gap-1 md:gap-2 flex-shrink-0">
                     <a

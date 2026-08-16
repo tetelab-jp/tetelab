@@ -220,6 +220,25 @@ export async function processReviewSyncResult(
     .bind(job.user_id, job.salon_id, job.mode === 'full_backfill', newestManagementNo, job.mode === 'full_backfill')
     .run()
 
+  // 口コミ評価推移(/reviews/trend)用に、この同期(計測)時点でのスナップショットを
+  // 1日1行(同日は上書き)で記録する。SEOの順位測定と同じ「計測日ベース」の考え方。
+  const snapshotRow = await env.DB.prepare(
+    `SELECT AVG(score_overall) AS avg_overall, COUNT(*) AS cnt FROM reviews
+     WHERE salon_id = ? AND matched_at IS NOT NULL AND score_overall IS NOT NULL`
+  )
+    .bind(job.salon_id)
+    .first<{ avg_overall: string | number | null; cnt: number }>()
+  if (snapshotRow && snapshotRow.cnt > 0) {
+    await env.DB.prepare(
+      `INSERT INTO review_trend_snapshots (salon_id, measured_at, avg_overall, review_count)
+       VALUES (?, (NOW() AT TIME ZONE 'Asia/Tokyo')::date, ?, ?)
+       ON CONFLICT (salon_id, measured_at) DO UPDATE SET
+         avg_overall = EXCLUDED.avg_overall, review_count = EXCLUDED.review_count`
+    )
+      .bind(job.salon_id, Number(snapshotRow.avg_overall), snapshotRow.cnt)
+      .run()
+  }
+
   return { matchedCount, unmatchedCount }
 }
 
