@@ -1,9 +1,8 @@
 // ============================================
 // account-deletion.ts
-// 管理者サイト(/admin/salons)で、あるアカウントの「有効化」サロンが
-// 1件も無くなる(全サロンを無効化する)と、即時削除ではなく3日間の
-// 猶予期間(users.deletion_requested_at)を置く。猶予中にいずれかの
-// サロンを有効化し直せば削除は自動的にキャンセルされる。猶予経過後の
+// 管理者サイト(/admin/salons)で、あるアカウント(指名単位)の削除ボタンを
+// 押すと、即時削除ではなく3日間の猶予期間(users.deletion_requested_at)を
+// 置く。猶予中は「削除を取り消す」ボタンでキャンセルできる。猶予経過後の
 // 実削除を行うスイープ処理がこのファイル。
 //
 // DB側は外部キーが全てON DELETE CASCADE(usersを参照する19テーブル、
@@ -17,7 +16,11 @@
 // 管理者サイトのサロン一覧が見づらくなったため撤去し、既存の「契約」
 // トグル(アカウント単位のis_active)に削除操作を一本化した。
 // 2026-08-16追記(ユーザー指定): その後「契約」トグルも撤去し、有効な
-// サロンの有無から自動的に判定するようにした(admin.tsxのtoggle-workspace参照)。
+// サロンの有無から自動的に判定するようにしたが、同日中にこれも廃止。
+// 削除はサロンの有効化状態と完全に切り離し、admin.tsxのAccountDeleteControl
+// (指名=アカウント単位の明示的な削除ボタン)からのみ開始するようにした。
+// is_active(ログイン可否)は引き続きtoggle-workspaceが有効サロン数から
+// 自動判定するが、これはdeletion_requested_atとはもう連動しない。
 // ============================================
 
 import type { Bindings } from '../types'
@@ -64,7 +67,7 @@ async function logExecution(
 }
 
 /**
- * 3日間の削除猶予(有効なサロンが0件になってから)を過ぎたアカウントを実際に削除する。
+ * 3日間の削除猶予(管理者が削除ボタンを押してから)を過ぎたアカウントを実際に削除する。
  */
 export async function sweepPendingAccountDeletions(env: Bindings): Promise<void> {
   const { results: dueAccounts } = await env.DB.prepare(
