@@ -314,7 +314,7 @@ export function PageLayout({
           reviewEnabled={reviewEnabled}
         />
         <MobileGroupNav active={active} />
-        <main class="p-6 space-y-6">{children}</main>
+        <main class="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto">{children}</main>
       </div>
       <script src="/static/salon-switcher.js"></script>
     </div>
