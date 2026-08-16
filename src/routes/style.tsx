@@ -198,7 +198,7 @@ function AutoPostStatusBadges({ s }: { s: StyleListRow }) {
     <>
       <span
         class={
-          'text-xs px-2 py-0.5 rounded font-semibold ' +
+          'auto-post-badge text-xs px-2 py-0.5 rounded font-semibold ' +
           (isOn ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-400')
         }
       >
