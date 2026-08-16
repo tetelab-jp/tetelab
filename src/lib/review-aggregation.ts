@@ -58,6 +58,8 @@ export type StylistBreakdownRow = {
   avgTechnique: number
   avgMenuPrice: number
   count: number
+  /** ★5→★1の順の内訳件数 */
+  starCounts: { star: number; count: number }[]
 }
 
 export type StylistBreakdownResult = {
@@ -88,7 +90,12 @@ export async function getStylistBreakdown(
        AVG(r.score_service) AS avg_service,
        AVG(r.score_technique) AS avg_technique,
        AVG(r.score_menu_price) AS avg_menu_price,
-       COUNT(*) AS cnt
+       COUNT(*) AS cnt,
+       COUNT(*) FILTER (WHERE r.score_overall = 5) AS star5_cnt,
+       COUNT(*) FILTER (WHERE r.score_overall = 4) AS star4_cnt,
+       COUNT(*) FILTER (WHERE r.score_overall = 3) AS star3_cnt,
+       COUNT(*) FILTER (WHERE r.score_overall = 2) AS star2_cnt,
+       COUNT(*) FILTER (WHERE r.score_overall = 1) AS star1_cnt
      FROM reviews r
      JOIN stylists st ON st.id = r.stylist_id
      WHERE r.salon_id = ? AND r.matched_at IS NOT NULL ${periodClause}
@@ -105,6 +112,11 @@ export async function getStylistBreakdown(
       avg_technique: string | number
       avg_menu_price: string | number
       cnt: number
+      star5_cnt: number
+      star4_cnt: number
+      star3_cnt: number
+      star2_cnt: number
+      star1_cnt: number
     }>()
 
   const round2 = (v: string | number | null) => (v == null ? 0 : Math.round(Number(v) * 100) / 100)
@@ -117,7 +129,14 @@ export async function getStylistBreakdown(
     avgService: round2(r.avg_service),
     avgTechnique: round2(r.avg_technique),
     avgMenuPrice: round2(r.avg_menu_price),
-    count: r.cnt
+    count: r.cnt,
+    starCounts: [
+      { star: 5, count: r.star5_cnt },
+      { star: 4, count: r.star4_cnt },
+      { star: 3, count: r.star3_cnt },
+      { star: 2, count: r.star2_cnt },
+      { star: 1, count: r.star1_cnt }
+    ]
   }))
 
   const unmatchedRow = await env.DB.prepare(
