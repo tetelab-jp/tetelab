@@ -1,8 +1,9 @@
 // ============================================
 // account-deletion.ts
-// 管理者サイト(/admin/salons)の「契約」トグルをOFF(契約外)にすると、
-// 即時削除ではなく3日間の猶予期間(users.deletion_requested_at)を置く。
-// 猶予中に契約中へ戻せば削除は自動的にキャンセルされる。猶予経過後の
+// 管理者サイト(/admin/salons)で、あるアカウントの「有効化」サロンが
+// 1件も無くなる(全サロンを無効化する)と、即時削除ではなく3日間の
+// 猶予期間(users.deletion_requested_at)を置く。猶予中にいずれかの
+// サロンを有効化し直せば削除は自動的にキャンセルされる。猶予経過後の
 // 実削除を行うスイープ処理がこのファイル。
 //
 // DB側は外部キーが全てON DELETE CASCADE(usersを参照する19テーブル、
@@ -15,6 +16,8 @@
 // 2026-08-14追記(ユーザー指定): 当初はサロン単位の個別削除ボタンだったが、
 // 管理者サイトのサロン一覧が見づらくなったため撤去し、既存の「契約」
 // トグル(アカウント単位のis_active)に削除操作を一本化した。
+// 2026-08-16追記(ユーザー指定): その後「契約」トグルも撤去し、有効な
+// サロンの有無から自動的に判定するようにした(admin.tsxのtoggle-workspace参照)。
 // ============================================
 
 import type { Bindings } from '../types'
@@ -61,7 +64,7 @@ async function logExecution(
 }
 
 /**
- * 3日間の削除猶予(契約外にしてから)を過ぎたアカウントを実際に削除する。
+ * 3日間の削除猶予(有効なサロンが0件になってから)を過ぎたアカウントを実際に削除する。
  */
 export async function sweepPendingAccountDeletions(env: Bindings): Promise<void> {
   const { results: dueAccounts } = await env.DB.prepare(
