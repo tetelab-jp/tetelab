@@ -6,6 +6,7 @@ import {
   generateCategoryDraft,
   generateArticleContent,
   generateImageDescription,
+  generateSalonPersona,
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
@@ -184,26 +185,32 @@ blog.get('/blog/salon', async (c) => {
 
       <form method="post" action="/blog/salon" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-heart mr-2 text-pink-500"></i>サロンの人格<span class="text-xs text-gray-400 ml-2">AI生成の材料になります</span>
-          </p>
+          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <p class="font-semibold">
+              <i class="fas fa-heart mr-2 text-pink-500"></i>サロンの人格<span class="text-xs text-gray-400 ml-2">AI生成の材料になります</span>
+            </p>
+            <button type="button" id="persona-generate-btn" class="bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap">
+              <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成する
+            </button>
+          </div>
+          <p id="persona-generate-status" class="text-xs text-gray-400 mb-3"></p>
           <div class="space-y-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">コンセプト</label>
-              <textarea name="concept" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.concept || ''}</textarea>
+              <textarea id="persona-concept" name="concept" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.concept || ''}</textarea>
             </div>
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">得意なこと・強み</label>
-              <textarea name="strengths" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.strengths || ''}</textarea>
+              <textarea id="persona-strengths" name="strengths" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.strengths || ''}</textarea>
             </div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">来てくれる人（読み手）</label>
-                <textarea name="target_customer" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.target_customer || ''}</textarea>
+                <textarea id="persona-target-customer" name="target_customer" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.target_customer || ''}</textarea>
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">価格帯</label>
-                <input type="text" name="price_range" value={profile?.price_range || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                <input id="persona-price-range" type="text" name="price_range" value={profile?.price_range || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
               </div>
             </div>
           </div>
@@ -337,6 +344,20 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   }
 
   return c.json({ success: true, articleCount, hpbError })
+})
+
+// 「サロンの人格」(コンセプト・強み・来てくれる人・価格帯)を、HPB公開情報から
+// AIに下書きさせる。フォームへの反映のみ行い、保存(DB更新)は既存の
+// /blog/salon POSTハンドラ(保存するボタン)にユーザーが回すことで行う。
+blog.post('/api/blog/salon/generate-persona', async (c) => {
+  const user = c.get('user')
+  try {
+    const profile = await getSalonProfileForGeneration(c, user)
+    const persona = await generateSalonPersona(c.env, profile)
+    return c.json({ success: true, ...persona })
+  } catch (err: any) {
+    return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
+  }
 })
 
 // ---------- 2. 生成テンプレート ----------
