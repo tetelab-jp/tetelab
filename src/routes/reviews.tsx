@@ -143,9 +143,10 @@ reviews.get('/reviews/by-stylist', async (c) => {
 
   const period = c.req.query('period') || 'all'
   const sort = c.req.query('sort') === 'count' ? 'count' : 'rating'
+  const dir = c.req.query('dir') === 'asc' ? 'asc' : 'desc'
   const availableMonths = backfillDone ? await getAvailableReviewMonths(c.env, salonId) : []
   const breakdown = backfillDone
-    ? await getStylistBreakdown(c.env, salonId, period === 'all' ? 'all' : period, sort)
+    ? await getStylistBreakdown(c.env, salonId, period === 'all' ? 'all' : period, sort, dir)
     : { stylists: [], unmatchedStylistCount: 0 }
 
   return c.render(
@@ -163,7 +164,7 @@ reviews.get('/reviews/by-stylist', async (c) => {
                 <select
                   id="review-stylist-sort-select"
                   class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
-                  onchange={`location.href='/reviews/by-stylist?period=${encodeURIComponent(period)}&sort='+this.value`}
+                  onchange={`location.href='/reviews/by-stylist?period=${encodeURIComponent(period)}&dir=${dir}&sort='+this.value`}
                 >
                   <option value="rating" selected={sort === 'rating'}>
                     評価順
@@ -173,9 +174,21 @@ reviews.get('/reviews/by-stylist', async (c) => {
                   </option>
                 </select>
                 <select
+                  id="review-stylist-dir-select"
+                  class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
+                  onchange={`location.href='/reviews/by-stylist?period=${encodeURIComponent(period)}&sort=${sort}&dir='+this.value`}
+                >
+                  <option value="desc" selected={dir === 'desc'}>
+                    高い順
+                  </option>
+                  <option value="asc" selected={dir === 'asc'}>
+                    低い順
+                  </option>
+                </select>
+                <select
                   id="review-stylist-period-select"
                   class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
-                  onchange={`location.href='/reviews/by-stylist?sort=${sort}&period='+this.value`}
+                  onchange={`location.href='/reviews/by-stylist?sort=${sort}&dir=${dir}&period='+this.value`}
                 >
                   <option value="all" selected={period === 'all'}>
                     すべての期間
