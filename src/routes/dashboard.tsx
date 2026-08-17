@@ -559,88 +559,128 @@ dashboard.get('/settings/account', async (c) => {
       )}
 
       <div class="max-w-2xl space-y-6">
-        <form
-          method="post"
-          action="/settings/account/email"
-          autocomplete="off"
-          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
-        >
-          <p class="font-semibold">
-            <i class="fas fa-envelope mr-2 text-pink-500"></i>メールアドレスの変更
-          </p>
-          <p class="text-xs text-gray-500 leading-relaxed">現在のメールアドレス: {user.email}</p>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">新しいメールアドレス</label>
-            <input
-              required
-              type="email"
-              name="new_email"
-              autocomplete="off"
-              placeholder="新しいメールアドレスを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
+        <div>
+          <div id="email-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
+            <div>
+              <p class="font-semibold">
+                <i class="fas fa-envelope mr-2 text-pink-500"></i>メールアドレスの変更
+              </p>
+              <p class="text-xs text-gray-500 mt-1">現在のメールアドレス: {user.email}</p>
+            </div>
+            <button
+              type="button"
+              id="email-edit-open-btn"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
+            >
+              変更する
+            </button>
           </div>
-          <div class="pt-3 border-t border-gray-100">
-            <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
-            <input
-              required
-              type="password"
-              name="current_password"
-              autocomplete="current-password"
-              placeholder="現在お使いのパスワードを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <button
-            type="submit"
-            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
-          >
-            メールアドレスを変更する
-          </button>
-        </form>
 
-        <form
-          method="post"
-          action="/settings/account/password"
-          autocomplete="off"
-          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
-        >
-          <div class="flex items-center justify-between flex-wrap gap-2">
-            <p class="font-semibold">
-              <i class="fas fa-key mr-2 text-pink-500"></i>パスワードの変更
-            </p>
-            <a href="/forgot-password" class="text-xs text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
-            <input
-              required
-              type="password"
-              name="new_password"
-              autocomplete="new-password"
-              placeholder="8文字以上で入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <div class="pt-3 border-t border-gray-100">
-            <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
-            <input
-              required
-              type="password"
-              name="current_password"
-              autocomplete="current-password"
-              placeholder="現在お使いのパスワードを入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <button
-            type="submit"
-            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          <form
+            id="email-edit-form"
+            method="post"
+            action="/settings/account/email"
+            autocomplete="off"
+            class={`bg-white rounded-xl border border-gray-100 p-6 space-y-4 ${error ? '' : 'hidden'}`}
           >
-            パスワードを変更する
-          </button>
-        </form>
+            <p class="font-semibold">
+              <i class="fas fa-envelope mr-2 text-pink-500"></i>メールアドレスの変更
+            </p>
+            <p class="text-xs text-gray-500 leading-relaxed">現在のメールアドレス: {user.email}</p>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">新しいメールアドレス</label>
+              <input
+                required
+                type="email"
+                name="new_email"
+                autocomplete="off"
+                placeholder="新しいメールアドレスを入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <div class="pt-3 border-t border-gray-100">
+              <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
+              <input
+                required
+                type="password"
+                name="current_password"
+                autocomplete="current-password"
+                placeholder="現在お使いのパスワードを入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+            >
+              メールアドレスを変更する
+            </button>
+          </form>
+        </div>
+
+        <div>
+          <div id="password-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
+            <div>
+              <p class="font-semibold">
+                <i class="fas fa-key mr-2 text-pink-500"></i>パスワードの変更
+              </p>
+              <a href="/forgot-password" class="text-xs text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
+            </div>
+            <button
+              type="button"
+              id="password-edit-open-btn"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
+            >
+              変更する
+            </button>
+          </div>
+
+          <form
+            id="password-edit-form"
+            method="post"
+            action="/settings/account/password"
+            autocomplete="off"
+            class={`bg-white rounded-xl border border-gray-100 p-6 space-y-4 ${error ? '' : 'hidden'}`}
+          >
+            <div class="flex items-center justify-between flex-wrap gap-2">
+              <p class="font-semibold">
+                <i class="fas fa-key mr-2 text-pink-500"></i>パスワードの変更
+              </p>
+              <a href="/forgot-password" class="text-xs text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
+              <input
+                required
+                type="password"
+                name="new_password"
+                autocomplete="new-password"
+                placeholder="8文字以上で入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <div class="pt-3 border-t border-gray-100">
+              <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
+              <input
+                required
+                type="password"
+                name="current_password"
+                autocomplete="current-password"
+                placeholder="現在お使いのパスワードを入力"
+                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+              />
+            </div>
+            <button
+              type="submit"
+              class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+            >
+              パスワードを変更する
+            </button>
+          </form>
+        </div>
       </div>
+
+      <script src="/static/account-settings.js"></script>
     </PageLayout>,
     { title: 'アカウント設定' }
   )
