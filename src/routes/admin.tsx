@@ -1187,12 +1187,19 @@ admin.get('/admin/status', async (c) => {
   const totalPages = Math.max(1, Math.ceil(totalCount / STATUS_PAGE_SIZE))
 
   // サロン一覧(/admin/salons)と同じ並び順(契約中を上位・契約外を最後尾)にする。
+  // 2026-08-17追記(至急・バグ修正): 2026-08-16のサロン単位化以降、実際の機能
+  // ゲート判定はsalonboard_salons側(利用中サロン)のstyle_enabled/blog_enabledを
+  // 見ているが、この一覧は参照されなくなったusers側の同名列を表示していたため、
+  // 実態とズレた「対象外」表示になり得た。利用中サロン(active_salon_id)側の
+  // 値を表示するようJOINする。
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, consecutive_failure_count, consecutive_blog_failure_count, is_active, style_enabled, blog_enabled,
-       ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
+    `SELECT users.id, users.email, users.salon_name, users.consecutive_failure_count, users.consecutive_blog_failure_count, users.is_active,
+       COALESCE(sb.style_enabled, 0) AS style_enabled, COALESCE(sb.blog_enabled, 0) AS blog_enabled,
+       ROW_NUMBER() OVER (ORDER BY users.is_active DESC, users.created_at ASC) AS seq
      FROM users
-     WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
-     ORDER BY is_active DESC, created_at ASC
+     LEFT JOIN salonboard_salons sb ON sb.id = users.active_salon_id
+     WHERE ${contractedAndActiveFilter} AND (? = '' OR users.salon_name ILIKE ? OR users.email ILIKE ?)
+     ORDER BY users.is_active DESC, users.created_at ASC
      LIMIT ? OFFSET ?`
   )
     .bind(q, likePattern, likePattern, STATUS_PAGE_SIZE, offset)
