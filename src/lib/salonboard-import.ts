@@ -307,6 +307,7 @@ export async function importSelectedStyles(
   page: Page,
   env: Bindings,
   userId: number,
+  salonId: number,
   styleIds: string[],
   log: AutomationLogger
 ): Promise<{ importedCount: number; errors: string[] }> {
@@ -317,10 +318,15 @@ export async function importSelectedStyles(
   // 先頭グループと同点になり並び順の先頭付近に割り込んでしまうため、
   // 取り込み開始時点の最大sort_order+1から連番で採番し、リストの最後尾に
   // 追加されるようにする。
+  // 2026-08-17追記(重大バグ修正): このINSERT/検索クエリ群がsalon_id列を
+  // 一切扱っておらず、取り込んだスタイルが常にsalon_id=NULLで保存されていた。
+  // 複数サロンワークスペース対応後の一覧表示は`user_id = ? AND salon_id = ?`で
+  // 絞り込むため、salon_id=NULLの行はどのユーザーの一覧にも出ない「孤立行」に
+  // なる不具合があった(至急のユーザー報告により発覚)。salon_idを全クエリに追加する。
   const nextSortOrderRow = await env.DB.prepare(
-    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ?'
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_order FROM styles WHERE user_id = ? AND salon_id = ?'
   )
-    .bind(userId)
+    .bind(userId, salonId)
     .first<{ next_order: number }>()
   let nextSortOrder = nextSortOrderRow?.next_order ?? 0
 
@@ -330,9 +336,9 @@ export async function importSelectedStyles(
 
       // 既に取り込み済みならスキップ(source_salonboard_style_keyで照合)
       const existing = await env.DB.prepare(
-        'SELECT id FROM styles WHERE user_id = ? AND source_salonboard_style_key = ?'
+        'SELECT id FROM styles WHERE user_id = ? AND salon_id = ? AND source_salonboard_style_key = ?'
       )
-        .bind(userId, styleId)
+        .bind(userId, salonId, styleId)
         .first<{ id: number }>()
       if (existing) {
         log(`${styleId} は取り込み済みのためスキップします`)
@@ -342,9 +348,9 @@ export async function importSelectedStyles(
       let stylistDbId: number | null = null
       if (detail.stylistSelectValue) {
         const stylistRow = await env.DB.prepare(
-          'SELECT id FROM stylists WHERE user_id = ? AND salonboard_stylist_key = ?'
+          'SELECT id FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key = ?'
         )
-          .bind(userId, detail.stylistSelectValue)
+          .bind(userId, salonId, detail.stylistSelectValue)
           .first<{ id: number }>()
         stylistDbId = stylistRow?.id ?? null
       }
@@ -352,23 +358,24 @@ export async function importSelectedStyles(
       let couponDbId: number | null = null
       if (detail.couponSelectValue) {
         const couponRow = await env.DB.prepare(
-          'SELECT id FROM coupons WHERE user_id = ? AND salonboard_coupon_key = ?'
+          'SELECT id FROM coupons WHERE user_id = ? AND salon_id = ? AND salonboard_coupon_key = ?'
         )
-          .bind(userId, detail.couponSelectValue)
+          .bind(userId, salonId, detail.couponSelectValue)
           .first<{ id: number }>()
         couponDbId = couponRow?.id ?? null
       }
 
       const insert = await env.DB.prepare(
         `INSERT INTO styles (
-           user_id, stylist_id, coupon_id, source_type, source_salonboard_style_key, title, comment,
+           user_id, salon_id, stylist_id, coupon_id, source_type, source_salonboard_style_key, title, comment,
            category_value, length_value, menu_values_json, menu_detail_text, hashtags_json,
            model_attributes_json, auto_post_enabled_flag, internal_save_status,
            salonboard_register_status, reflection_request_status, sort_order
-         ) VALUES (?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success', ?)`
+         ) VALUES (?, ?, ?, ?, 'imported_from_salon_board', ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 'ready', 'success', 'success', ?)`
       )
         .bind(
           userId,
+          salonId,
           stylistDbId,
           couponDbId,
           styleId,
