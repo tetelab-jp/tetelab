@@ -557,13 +557,15 @@ style.get('/style/import', async (c) => {
 
       <div id="import-list-container" data-cache-scope={`${user.id}_${user.active_salon_id ?? ''}`} class="bg-white rounded-xl border border-gray-100 p-6 hidden">
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-1">
+          <p class="font-semibold sm:flex-1">
+            <i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択
+          </p>
           <button
             id="import-execute-btn"
             class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 sm:px-8 sm:py-3.5 rounded-lg disabled:opacity-50"
           >
             <span id="import-execute-btn-label">選択したスタイルを取り込む</span>
           </button>
-          <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
         </div>
         <div class="flex items-center gap-2 mb-3">
           <button
