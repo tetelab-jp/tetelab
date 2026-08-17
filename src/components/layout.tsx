@@ -17,6 +17,7 @@ export type NavKey =
   | 'ranking-keywords'
   | 'review-trend'
   | 'review-by-stylist'
+  | 'review-list'
   | 'auto-update'
 
 const NAV_ITEMS: {
@@ -36,6 +37,7 @@ const NAV_ITEMS: {
   { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'ブログスタイル設定', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
+  { key: 'review-list', href: '/reviews/list', icon: 'fa-comments', label: '口コミ一覧・返信', group: 'review' },
   { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価推移', group: 'review' },
   { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },

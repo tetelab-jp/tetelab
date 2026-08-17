@@ -348,6 +348,62 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
   }
 }
 
+// ============================================
+// 口コミ自動返信機能: AIによる返信文生成
+// ============================================
+
+export type ReviewForReplyGeneration = {
+  scoreOverall: number | null
+  content: string | null
+  stylistNameRaw: string | null
+  hpbNickname: string | null
+  menuUsed: string | null
+}
+
+// SALON BOARD返信フォームの実際の入力上限(実HTML確認済み。詳細はworker/src/
+// salonboard-automation.ts参照): 返信本文(replyContents)は全角500文字以内・
+// 改行80回以内。AIには全角換算で余裕を持った400字程度を目安に指示する。
+const REVIEW_REPLY_MAX_CHARS_HINT = 400
+
+/**
+ * 口コミ本文・評点・サロンの人格(文体・トーン等)をもとに、返信文をAIに
+ * 下書きさせる。自動返信(星4以上のみ対象)・手動返信フロー(修正可能な
+ * 下書き)の両方から呼ばれる共通関数。
+ */
+export async function generateReviewReply(
+  env: Bindings,
+  review: ReviewForReplyGeneration,
+  profile: SalonProfileForGeneration
+): Promise<string> {
+  const systemLines = [
+    'あなたは美容サロンのオーナーとして、お客様からの口コミに返信する担当者です。',
+    ...buildSalonPersonaLines(profile),
+    `SALON BOARDの返信欄の制約: 全角${REVIEW_REPLY_MAX_CHARS_HINT}文字程度まで(改行は控えめに)。`,
+    '返信は必ず日本語の丁寧な言葉遣いで、お客様の口コミ本文の内容(施術・接客で触れられている点)に' +
+      '具体的に触れながら感謝を伝えてください。',
+    '口コミに書かれていない事実(施術内容やエピソード)を創作しないでください。',
+    '定型文の羅列にならないよう、その口コミならではの一言を必ず含めてください。',
+    '必ず指定されたJSON形式のみで出力してください。'
+  ]
+
+  const reviewLines = [
+    review.scoreOverall != null ? `総合評価: 星${review.scoreOverall}` : null,
+    review.hpbNickname ? `投稿者のニックネーム: ${review.hpbNickname}` : null,
+    review.stylistNameRaw ? `担当スタイリスト: ${review.stylistNameRaw}` : null,
+    review.menuUsed ? `利用メニュー: ${review.menuUsed}` : null,
+    `口コミ本文: ${review.content || '(本文なし)'}`
+  ].filter((l): l is string => l !== null)
+
+  const userPrompt = `以下の口コミへの返信文を作成してください。
+${reviewLines.join('\n')}
+
+出力は必ず以下のJSON形式のみで返してください(説明文やコードブロックは不要):
+{"reply": "返信文"}`
+
+  const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'review_reply')
+  return String(parsed.reply || '').trim()
+}
+
 /**
  * アップロードされた画像から、記事生成のプロンプトに使う短い説明文を生成する
  * (gpt-4o-miniのvision入力を使用)。

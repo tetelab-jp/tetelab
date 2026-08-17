@@ -29,6 +29,7 @@ import {
 } from '../lib/blog-post-runner'
 import { enqueueReviewSyncJob, processReviewSyncResult, type ReviewSyncJobRow } from '../lib/review-sync-runner'
 import type { SalonBoardReviewRow } from '../lib/review-match'
+import { updateReviewReplyConsecutiveFailureAndNotify } from '../lib/review-reply-runner'
 import { decryptSecret, timingSafeEqual } from '../lib/crypto'
 import { formatJstDate } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
@@ -1106,6 +1107,171 @@ automation.post('/api/review-automation/jobs/:id/result', async (c) => {
 // 使わず、アプリ内setInterval(src/index.tsx、既存のrunDeletionSweepと
 // 同じパターン)から直接sweepStaleReviewSyncJobs/runMonthlyReviewSyncSweepを
 // 呼ぶ(EventBridgeへの新規スケジュール追加を避けるため)。
+
+// ---------- 口コミ自動返信(2026-08-17追記) ----------
+// review_sync(口コミ一覧の取得・突合)とは別のジョブ種別。返信投稿自体は
+// SALON BOARDの返信入力ページ(/CLP/bt/review/reviewReply/{管理番号})を
+// 使う(実HTML確認済み。詳細はworker/src/salonboard-automation.ts参照)。
+
+automation.get('/api/review-reply-automation/jobs/:id', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, review_id, user_id, salon_id, job_token, reply_content, status FROM review_reply_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{
+      id: number
+      review_id: number
+      user_id: number
+      salon_id: number | null
+      job_token: string
+      reply_content: string
+      status: string
+    }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ error: 'job already completed' }, 409)
+  }
+
+  const review = await c.env.DB.prepare(`SELECT salonboard_review_key FROM reviews WHERE id = ?`)
+    .bind(job.review_id)
+    .first<{ salonboard_review_key: string }>()
+  if (!review) {
+    await c.env.DB.prepare(
+      `UPDATE review_reply_jobs SET status = 'failed', result_step = 'lookup', result_message = '対象の口コミが見つかりません', completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+    )
+      .bind(jobId)
+      .run()
+    return c.json({ error: 'review not found' }, 422)
+  }
+
+  const cred = await c.env.DB.prepare(
+    `SELECT salonboard_login_id_enc, salonboard_password_enc, last_successful_proxy_session_id, target_store_id
+     FROM salon_credentials WHERE user_id = ?`
+  )
+    .bind(job.user_id)
+    .first<{
+      salonboard_login_id_enc: string
+      salonboard_password_enc: string
+      last_successful_proxy_session_id: string | null
+      target_store_id: string | null
+    }>()
+  if (!cred || !c.env.ENCRYPTION_KEY) {
+    return c.json({ error: 'credentials not available' }, 500)
+  }
+
+  let targetStoreId = cred.target_store_id || null
+  if (job.salon_id) {
+    const salon = await c.env.DB.prepare('SELECT salon_key FROM salonboard_salons WHERE id = ?')
+      .bind(job.salon_id)
+      .first<{ salon_key: string | null }>()
+    if (salon?.salon_key) targetStoreId = salon.salon_key
+  }
+
+  const loginId = await decryptSecret(cred.salonboard_login_id_enc, c.env.ENCRYPTION_KEY)
+  const password = await decryptSecret(cred.salonboard_password_enc, c.env.ENCRYPTION_KEY)
+
+  await c.env.DB.prepare(`UPDATE review_reply_jobs SET status = 'running' WHERE id = ? AND status = 'pending'`)
+    .bind(jobId)
+    .run()
+
+  const proxySessionCandidates = cred.last_successful_proxy_session_id
+    ? [cred.last_successful_proxy_session_id, ...Array.from({ length: PROXY_CANDIDATE_COUNT - 1 }, () => randomSessionId())]
+    : Array.from({ length: PROXY_CANDIDATE_COUNT }, () => randomSessionId())
+
+  return c.json({
+    loginId,
+    password,
+    proxySessionCandidates,
+    targetStoreId,
+    managementNo: review.salonboard_review_key,
+    replyContent: job.reply_content
+  })
+})
+
+type ReviewReplyJobResultBody = {
+  success: boolean
+  step: 'login' | 'navigate' | 'input' | 'confirm' | 'done'
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: { sessionId: string; success: boolean }[]
+}
+
+automation.post('/api/review-reply-automation/jobs/:id/result', async (c) => {
+  const jobId = Number(c.req.param('id'))
+  const authHeader = c.req.header('Authorization') || ''
+
+  const job = await c.env.DB.prepare(
+    `SELECT id, review_id, user_id, salon_id, job_token, reply_content, trigger, status FROM review_reply_jobs WHERE id = ?`
+  )
+    .bind(jobId)
+    .first<{
+      id: number
+      review_id: number
+      user_id: number
+      salon_id: number | null
+      job_token: string
+      reply_content: string
+      trigger: 'auto' | 'manual'
+      status: string
+    }>()
+
+  if (!job || !timingSafeEqual(authHeader, `Bearer ${job.job_token}`)) {
+    return c.json({ error: 'unauthorized' }, 401)
+  }
+  if (job.status !== 'pending' && job.status !== 'running') {
+    return c.json({ ok: true, alreadyCompleted: true })
+  }
+
+  const body = await c.req.json<ReviewReplyJobResultBody>().catch(() => null)
+  if (!body) return c.json({ error: 'invalid body' }, 400)
+
+  if (body.step === 'login' && !body.success) {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'failed', last_error = ? WHERE user_id = ?`)
+      .bind(body.message.slice(0, 500), job.user_id)
+      .run()
+      .catch(() => {})
+  } else {
+    await c.env.DB.prepare(`UPDATE salon_credentials SET connection_status = 'success', last_error = NULL WHERE user_id = ?`)
+      .bind(job.user_id)
+      .run()
+      .catch(() => {})
+  }
+
+  const diagnostics = body.logs && body.logs.length > 0 ? ` / 実行ログ: ${body.logs.join(' | ')}` : ''
+  const messageWithDiagnostics = (body.message + diagnostics).slice(0, 10000)
+  const jobStatus = body.success ? 'success' : 'failed'
+
+  await c.env.DB.prepare(
+    `UPDATE review_reply_jobs SET status = ?, result_step = ?, result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
+  )
+    .bind(jobStatus, body.step, messageWithDiagnostics, jobId)
+    .run()
+
+  if (body.success) {
+    await c.env.DB.prepare(
+      `UPDATE reviews SET replied_at = CURRENT_TIMESTAMP, reply_content = ?, reply_method = ? WHERE id = ?`
+    )
+      .bind(job.reply_content, job.trigger, job.review_id)
+      .run()
+  }
+
+  // 2026-08-17追記(ユーザー指定): 手動返信(trigger='manual')は連続失敗
+  // カウント・一時停止の対象外とする(自動返信スケジュールが自動的に停止する
+  // のは自動返信自身が失敗し続けた場合のみで、手動操作の失敗で巻き添えに
+  // しない)。
+  if (job.trigger === 'auto') {
+    await updateReviewReplyConsecutiveFailureAndNotify(c.env, job.user_id, job.salon_id, body.success)
+  }
+
+  return c.json({ ok: true })
+})
 
 automation.post('/api/cron/run-blog-posts', async (c) => {
   const authHeader = c.req.header('Authorization') || ''

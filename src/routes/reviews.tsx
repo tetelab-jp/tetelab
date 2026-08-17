@@ -11,13 +11,17 @@ import { Hono, type Context } from 'hono'
 import { requireAuth, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { getTrendSnapshots, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
+import { generateReviewReply } from '../lib/ai-generate'
+import { dispatchManualReviewReply, loadSalonProfileForGeneration } from '../lib/review-reply-runner'
 import type { Bindings, AppUser } from '../types'
 
 const reviews = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
 
 reviews.use('/reviews/*', requireAuth)
+reviews.use('/api/reviews/*', requireAuth)
 reviews.use('/reviews/*', requireReviewEnabled)
+reviews.use('/api/reviews/*', requireReviewEnabled)
 
 function escapeJsonForScript(value: unknown): string {
   // </script>によるHTML解釈の分断を防ぐ(他のインラインJSON埋め込み箇所と同じ対策)
@@ -263,6 +267,214 @@ reviews.get('/reviews/by-stylist', async (c) => {
     </PageLayout>,
     { title: 'スタイリスト別評価' }
   )
+})
+
+// ---------- ③口コミ一覧・返信(2026-08-17追記) ----------
+
+type ReviewListRowForUi = {
+  id: number
+  posted_at: string | null
+  score_overall: number | null
+  content: string | null
+  hpb_nickname: string | null
+  stylist_name_raw: string | null
+  matched_at: string | null
+  replied_at: string | null
+  reply_content: string | null
+  reply_method: string | null
+  ai_reply_draft: string | null
+}
+
+const REVIEW_LIST_PAGE_SIZE = 50
+
+reviews.get('/reviews/list', async (c) => {
+  const user = c.get('user')
+  const salonId = user.active_salon_id
+  if (!salonId) return c.text('サロンが選択されていません', 400)
+
+  const state = await getBackfillState(c, salonId)
+  const backfillDone = !!state?.backfill_completed_at
+
+  const { results: rows } = backfillDone
+    ? await c.env.DB.prepare(
+        `SELECT id, posted_at, score_overall, content, hpb_nickname, stylist_name_raw, matched_at,
+                replied_at, reply_content, reply_method, ai_reply_draft
+         FROM reviews WHERE salon_id = ?
+         ORDER BY posted_at DESC NULLS LAST, id DESC
+         LIMIT ${REVIEW_LIST_PAGE_SIZE}`
+      )
+        .bind(salonId)
+        .all<ReviewListRowForUi>()
+    : { results: [] as ReviewListRowForUi[] }
+
+  return c.render(
+    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ一覧" reviewEnabled={true}>
+      <SyncStatusPanel backfillDone={backfillDone} />
+
+      {backfillDone && (
+        <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div class="px-6 py-4 border-b border-gray-100">
+            <p class="font-semibold">
+              <i class="fas fa-comments mr-2 text-pink-500"></i>口コミ一覧(直近{REVIEW_LIST_PAGE_SIZE}件)
+            </p>
+            <p class="text-xs text-gray-400 mt-1">
+              星4以上・HPB掲載済みの口コミは自動返信の対象です(自動返信を有効にしている場合)。それ以外はAI下書き→内容を確認・修正のうえ手動で返信投稿してください。
+            </p>
+          </div>
+          {rows.length === 0 ? (
+            <p class="text-sm text-gray-400 text-center py-10">口コミがありません</p>
+          ) : (
+            <div class="divide-y divide-gray-50" id="review-list-container">
+              {rows.map((r) => (
+                <div class="p-6" data-review-id={r.id} data-review-content={r.content || ''}>
+                  <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        {r.score_overall != null ? (
+                          <span class="text-amber-500 text-sm font-bold whitespace-nowrap">
+                            <i class="fas fa-star mr-1"></i>
+                            {r.score_overall}
+                          </span>
+                        ) : (
+                          <span class="text-xs text-gray-400 whitespace-nowrap">評点未取得(HPB未掲載)</span>
+                        )}
+                        {r.hpb_nickname && <span class="text-sm text-gray-500">{r.hpb_nickname}</span>}
+                        {r.stylist_name_raw && (
+                          <span class="text-xs text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">
+                            担当: {r.stylist_name_raw}
+                          </span>
+                        )}
+                        {r.replied_at ? (
+                          <span class="text-xs font-semibold text-green-700 bg-green-50 rounded-full px-2 py-0.5">
+                            返信済み{r.reply_method === 'auto' ? '(自動)' : r.reply_method === 'manual' ? '(手動)' : ''}
+                          </span>
+                        ) : (
+                          <span class="text-xs font-semibold text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">未返信</span>
+                        )}
+                      </div>
+                      <p class="text-xs text-gray-400 mt-1">{r.posted_at || ''}</p>
+                    </div>
+                  </div>
+                  <p class="text-sm text-gray-700 mt-3 whitespace-pre-wrap">{r.content || '(本文なし)'}</p>
+
+                  {r.replied_at ? (
+                    <div class="mt-3 bg-gray-50 rounded-lg p-4">
+                      <p class="text-xs font-semibold text-gray-400 mb-1">サロンからの返信</p>
+                      <p class="text-sm text-gray-700 whitespace-pre-wrap">{r.reply_content}</p>
+                    </div>
+                  ) : (
+                    <div class="mt-3 bg-gray-50 rounded-lg p-4 space-y-3">
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
+                        <button
+                          type="button"
+                          class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                          data-review-id={r.id}
+                        >
+                          <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
+                        </button>
+                      </div>
+                      <textarea
+                        class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
+                        rows={4}
+                        maxlength={500}
+                        placeholder="「AI下書きを生成」を押すか、直接入力してください(全角500文字以内)"
+                        data-review-id={r.id}
+                      >
+                        {r.ai_reply_draft || ''}
+                      </textarea>
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
+                        <button
+                          type="button"
+                          class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                          data-review-id={r.id}
+                        >
+                          この内容で返信する
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <script src="/static/reviews.js"></script>
+    </PageLayout>,
+    { title: '口コミ一覧' }
+  )
+})
+
+reviews.post('/reviews/reply/schedule', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const enabled = body.enabled === 'on' || body.enabled === 'true'
+
+  await c.env.DB.prepare(
+    `INSERT INTO review_reply_schedules (user_id, salon_id, enabled)
+     VALUES (?, ?, ?)
+     ON CONFLICT (salon_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = CURRENT_TIMESTAMP`
+  )
+    .bind(user.id, user.active_salon_id, enabled ? 1 : 0)
+    .run()
+
+  return c.redirect('/settings/auto-update')
+})
+
+reviews.post('/api/reviews/:id/generate-reply', async (c) => {
+  const user = c.get('user')
+  const reviewId = Number(c.req.param('id'))
+  const review = await c.env.DB.prepare(
+    `SELECT score_overall, content, stylist_name_raw, hpb_nickname, menu_used
+     FROM reviews WHERE id = ? AND user_id = ? AND salon_id = ?`
+  )
+    .bind(reviewId, user.id, user.active_salon_id)
+    .first<{
+      score_overall: number | null
+      content: string | null
+      stylist_name_raw: string | null
+      hpb_nickname: string | null
+      menu_used: string | null
+    }>()
+  if (!review) return c.json({ success: false, error: '対象の口コミが見つかりません' }, 404)
+
+  try {
+    const profile = await loadSalonProfileForGeneration(c.env, user.id, user.active_salon_id)
+    const reply = await generateReviewReply(
+      c.env,
+      {
+        scoreOverall: review.score_overall,
+        content: review.content,
+        stylistNameRaw: review.stylist_name_raw,
+        hpbNickname: review.hpb_nickname,
+        menuUsed: review.menu_used
+      },
+      profile
+    )
+    await c.env.DB.prepare(`UPDATE reviews SET ai_reply_draft = ? WHERE id = ?`).bind(reply, reviewId).run()
+    return c.json({ success: true, reply })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err).slice(0, 500) }, 400)
+  }
+})
+
+reviews.post('/api/reviews/:id/send-reply', async (c) => {
+  const user = c.get('user')
+  const reviewId = Number(c.req.param('id'))
+  const { replyContent } = await c.req.json<{ replyContent: string }>().catch(() => ({ replyContent: '' }))
+  if (!replyContent || !replyContent.trim()) {
+    return c.json({ success: false, error: '返信文を入力してください' }, 400)
+  }
+
+  try {
+    await dispatchManualReviewReply(c.env, user.id, user.active_salon_id, reviewId, replyContent)
+    return c.json({ success: true })
+  } catch (err: any) {
+    return c.json({ success: false, error: String(err?.message || err).slice(0, 500) }, 400)
+  }
 })
 
 export default reviews
