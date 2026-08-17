@@ -2,7 +2,7 @@ import { Hono } from 'hono'
 import { setCookie, deleteCookie, getCookie } from 'hono/cookie'
 import { hashPassword, verifyPasswordConstantTime } from '../lib/crypto'
 import { signJwt, verifyJwt } from '../lib/jwt'
-import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth } from '../lib/admin-auth-middleware'
+import { ADMIN_SESSION_COOKIE_NAME, requireAdminAuth, noCacheHeaders } from '../lib/admin-auth-middleware'
 import { SESSION_COOKIE_NAME } from '../lib/auth-middleware'
 import { AdminPageLayout } from '../components/admin-layout'
 import { GRACE_PERIOD_DAYS } from '../lib/account-deletion'
@@ -185,6 +185,17 @@ admin.post('/admin/logout', (c) => {
   deleteCookie(c, ADMIN_SESSION_COOKIE_NAME, { path: '/' })
   return c.redirect('/admin')
 })
+
+// 2026-08-17追記(ユーザー指定): 複数端末で操作した際に片方の変更が
+// もう片方に反映されない報告があったため、/admin配下は常にブラウザの
+// キャッシュを使わずサーバーへ再取得させる(詳細はadmin-auth-middleware.ts参照)。
+// 下のrequireAdminAuthと同様、ワイルドカード(/admin/salons/*等)は末尾の
+// パス階層が無い場合(/admin/salons等)にマッチしないため、両方を個別に登録する。
+admin.use('/admin/*', noCacheHeaders)
+admin.use('/admin', noCacheHeaders)
+admin.use('/admin/salons', noCacheHeaders)
+admin.use('/admin/tool', noCacheHeaders)
+admin.use('/admin/status', noCacheHeaders)
 
 // ---------- /admin配下、ここから先はログイン必須 ----------
 
@@ -1075,23 +1086,29 @@ async function toggleSalonFeature(
   const q = String(body.q || '')
 
   const target = (await c.env.DB.prepare(
-    `SELECT s.id, s.salon_key, s.salon_name, s.${column} as current_value, u.email
+    `SELECT s.id, s.salon_key, s.salon_name, u.email
      FROM salonboard_salons s JOIN users u ON u.id = s.user_id WHERE s.id = ?`
   )
     .bind(salonId)
-    .first()) as { id: number; salon_key: string | null; salon_name: string | null; current_value: number; email: string } | null
+    .first()) as { id: number; salon_key: string | null; salon_name: string | null; email: string } | null
   if (target) {
-    const nextValue = target.current_value === 1 ? 0 : 1
-    await c.env.DB.prepare(`UPDATE salonboard_salons SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
-      .bind(nextValue, salonId)
-      .run()
+    // 2026-08-17追記(ユーザー指定・重大バグ修正): 従来は現在値をSELECTしてから
+    // 逆の値をUPDATEしていたが、この「読んでから書く」手順はアトミックではなく、
+    // ほぼ同時に複数回操作された場合(素早い連打・複数端末等)に片方の操作が
+    // 失われる可能性があった。1文のUPDATEで値を反転させ、DBが実際に確定した
+    // 値をRETURNINGで取得することで、この競合を無くす。
+    const updated = (await c.env.DB.prepare(
+      `UPDATE salonboard_salons SET ${column} = 1 - ${column}, updated_at = CURRENT_TIMESTAMP WHERE id = ? RETURNING ${column} AS new_value`
+    )
+      .bind(salonId)
+      .first()) as { new_value: number } | null
     await logAdminAction(
       c,
       adminUser.id,
       actionName,
       'salon',
       salonId,
-      `${target.email} / ${target.salon_key || target.salon_name || '(未確定)'}: ${column} ${target.current_value} -> ${nextValue}`
+      `${target.email} / ${target.salon_key || target.salon_name || '(未確定)'}: ${column} -> ${updated?.new_value ?? '?'}`
     )
   }
 
