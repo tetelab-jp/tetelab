@@ -309,8 +309,9 @@ export async function importSelectedStyles(
   userId: number,
   salonId: number,
   styleIds: string[],
-  log: AutomationLogger
-): Promise<{ importedCount: number; errors: string[] }> {
+  log: AutomationLogger,
+  signal?: AbortSignal
+): Promise<{ importedCount: number; errors: string[]; aborted: boolean }> {
   let importedCount = 0
   const errors: string[] = []
 
@@ -331,6 +332,14 @@ export async function importSelectedStyles(
   let nextSortOrder = nextSortOrderRow?.next_order ?? 0
 
   for (const styleId of styleIds) {
+    // 2026-08-17追記(ユーザー指定): 「中止する」ボタンが押された(クライアントが
+    // fetchをAbortControllerで中断した)場合、ここでループを抜ける。1件の
+    // スタイルの取り込み処理の途中では中断しない(DBの不整合を避けるため、
+    // 次のスタイルに進む直前でのみチェックする)。
+    if (signal?.aborted) {
+      log('中止されました')
+      return { importedCount, errors, aborted: true }
+    }
     try {
       const detail = await fetchStyleDetail(page, styleId, log)
 
@@ -433,5 +442,5 @@ export async function importSelectedStyles(
     }
   }
 
-  return { importedCount, errors }
+  return { importedCount, errors, aborted: false }
 }

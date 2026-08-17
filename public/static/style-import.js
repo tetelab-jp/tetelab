@@ -11,6 +11,27 @@ document.addEventListener('DOMContentLoaded', () => {
   const paginationLabelEl = document.getElementById('import-pagination-label')
   const pagePrevBtn = document.getElementById('import-page-prev')
   const pageNextBtn = document.getElementById('import-page-next')
+  const progressModal = document.getElementById('import-progress-modal')
+  const progressText = document.getElementById('import-progress-text')
+  const abortBtn = document.getElementById('import-abort-btn')
+  let currentAbortController = null
+
+  function showProgressModal() {
+    if (!progressModal) return
+    progressModal.classList.remove('hidden')
+    progressModal.classList.add('flex')
+  }
+  function hideProgressModal() {
+    if (!progressModal) return
+    progressModal.classList.add('hidden')
+    progressModal.classList.remove('flex')
+  }
+  if (abortBtn) {
+    abortBtn.addEventListener('click', () => {
+      if (progressText) progressText.textContent = '中止しています...'
+      if (currentAbortController) currentAbortController.abort()
+    })
+  }
 
   // 2026-08-17追記(ユーザー指定): 取得件数が多いと一覧が長くなりすぎるため、
   // 100件ずつのページ表示にする。チェック状態はページをまたいでも保持する
@@ -206,15 +227,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
       executeBtn.disabled = true
       if (executeBtnLabel) executeBtnLabel.textContent = '反映中'
-      if (executeStatusEl) executeStatusEl.textContent = '反映までこのままで少し待ち下さい'
+      if (executeStatusEl) executeStatusEl.textContent = ''
+      // 2026-08-17追記(ユーザー指定): 取り込み中は操作不能のローディングモーダルを
+      // 表示する。「中止する」を押すとAbortControllerでfetchを中断し、サーバー側も
+      // (importSelectedStylesが)次のスタイルへ進む直前でsignal.abortedを確認して
+      // 処理を打ち切る(ここまでに取り込み済みの分は保持される)。
+      if (progressText) progressText.textContent = '取り込み中...'
+      showProgressModal()
+      currentAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null
       try {
         const res = await fetch('/api/style/import/execute', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ styleIds })
+          body: JSON.stringify({ styleIds }),
+          signal: currentAbortController ? currentAbortController.signal : undefined
         })
         const data = await res.json()
+        hideProgressModal()
         if (data.success) {
+          // 注: 「中止する」でAbortされた場合、このres.json()には到達せず
+          // 下のcatch(AbortError)側に処理が移る(クライアントが接続を切っているため
+          // サーバーの応答を待たない)。ここに来るのは正常完了時のみ。
           if (data.errors && data.errors.length > 0) {
             if (executeStatusEl) {
               executeStatusEl.textContent =
@@ -234,8 +267,14 @@ document.addEventListener('DOMContentLoaded', () => {
           executeStatusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
         }
       } catch (e) {
-        if (executeStatusEl) executeStatusEl.textContent = '通信エラーが発生しました'
+        hideProgressModal()
+        if (e && e.name === 'AbortError') {
+          if (executeStatusEl) executeStatusEl.textContent = '中止しました。ここまでに取り込まれた分は登録スタイルに反映されています。'
+        } else if (executeStatusEl) {
+          executeStatusEl.textContent = '通信エラーが発生しました'
+        }
       }
+      currentAbortController = null
       executeBtn.disabled = false
       if (executeBtnLabel) executeBtnLabel.textContent = '選択したスタイルを取り込む'
     })
