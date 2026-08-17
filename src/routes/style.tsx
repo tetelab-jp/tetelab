@@ -4,6 +4,7 @@ import { PageLayout } from '../components/layout'
 import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard, handleGroupTopIfPresent } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
+import { fetchSalonInfoFromSalonBoard } from '../lib/salonboard-sync'
 import { processStyleImage } from '../lib/image-process'
 import { INITIAL_BURST_COUNT, resetStuckJobsForUser } from '../lib/style-post-runner'
 import type { Bindings, AppUser } from '../types'
@@ -554,7 +555,7 @@ style.get('/style/import', async (c) => {
         自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
       </div>
 
-      <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
+      <div id="import-list-container" data-cache-scope={`${user.id}_${user.active_salon_id ?? ''}`} class="bg-white rounded-xl border border-gray-100 p-6 hidden">
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-1">
           <button
             id="import-execute-btn"
@@ -593,6 +594,49 @@ async function ensureSalonSelected(
   }
 }
 
+// 2026-08-17追記(至急・ユーザー報告対応): 「既存スタイル取り込み」で
+// 全く無関係な他サロンのスタイルがプレビューに表示される不具合が報告された。
+// このプレビューはSalonMotionのDBを一切経由せず、ログイン済みのブラウザ
+// セッションから直接スクレイピングしているため、原因はDBクエリではなく
+// ログイン後のセッション/プロキシ側にある可能性が高いが、実環境での
+// 再現・特定には至っていない。根本原因の特定に関わらず、誤ったサロンの
+// データを絶対に取り込ませない安全策として、スクレイピング直前に
+// ログイン後の画面が表示しているサロン名・サロンID(STORE_ID)を、
+// このユーザーが登録しているサロン情報(salonboard_salons.salon_key)と
+// 突き合わせ、一致しない場合は取り込みを中断する。
+// 期待値(salon_key)が未登録のサロン(初回同期がまだの場合など)では
+// 突き合わせできないため、警告ログのみでスキップする(誤ブロックを避ける)。
+async function verifyLoggedInSalonMatches(
+  c: AppContext,
+  page: any,
+  user: AppUser,
+  log: (msg: string) => void
+): Promise<void> {
+  const expected = await c.env.DB.prepare('SELECT salon_key, salon_name FROM salonboard_salons WHERE id = ?')
+    .bind(user.active_salon_id)
+    .first<{ salon_key: string | null; salon_name: string | null }>()
+
+  if (!expected?.salon_key) {
+    console.warn(
+      `[style-import] サロン照合スキップ(登録済みsalon_key無し): user_id=${user.id} salon_id=${user.active_salon_id}`
+    )
+    return
+  }
+
+  const actual = await fetchSalonInfoFromSalonBoard(page)
+  if (!actual?.storeId || actual.storeId !== expected.salon_key) {
+    console.error(
+      `[style-import] サロン不一致を検出したため取り込みを中断: user_id=${user.id} salon_id=${user.active_salon_id} ` +
+        `expected_salon_key=${expected.salon_key} actual_store_id=${actual?.storeId || '(取得不可)'} ` +
+        `actual_salon_name=${actual?.salonName || '(取得不可)'}`
+    )
+    log('警告: ログイン後の画面が登録済みのサロンと一致しないため、安全のため取り込みを中断しました')
+    throw new Error(
+      'サロンボードへのログイン結果が登録済みのサロンと一致しなかったため、安全のため取り込みを中断しました。時間を置いて再度お試しいただくか、解決しない場合は運営までお問い合わせください。'
+    )
+  }
+}
+
 style.post('/api/style/import/fetch-list', async (c) => {
   const user = c.get('user')
   const cred = await c.env.DB.prepare(
@@ -613,6 +657,7 @@ style.post('/api/style/import/fetch-list', async (c) => {
     const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
     await ensureSalonSelected(page, cred.target_store_id, () => {})
+    await verifyLoggedInSalonMatches(c, page, user, () => {})
 
     const list = await fetchExistingStyles(page, () => {})
     return c.json({ success: true, styles: list })
@@ -649,6 +694,7 @@ style.post('/api/style/import/execute', async (c) => {
     const page = await newAutomationPage(browser)
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
     await ensureSalonSelected(page, cred.target_store_id, () => {})
+    await verifyLoggedInSalonMatches(c, page, user, () => {})
 
     if (!user.active_salon_id) return c.json({ success: false, error: '対象のサロンが選択されていません' }, 400)
     const result = await importSelectedStyles(page, c.env, user.id, user.active_salon_id, styleIds, () => {})

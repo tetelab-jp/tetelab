@@ -14,7 +14,18 @@ document.addEventListener('DOMContentLoaded', () => {
   // 再訪問時は自動的に復元表示する(再取得ボタンはそのまま使え、押せば
   // いつでも最新化できる)。キャッシュ表示時はサロンボードへ再アクセスしない
   // ため、通信量もむしろ減る。
-  const CACHE_KEY = 'salonmotion_style_import_cache'
+  // 2026-08-17追記(至急・重大バグ修正): CACHE_KEYが固定文字列だったため、
+  // 同じブラウザ(同じlocalStorage)を複数のSalonMotionアカウントで使い回すと
+  // (代理店・複数店舗管理などで同一端末から別アカウントに切り替える場合)、
+  // 別アカウントが取得した取り込み候補一覧が最大24時間そのまま表示されて
+  // しまう不具合があった(ユーザー報告により発覚)。ログイン中のユーザーID・
+  // サロンIDをキーに含めることでアカウントごとにキャッシュを分離する。
+  const OLD_UNSCOPED_CACHE_KEY = 'salonmotion_style_import_cache'
+  try {
+    localStorage.removeItem(OLD_UNSCOPED_CACHE_KEY)
+  } catch (e) {}
+  const cacheScope = listContainer ? listContainer.dataset.cacheScope || 'unknown' : 'unknown'
+  const CACHE_KEY = 'salonmotion_style_import_cache_v2_' + cacheScope
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
   function renderList(styles) {
