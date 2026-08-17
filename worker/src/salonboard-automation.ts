@@ -1069,6 +1069,30 @@ async function readFormCounters(page: Page): Promise<{ bodyCount: number; lineBr
   return { bodyCount: Number(match[1]), lineBreaks: Number(match[2]), images: Number(match[3]) }
 }
 
+// 2026-08-17追記(診断強化): 画面上の「n/4」カウンタは実際にはSALON BOARD側の
+// クライアントJSがAJAX成功時に楽観的に更新しているだけの表示であり、確認ボタン
+// 押下直前でも1/4を示すのに実際の記事には写真が反映されない不具合が実機で
+// 再現した(確認画面のimg要素はロゴ等のサイト共通画像のみで、記事写真の
+// プレビュー自体が存在しないことも判明)。カウンタとは別に、実際に送信される
+// であろう画像参照の隠しinput(imagePath1等、名前/idにimage・pathを含むもの)の
+// 値そのものを複数のタイミングで記録し、次回以降「そもそも値が入っていない」
+// のか「途中で消える」のかを切り分けられるようにする。
+async function logImageFieldState(page: Page, log: AutomationLogger, label: string): Promise<void> {
+  const fields = await page
+    .evaluate(() => {
+      const inputs = Array.from(document.querySelectorAll('input')) as HTMLInputElement[]
+      return inputs
+        .filter((el) => /image|path/i.test(el.name || '') || /image|path/i.test(el.id || ''))
+        .map((el) => `${el.id || el.name || '(id/name無し)'}(type=${el.type})=${(el.value || '').slice(0, 100)}`)
+    })
+    .catch(() => null)
+  log(
+    `[診断:${label}] 画像関連input要素の状態: ${
+      fields ? (fields.length ? fields.join(' | ') : '(該当フィールド無し)') : '(取得失敗)'
+    }`
+  )
+}
+
 async function uploadBlogImageOnce(page: Page, imageBuffer: ArrayBuffer, fileName: string, log: AutomationLogger): Promise<void> {
   log('ブログ画像アップロードモーダルを開いています...')
   await page.waitForSelector('#upload', { timeout: 15000 })
@@ -1118,6 +1142,7 @@ async function uploadBlogImageOnce(page: Page, imageBuffer: ArrayBuffer, fileNam
     throw new Error(`画像アップロードに失敗しました: アップロード完了を45秒待っても検知できませんでした(${String(err?.message || err)})`)
   }
   log('画像アップロードが完了しました')
+  await logImageFieldState(page, log, 'アップロード完了直後・モーダルを閉じる前')
 
   // モーダルを閉じる(開いたままだと後続のフォーム操作を妨げる可能性があるため)
   const closeBtn = await page.$('.imageUploaderModalTopCloseButton')
@@ -1177,10 +1202,6 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   log('ブログ編集ページへ遷移中...')
   await page.goto(`${SALONBOARD_BASE_URL}/CLP/bt/blog/blog/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
   await page.waitForSelector('#blog', { timeout: 15000 })
-
-  if (input.imageBuffer && input.imageFileName) {
-    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
-  }
 
   if (input.stylistSelectValue) {
     const stylistHandle = await page.$('#stylistId')
@@ -1262,6 +1283,20 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }
     ;(w.__blogContentsFillMethod as any) = filled ? 'nicedit' : 'textarea-only'
   }, input.body)
+
+  // 2026-08-17追記(ユーザー指摘に基づく重大バグ修正): 画像アップロードは
+  // 本文入力より前ではなく後に行う。「アップロード」ボタンはnicEditの本文
+  // 編集領域そのものに画像を挿入する機能(featured imageのような独立した
+  // 添付枠ではない)である疑いが強く、実際その場合、先に画像を挿入しても
+  // 直後の本文書き込み(editor.setContent()/iframe.innerHTML=等、編集領域を
+  // 丸ごと上書きする方式)で挿入した画像ごと消えてしまう。これは「投稿ログは
+  // 成功と表示されるのに実際には写真が反映されない」という繰り返し報告
+  // (確認画面に記事写真のプレビュー要素自体が存在しないことも実機で確認済み、
+  // 独立添付枠ではなく本文内挿入である傍証)と完全に整合するため、本文を
+  // 先に確定させてから画像を挿入する順序に変更する。
+  if (input.imageBuffer && input.imageFileName) {
+    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
+  }
 
   // 即時投稿を明示する(SALON BOARD側の予約投稿機能は使わない)
   await page.evaluate(() => {
@@ -1365,6 +1400,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
       )
       await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
     }
+    await logImageFieldState(page, log, '確認ボタン押下直前')
   }
 
   const finalConfirmHandle = await page.$('#confirm')
@@ -1415,18 +1451,13 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   }
 
   // 2026-08-15追記(診断強化): 「投稿完了」と表示されたにもかかわらず、
-  // 実際には画像が投稿されていなかった実機報告があった。編集フォーム上の
-  // 画像カウンタは正しく1/4を示していたため、確認画面(#confirm押下後、
-  // #reflect押下前)で画像が本当にプレビューへ反映されているかを毎回
-  // ログに残し、次回同様の報告があった際に「確認画面の時点で既に画像が
-  // 欠落していた(=このワーカー側の不具合)」のか「確認画面には映って
-  // いたのに最終的な公開記事に反映されなかった(=SALON BOARD側の問題の
-  // 可能性)」のかを切り分けられるようにする。
-  // 2026-08-17追記(診断強化): 「確認画面のimg要素数」だけではロゴ・アイコン等の
-  // サイト共通画像も一緒に数えてしまい、記事の写真が本当にプレビューへ反映
-  // されているかを判別できなかった(実機報告で「投稿完了と表示されたのに写真が
-  // 反映されていない」が再発したが、件数だけでは原因を切り分けられなかった)。
-  // 次回以降の切り分けのため、各img要素のsrc(先頭80文字)も併せて記録する。
+  // 実際には画像が投稿されていなかった実機報告があった。確認画面
+  // (#confirm押下後、#reflect押下前)のimg要素を毎回ログに残していたが、
+  // 2026-08-17の実機報告で、確認画面のimg要素はサイト共通のロゴ・メニュー
+  // アイコン等(7件)のみであり、記事写真のプレビュー自体がそもそも存在しない
+  // ことが判明した(src一覧で確認済み)。そのためimg要素の件数・src一覧は
+  // この不具合の切り分けには使えない(誤った前提だった)。代わりに
+  // logImageFieldState()で実際の隠しinputの値を追跡する方針に切り替える。
   const confirmScreenImageInfo = await page
     .evaluate(() =>
       Array.from(document.querySelectorAll('img')).map((img) => (img.getAttribute('src') || '(src無し)').slice(0, 80))
@@ -1438,16 +1469,8 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }`
   )
 
-  // 2026-08-17追記(ユーザー指摘に基づく安全策): 編集フォーム上のカウンタ
-  // (#confirm押下前)だけでは、確認画面への遷移中に画像が失われるケースを
-  // 検知できない。確認画面のimg要素が1件も無ければ(サイト共通のロゴ・
-  // アイコン類すら無いことは通常あり得ないため)、記事の写真が確実に
-  // 欠落していると判断できる。この場合は「登録が完了しました」の表示だけを
-  // もって成功と誤認しないよう、ここで明確に失敗させる(何枚のうちどれが
-  // 記事の写真かまでは実HTML未確認のため判別できないが、0件は曖昧さの
-  // 無い失敗シグナルとして扱う)。
-  if (input.imageBuffer && input.imageFileName && confirmScreenImageInfo && confirmScreenImageInfo.length === 0) {
-    throw new Error('確認画面に画像が1件も表示されていません(記事の写真が欠落している可能性が高いため登録を中断しました)')
+  if (input.imageBuffer && input.imageFileName) {
+    await logImageFieldState(page, log, '登録ボタン押下直前')
   }
 
   log('「登録・反映する」を実行中...')
