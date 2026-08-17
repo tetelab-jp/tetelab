@@ -483,6 +483,14 @@ auth.post('/login', async (c) => {
 
 auth.post('/logout', (c) => {
   deleteCookie(c, SESSION_COOKIE_NAME, { path: '/' })
+  // 2026-08-17追記: なりすましログイン(admin.tsxのimpersonateSalonSession)は
+  // ADMIN_HOST設定時、親ドメイン(.salonmotion.com)スコープでこのCookieを
+  // 発行することがある。Domain属性が異なるCookieは別物として扱われ上の
+  // deleteCookieだけでは消えないため、該当する場合は同じDomain指定でも削除する。
+  const mainHost = c.env.APP_BASE_URL ? new URL(c.env.APP_BASE_URL).hostname : undefined
+  if (c.env.ADMIN_HOST && mainHost) {
+    deleteCookie(c, SESSION_COOKIE_NAME, { path: '/', domain: `.${mainHost}` })
+  }
   return c.redirect('/login')
 })
 

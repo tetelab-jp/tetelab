@@ -132,7 +132,14 @@ resource "aws_ecs_task_definition" "app" {
         { name = "ECS_SUBNET_IDS", value = join(",", data.aws_subnets.default_public.ids) },
         { name = "ECS_SECURITY_GROUP_IDS", value = aws_security_group.worker_task.id },
         { name = "SNS_ALERT_TOPIC_ARN", value = aws_sns_topic.alerts.arn },
-        { name = "SES_FROM_EMAIL", value = local.has_domain ? "noreply@${var.route53_zone_name}" : "" }
+        # 2026-08-17追記(重大バグ修正): route53_zone_nameは
+        # manage_dns_in_route53=trueの場合のみ設定される変数であり、
+        # お名前.com運用(false)では未設定のままSES_FROM_EMAILが壊れていた。
+        # 公開ホスト名を表すdomain_nameに統一する(詳細はses.tf参照)。
+        { name = "SES_FROM_EMAIL", value = local.has_domain ? "noreply@${var.domain_name}" : "" },
+        # 2026-08-17追記(ユーザー指定): 管理者サイトを別ドメインで公開する場合の
+        # ホスト名。未設定なら従来通り同一ドメインでadmin/一般ユーザー共存。
+        { name = "ADMIN_HOST", value = var.admin_domain_name }
       ]
       secrets = [
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.database_url.arn },

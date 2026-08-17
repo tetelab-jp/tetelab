@@ -7,6 +7,14 @@
 # 送信元アドレスはノーリプライの自動送信用に固定でnoreply@<ルートドメイン>とする
 # (問い合わせ返信を受けたい用途が別途あれば、受信側の設定と合わせて追加検討する)。
 #
+# 2026-08-17追記(重大バグ修正): 以前はここ全体でvar.route53_zone_nameを
+# ドメイン名として使っていたが、route53_zone_nameは「manage_dns_in_route53=true
+# の場合のみ使用」する変数(Route53にどのホストゾーンへレコードを書き込むかの
+# 指定)であり、お名前.com等でDNSを管理していてmanage_dns_in_route53=falseの
+# 構成では未設定のままになる。その結果SESのドメイン検証・送信元アドレスが
+# 常に空/不正なドメインになり、パスワード再設定メール等が送信できない不具合が
+# 発生していた。公開ホスト名を表すvar.domain_nameに統一する。
+#
 # 注意: ここで作成するのはドメインの検証設定のみ。実際にサロン顧客宛へ送信
 # できるようにするには、AWSサポートへ「SESサンドボックス解除」の申請が別途
 # 必要(AWSアカウント側の作業、Terraformでは自動化できない)。申請が完了する
@@ -14,7 +22,7 @@
 
 resource "aws_ses_domain_identity" "main" {
   count  = local.has_domain ? 1 : 0
-  domain = var.route53_zone_name
+  domain = var.domain_name
 }
 
 resource "aws_ses_domain_dkim" "main" {
@@ -26,7 +34,7 @@ resource "aws_ses_domain_dkim" "main" {
 resource "aws_route53_record" "ses_verification" {
   count   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
   zone_id = data.aws_route53_zone.primary[0].zone_id
-  name    = "_amazonses.${var.route53_zone_name}"
+  name    = "_amazonses.${var.domain_name}"
   type    = "TXT"
   ttl     = 600
   records = [aws_ses_domain_identity.main[0].verification_token]
@@ -37,7 +45,7 @@ resource "aws_route53_record" "ses_verification" {
 resource "aws_route53_record" "ses_dkim" {
   count   = local.has_domain && var.manage_dns_in_route53 ? 3 : 0
   zone_id = data.aws_route53_zone.primary[0].zone_id
-  name    = "${aws_ses_domain_dkim.main[0].dkim_tokens[count.index]}._domainkey.${var.route53_zone_name}"
+  name    = "${aws_ses_domain_dkim.main[0].dkim_tokens[count.index]}._domainkey.${var.domain_name}"
   type    = "CNAME"
   ttl     = 600
   records = ["${aws_ses_domain_dkim.main[0].dkim_tokens[count.index]}.dkim.amazonses.com"]

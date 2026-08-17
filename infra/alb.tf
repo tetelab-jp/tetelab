@@ -3,7 +3,8 @@
 # ドメインを用意できたら var.domain_name を設定してapplyし直すことで、
 # ACM証明書・HTTPSリスナー・独自ドメインへの向き先が自動的に追加される。
 locals {
-  has_domain = var.domain_name != ""
+  has_domain       = var.domain_name != ""
+  has_admin_domain = var.admin_domain_name != ""
 }
 
 data "aws_route53_zone" "primary" {
@@ -13,9 +14,12 @@ data "aws_route53_zone" "primary" {
 }
 
 resource "aws_acm_certificate" "app" {
-  count             = local.has_domain ? 1 : 0
-  domain_name       = var.domain_name
-  validation_method = "DNS"
+  count       = local.has_domain ? 1 : 0
+  domain_name = var.domain_name
+  # 管理者サイト用ドメイン(admin_domain_name)も同じ証明書でカバーする
+  # (ALBのHTTPSリスナーは1つのままで、Host名違いの両方のドメインにTLS応答できる)。
+  subject_alternative_names = local.has_admin_domain ? [var.admin_domain_name] : []
+  validation_method         = "DNS"
 
   lifecycle {
     create_before_destroy = true
@@ -156,6 +160,22 @@ resource "aws_route53_record" "app" {
   count   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
   zone_id = data.aws_route53_zone.primary[0].zone_id
   name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.app.dns_name
+    zone_id                = aws_lb.app.zone_id
+    evaluate_target_health = true
+  }
+}
+
+# 管理者サイト用ドメイン(admin_domain_name)も同じALBを指す。ALB側はHTTPS
+# リスナー1つで両ドメインを受け(証明書がSANでカバー済み)、Host名の振り分けは
+# アプリ側(src/index.tsx、ADMIN_HOST環境変数)で行う。
+resource "aws_route53_record" "admin" {
+  count   = local.has_admin_domain && var.manage_dns_in_route53 ? 1 : 0
+  zone_id = data.aws_route53_zone.primary[0].zone_id
+  name    = var.admin_domain_name
   type    = "A"
 
   alias {
