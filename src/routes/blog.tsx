@@ -742,6 +742,16 @@ blog.post('/blog/template/categories/:id', async (c) => {
     )
   ).sort((a, b) => a - b)
 
+  // 2026-08-17追記(至急・アカウント跨ぎのデータ混入対策): 他サロンの
+  // スタイリストIDを直接POSTされた場合にそのまま保存しないよう検証する。
+  let defaultStylistId = body.default_stylist_id ? Number(body.default_stylist_id) : null
+  if (defaultStylistId) {
+    const owned = await c.env.DB.prepare('SELECT id FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+      .bind(defaultStylistId, user.id, user.active_salon_id)
+      .first()
+    if (!owned) defaultStylistId = null
+  }
+
   await c.env.DB.prepare(
     `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, season_months_json=?
      WHERE id=? AND user_id=? AND salon_id=?`
@@ -749,7 +759,7 @@ blog.post('/blog/template/categories/:id', async (c) => {
     .bind(
       String(body.name || '').trim(),
       String(body.hpb_category_value || '').trim() || null,
-      body.default_stylist_id ? Number(body.default_stylist_id) : null,
+      defaultStylistId,
       String(body.key_message || '').trim() || null,
       String(body.body_prompt || '').trim() || null,
       JSON.stringify(seasonMonths),
@@ -813,7 +823,9 @@ async function generateOneArticle(
   const bodyMaxChars = await computeBodyMaxChars(c, user)
 
   const stylistRow = category.default_stylist_id
-    ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
+    ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+        .bind(category.default_stylist_id, user.id, user.active_salon_id)
+        .first<{ name: string }>()
     : null
 
   const seasonMonths = parseSeasonMonths(category.season_months_json)
@@ -1066,6 +1078,36 @@ function parseArticleForm(body: Record<string, any>) {
   }
 }
 
+// 2026-08-17追記(至急・アカウント跨ぎのデータ混入対策): category_id/stylist_id/
+// coupon_idはフォームから送られてくる数値IDをそのまま保存していたため、
+// 他アカウント(他サロン)のIDを直接POSTされた場合にそのまま保存されてしまう
+// (一覧表示や記事生成時にJOIN/SELECTで他サロンの名前が引けてしまう)。
+// 保存前に必ずこのサロン自身が所有するIDかを検証し、所有していなければnullにする。
+async function sanitizeOwnedArticleRefs(
+  c: AppContext,
+  user: AppUser,
+  parsed: { categoryId: number | null; stylistId: number | null; couponId: number | null }
+): Promise<void> {
+  if (parsed.categoryId) {
+    const owned = await c.env.DB.prepare('SELECT id FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
+      .bind(parsed.categoryId, user.id, user.active_salon_id)
+      .first()
+    if (!owned) parsed.categoryId = null
+  }
+  if (parsed.stylistId) {
+    const owned = await c.env.DB.prepare('SELECT id FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+      .bind(parsed.stylistId, user.id, user.active_salon_id)
+      .first()
+    if (!owned) parsed.stylistId = null
+  }
+  if (parsed.couponId) {
+    const owned = await c.env.DB.prepare('SELECT id FROM coupons WHERE id = ? AND user_id = ? AND salon_id = ?')
+      .bind(parsed.couponId, user.id, user.active_salon_id)
+      .first()
+    if (!owned) parsed.couponId = null
+  }
+}
+
 async function saveArticleImageIfProvided(c: AppContext, user: AppUser, articleId: number, body: Record<string, any>) {
   const file = body.image as File | undefined
   if (!file || !(file instanceof File) || file.size === 0) return
@@ -1113,6 +1155,7 @@ blog.post('/blog/articles/new', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
+  await sanitizeOwnedArticleRefs(c, user, parsed)
   if (parsed.footerEnabled) {
     const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterText(parsed.body, footerText)
@@ -1194,6 +1237,7 @@ blog.post('/blog/articles/:id/edit', async (c) => {
 
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
+  await sanitizeOwnedArticleRefs(c, user, parsed)
 
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
@@ -1335,7 +1379,9 @@ blog.post('/blog/generate', async (c) => {
     const profile = await getSalonProfileForGeneration(c, user)
     const bodyMaxChars = await computeBodyMaxChars(c, user)
     const stylistRow = category.default_stylist_id
-      ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ?').bind(category.default_stylist_id).first<{ name: string }>()
+      ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+          .bind(category.default_stylist_id, user.id, user.active_salon_id)
+          .first<{ name: string }>()
       : null
     const seasonMonths = parseSeasonMonths(category.season_months_json)
 
@@ -1429,9 +1475,9 @@ blog.get('/blog/articles', async (c) => {
        a.auto_post_enabled_flag, a.category_id, a.last_error,
        bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
-     LEFT JOIN blog_categories bc ON bc.id = a.category_id
-     LEFT JOIN stylists st ON st.id = a.stylist_id
-     LEFT JOIN coupons cp ON cp.id = a.coupon_id
+     LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
+     LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
+     LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
      WHERE a.user_id = ? AND a.salon_id = ?
      ORDER BY a.sort_order ASC, a.id ASC`
   )
