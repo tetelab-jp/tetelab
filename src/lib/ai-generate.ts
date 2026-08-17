@@ -14,6 +14,11 @@ const DEFAULT_MODEL = 'gpt-4o-mini'
 // fetchベース・JSON strict出力パターンを踏襲する。
 // ============================================
 
+export type BlogReferenceArticle = {
+  title: string | null
+  excerpt: string
+}
+
 export type SalonProfileForGeneration = {
   salon_name: string | null
   area_label: string | null
@@ -26,13 +31,14 @@ export type SalonProfileForGeneration = {
   sentence_ending: string | null
   ng_words: string | null
   reference_text: string | null
+  // 2026-08-17追記: 文章スタイル選択ドロップダウン(style_mode)を廃止し、
+  // 「サロンボードから読み込む」で取得したHPB公開ページの情報を常に
+  // 参考材料として使う方式に変更した。未取得ならnull。
+  hpb_catch: string | null
+  hpb_copy: string | null
+  hpb_message: string | null
+  reference_articles: BlogReferenceArticle[]
 } | null
-
-// カテゴリごとの「文章スタイル」設定。
-// scraped: サロンボードの過去ブログ記事を参照する(未実装、現時点ではparamsと同じ扱い)
-// reference: サロン基本情報に入力した参考文章を参照する
-// params: 一人称・語尾・文体などのパラメータのみを使用する(デフォルト)
-export type BlogStyleMode = 'scraped' | 'reference' | 'params'
 
 // 記事カテゴリに設定された季節パラメータ(「1・2月」のような二月セットの
 // チェックボックス)を、生成AIへの季節柄の指示として1行にする。
@@ -54,7 +60,27 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   if (profile?.first_person) lines.push(`一人称: ${profile.first_person}`)
   if (profile?.sentence_ending) lines.push(`語尾: ${profile.sentence_ending}`)
   if (profile?.ng_words) lines.push(`避けるべき表現・NGワード: ${profile.ng_words}`)
+  if (profile?.hpb_catch) lines.push(`サロンのキャッチコピー: ${profile.hpb_catch}`)
+  if (profile?.hpb_copy) lines.push(`サロンの紹介文: ${profile.hpb_copy}`)
+  if (profile?.hpb_message) lines.push(`サロンからの一言メッセージ: ${profile.hpb_message}`)
   return lines
+}
+
+/**
+ * 「サロンボードから読み込む」で取得した過去のブログ記事の抜粋を、
+ * 文体を真似るための参考材料としてsystemプロンプトに渡す。
+ * 全件(最大100件)を渡すとトークン消費が大きくなるため、直近の数件のみ使う。
+ */
+const MAX_REFERENCE_ARTICLES_IN_PROMPT = 6
+
+function buildReferenceArticleLines(profile: SalonProfileForGeneration): string[] {
+  const articles = profile?.reference_articles?.slice(0, MAX_REFERENCE_ARTICLES_IN_PROMPT) || []
+  if (articles.length === 0) return []
+  const lines: (string | null)[] = ['以下はこのサロンが過去に投稿したブログ記事の抜粋です。文体・言い回し・雰囲気の参考にしてください(内容そのものを引用・流用しないこと):']
+  for (const a of articles) {
+    lines.push(`---`, a.title ? `タイトル: ${a.title}` : null, a.excerpt.slice(0, 300))
+  }
+  return lines.filter((l): l is string => l !== null)
 }
 
 function logTokenUsage(label: string, data: any): void {
@@ -132,7 +158,6 @@ export type ArticleGenerationInput = {
   couponName: string | null
   bodyMaxChars: number
   profile: SalonProfileForGeneration
-  styleMode: BlogStyleMode | null
   seasonMonths?: number[] | null
 }
 
@@ -177,9 +202,12 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。'
   ]
 
-  // 文章スタイル: reference選択時のみ、サロン基本情報の参考文章を文体の
-  // お手本として渡す(scrapedは未実装のためparamsと同じ扱いにフォールバックする)。
-  if (input.styleMode === 'reference' && input.profile?.reference_text) {
+  systemLines.push(...buildReferenceArticleLines(input.profile))
+
+  // 2026-08-17追記(ユーザー指定): 文章スタイル選択ドロップダウン(style_mode)を
+  // 廃止したため、サロン基本情報の参考文章(reference_text)はUIから入力できなく
+  // なった。過去に入力済みのデータが残っている場合のみ、後方互換として参考にする。
+  if (input.profile?.reference_text) {
     systemLines.push(
       '以下は参考文章です。この文章の口調・言い回し・雰囲気に近づけて書いてください(内容そのものを引用・流用しないこと):',
       '---',

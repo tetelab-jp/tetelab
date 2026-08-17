@@ -11,8 +11,13 @@ document.addEventListener('DOMContentLoaded', () => {
       var res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
       var data = await res.json()
       if (data.success) {
-        await fetch('/blog/salon/mark-synced', { method: 'POST' })
-        status.textContent = `完了しました(スタイリスト${data.stylistCount}件・クーポン${data.couponCount}件を取得)`
+        var syncRes = await fetch('/blog/salon/mark-synced', { method: 'POST' })
+        var syncData = await syncRes.json()
+        var msg = `完了しました(スタイリスト${data.stylistCount}件・クーポン${data.couponCount}件・ブログ記事${syncData.articleCount || 0}件を取得)`
+        if (syncData.hpbError) {
+          msg += ' / ' + syncData.hpbError
+        }
+        status.textContent = msg
         setTimeout(function () {
           location.reload()
         }, 800)

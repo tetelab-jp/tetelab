@@ -330,3 +330,100 @@ export function parseHpbReviewPage(html: string): HpbReviewPageResult {
 
   return { items, nextPageUrl, salonAverageScore }
 }
+
+// --------------------------------------------
+// ブログ参考材料機能(2026-08-17追記): HPB公開サロンページからの
+// キャッチ・コピー・からの一言(メッセージ)、および公開ブログ一覧の抜粋の抽出
+// --------------------------------------------
+
+export type SalonHpbProfileInfo = {
+  /** .shopCatchCopy */
+  catchCopy: string | null
+  /** .slnTopImgDescription */
+  description: string | null
+  /** 見出しに「からの一言」を含むセクションの本文(構造で辿るため、クラス名は
+   *  サイト側の変更に多少強い。同じクラスが他の見出しにも使われているため
+   *  テキスト内容で判定する) */
+  message: string | null
+}
+
+/**
+ * サロンの公開ページ(https://beauty.hotpepper.jp/sln{STORE_ID}/)から
+ * キャッチコピー・紹介文・「からの一言」メッセージを抽出する。
+ */
+export function extractSalonProfileFromSlnPage(html: string): SalonHpbProfileInfo {
+  const $ = cheerio.load(html)
+
+  const catchCopy = $('.shopCatchCopy').first().text().replace(/\s+/g, ' ').trim() || null
+  const description = $('.slnTopImgDescription').first().text().replace(/\s+/g, ' ').trim() || null
+
+  let message: string | null = null
+  $('h2').each((_, h2) => {
+    const heading = $(h2).text().trim()
+    if (!heading.includes('からの一言')) return
+    // 見出しを含むdivの直後の兄弟要素(本文ブロック)の中にある<p>のうち、
+    // 氏名・肩書きに続く最後の<p>がメッセージ本文(実HTMLで確認済みの構造)
+    const container = $(h2).parent().next()
+    const paragraphs = container.find('p')
+    if (paragraphs.length > 0) {
+      const text = $(paragraphs.get(paragraphs.length - 1))
+        .text()
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (text) message = text
+    }
+    return false // 最初に一致したセクションのみ採用
+  })
+
+  return { catchCopy, description, message }
+}
+
+export type HpbBlogListItem = {
+  title: string | null
+  excerpt: string
+  sourceUrl: string
+  /** "YYYY-MM-DD"。一覧ページに日付表示が無い/検出できない場合はnull */
+  postedDate: string | null
+}
+
+export type HpbBlogListPageResult = {
+  items: HpbBlogListItem[]
+  nextPageUrl: string | null
+}
+
+/**
+ * HPB公開ブログ一覧ページ(https://beauty.hotpepper.jp/{hpbSlnId}/blog/)
+ * 1ページ分をパースする。一覧には抜粋(「続きを見る」で個別ページへの
+ * リンク)のみが掲載されており、全文は個別ページに遷移しないと取得できない。
+ * AI生成の参考材料としては抜粋で十分なため、個別ページへの追加アクセスは行わない。
+ */
+export function parseHpbBlogListPage(html: string): HpbBlogListPageResult {
+  const $ = cheerio.load(html)
+
+  const items: HpbBlogListItem[] = []
+  $('li.blogListCassette').each((_, li) => {
+    const $li = $(li)
+    const title = $li.find('.blogListTtl').first().text().replace(/\s+/g, ' ').trim() || null
+
+    const $excerptBlock = $li.find('.mT5.wwbw').first()
+    if ($excerptBlock.length === 0) return
+    const sourceUrl = $excerptBlock.find('a').first().attr('href') || ''
+    if (!sourceUrl) return
+
+    const $excerptClone = $excerptBlock.clone()
+    $excerptClone.find('a').remove()
+    $excerptClone.find('br').replaceWith('\n')
+    const excerpt = $excerptClone.text().replace(/\n\s+/g, '\n').trim().replace(/…$/, '')
+    if (!excerpt) return
+
+    // 一覧上の日付表示は現状未確認のため、見つかれば拾う程度のベストエフォート
+    const dateText = $li.text().match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/)
+    const postedDate = dateText ? `${dateText[1]}-${dateText[2].padStart(2, '0')}-${dateText[3].padStart(2, '0')}` : null
+
+    items.push({ title, excerpt, sourceUrl, postedDate })
+  })
+
+  const nextPageUrl = $('link[rel="next"]').attr('href') || null
+
+  return { items, nextPageUrl }
+}
