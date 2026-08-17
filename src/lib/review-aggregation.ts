@@ -73,16 +73,25 @@ export type StylistBreakdownResult = {
  * stylist_idがNULL(名前不一致で未マッチ)の行はunmatchedStylistCountに
  * カウントするのみで、スタイリスト別ランキングには含めない。
  * sort='rating'(既定): 評価(総合スコア平均)順。sort='count': 件数順。
+ * direction='desc'(既定・高い順): DESC。'asc'(低い順): ASC。
+ * (2次キーは常にdirectionと同じ向きにする。例: 件数順・低い順なら
+ * 「件数の少ない順、同数なら評価の低い順」)
  */
 export async function getStylistBreakdown(
   env: Bindings,
   salonId: number,
   period: 'all' | string,
-  sort: 'rating' | 'count' = 'rating'
+  sort: 'rating' | 'count' = 'rating',
+  direction: 'desc' | 'asc' = 'desc'
 ): Promise<StylistBreakdownResult> {
   const periodClause = period === 'all' ? '' : `AND to_char(posted_at, 'YYYY-MM') = ?`
   const bindArgs: (number | string)[] = period === 'all' ? [salonId] : [salonId, period]
-  const orderClause = sort === 'count' ? 'cnt DESC, avg_overall DESC NULLS LAST' : 'avg_overall DESC NULLS LAST, cnt DESC'
+  const dir = direction === 'asc' ? 'ASC' : 'DESC'
+  const nullsClause = direction === 'asc' ? 'NULLS FIRST' : 'NULLS LAST'
+  const orderClause =
+    sort === 'count'
+      ? `cnt ${dir}, avg_overall ${dir} ${nullsClause}`
+      : `avg_overall ${dir} ${nullsClause}, cnt ${dir}`
 
   const { results } = await env.DB.prepare(
     `SELECT
