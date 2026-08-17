@@ -647,8 +647,13 @@ const bindings: Bindings = {
         ).run()
       }
 
+      // 2026-08-17追記(至急・重大バグ修正): schema_migration_flagsの主キーは
+      // flag_key(id列が無い)であり、明示的にRETURNINGを付けないとdb.tsの
+      // 互換シムが自動付与する`RETURNING id`が"column id does not exist"で
+      // 常に失敗し、このフラグが一度も記録されずマイグレーションが毎回
+      // (=デプロイのたびに)再実行されてしまっていた(詳細はsrc/lib/db.ts参照)。
       await bindings.DB.prepare(
-        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_workspace_backfill_v1') ON CONFLICT (flag_key) DO NOTHING`
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_workspace_backfill_v1') ON CONFLICT (flag_key) DO NOTHING RETURNING flag_key`
       ).run()
     }
   } catch (err) {
@@ -882,8 +887,13 @@ const bindings: Bindings = {
          FROM users u
          WHERE s.user_id = u.id`
       ).run()
+      // 2026-08-17追記(至急・重大バグ修正): 上のsalon_workspace_backfill_v1と同じ
+      // 理由(詳細はsrc/lib/db.ts参照)で、明示的にRETURNINGを付ける。これが無いと
+      // このマイグレーションが毎回再実行され、管理者が/admin/toolで手動有効化した
+      // salonboard_salons.style_enabled等が、デプロイのたびに参照されなくなった
+      // users側の古い値へ強制的に巻き戻されてしまっていた(ユーザー報告により発覚)。
       await bindings.DB.prepare(
-        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_feature_flags_backfill_v1') ON CONFLICT (flag_key) DO NOTHING`
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('salon_feature_flags_backfill_v1') ON CONFLICT (flag_key) DO NOTHING RETURNING flag_key`
       ).run()
     }
   } catch (err) {

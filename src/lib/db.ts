@@ -59,11 +59,31 @@ class PgPreparedStatement {
   async run(): Promise<D1LikeRunResult> {
     const isInsert = /^\s*INSERT\b/i.test(this.sql)
     const hasReturning = /\bRETURNING\b/i.test(this.sql)
-    const sql = this.toPgQuery() + (isInsert && !hasReturning ? ' RETURNING id' : '')
-    const res = await this.pool.query(sql, this.params)
-    return {
-      success: true,
-      meta: { last_row_id: isInsert ? (res.rows[0]?.id as number | undefined) : undefined }
+    const pgSql = this.toPgQuery()
+    const autoAppendReturning = isInsert && !hasReturning
+    try {
+      const res = await this.pool.query(pgSql + (autoAppendReturning ? ' RETURNING id' : ''), this.params)
+      return {
+        success: true,
+        meta: { last_row_id: isInsert ? (res.rows[0]?.id as number | undefined) : undefined }
+      }
+    } catch (err: any) {
+      // 2026-08-17追記(至急・重大バグ修正): 上のRETURNING id自動付与は、主キー列名が
+      // "id"ではないテーブル(例: schema_migration_flags、主キーはflag_key)への
+      // INSERTに対して常に"column \"id\" does not exist"(SQLSTATE 42703)で失敗して
+      // いた。この失敗は呼び出し元のtry/catchで黙って握りつぶされることが多く、
+      // 「一度だけ実行して完了フラグを記録する」はずのマイグレーションが、フラグの
+      // 記録自体に毎回失敗するせいでコンテナ起動のたびに再実行される、という重大な
+      // 副作用を引き起こしていた(例: 管理者が手動で有効化した機能フラグが、頻繁な
+      // デプロイのたびに古いデフォルト値へ強制的に巻き戻されていた)。id列が原因の
+      // エラーだけを検知し、RETURNING無しで再試行する(last_row_idは取得できないが、
+      // このエラーが起きる時点でそのテーブルはid列を持たないため、元々last_row_id
+      // を使う用途では呼ばれ得ない)。
+      if (autoAppendReturning && err?.code === '42703') {
+        const res = await this.pool.query(pgSql, this.params)
+        return { success: true, meta: { last_row_id: undefined } }
+      }
+      throw err
     }
   }
 
