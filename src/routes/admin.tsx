@@ -1400,6 +1400,49 @@ admin.get('/admin/status/upload-failure-ratio', requireAdminAuth, async (c) => {
   )
 })
 
+// 2026-08-17追記(至急・一時的な調査用): 起動時マイグレーションのRETURNING id
+// バグ(src/lib/db.ts参照、PR #199で修正)が実際に直っており、
+// schema_migration_flagsへの完了フラグ記録が今後は成功し続けることを
+// 直接確認するための診断ページ。
+admin.get('/admin/status/migration-flags', requireAdminAuth, async (c) => {
+  const adminUser = c.get('admin')
+  const { results: flags } = await c.env.DB.prepare(
+    `SELECT flag_key, applied_at FROM schema_migration_flags ORDER BY applied_at DESC`
+  ).all<{ flag_key: string; applied_at: string }>()
+
+  return c.render(
+    <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="起動時マイグレーション完了フラグ(一時調査用)">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4 max-w-xl">
+        <p class="text-sm text-gray-500">
+          salon_workspace_backfill_v1 / salon_feature_flags_backfill_v1 がこのテーブルに記録されていれば、
+          今後のデプロイでこれらの起動時マイグレーションは再実行されません。
+        </p>
+        {(flags || []).length === 0 ? (
+          <p class="text-sm text-red-600">記録が1件もありません。まだ修正が反映されていない可能性があります。</p>
+        ) : (
+          <table class="w-full text-sm">
+            <thead class="text-gray-500 text-xs">
+              <tr>
+                <th class="text-left py-1">flag_key</th>
+                <th class="text-left py-1">applied_at</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-50">
+              {flags.map((f) => (
+                <tr>
+                  <td class="py-1.5 font-mono text-xs">{f.flag_key}</td>
+                  <td class="py-1.5 text-gray-500">{f.applied_at}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </AdminPageLayout>,
+    { title: '起動時マイグレーション完了フラグ' }
+  )
+})
+
 // 2026-08-13追記(一時的な調査用): S3に実際に保存されている画像そのものの
 // サイズ・寸法を直接確認するための診断ページ。ブラウザ表示やサロンボード側の
 // 表示用サムネイル生成に左右されず、「実際にアップロード時点でどう保存
