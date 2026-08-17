@@ -806,6 +806,7 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
       body: row.body || '',
       categoryValue: row.hpb_category_value || '',
       stylistSelectValue: row.stylist_select_value || '',
+      couponSelectValue: row.coupon_select_value || undefined,
       imageBase64,
       imageFileName: row.image_file_name || (row.image_r2_key ? `blog-${row.id}.jpg` : null)
     }

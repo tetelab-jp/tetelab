@@ -1040,6 +1040,7 @@ export type BlogPostInput = {
   body: string // 本文(1000文字程度、フッター込み)
   categoryValue: string // blogCategoryCd の <option> の表示ラベル文字列(例:「こだわりの仕事道具」)、空なら未選択のまま
   stylistSelectValue: string // stylistId の <option value>(Tコード)、空なら未選択のまま
+  couponSelectValue?: string // クーポン選択モーダル内、対象行のinput[type=hidden]の値(CP+14桁形式。frmStyleEditStyleDto.couponIdと同じ形式)、未指定なら選択しない
   imageBuffer: ArrayBuffer | null // 画像が無い記事は許容する(SALON BOARD側の必須判定に委ねる)
   imageFileName: string | null
 }
@@ -1196,6 +1197,90 @@ async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: s
 }
 
 /**
+ * ブログ記事へのクーポン紐付け。「クーポン選択」ボタン→モーダル内の一覧から
+ * 対象クーポン(CP+14桁のコード、frmStyleEditStyleDto.couponIdと同じ形式)を
+ * 探して選択→「設定する」で確定する。実HTML(ユーザー提供のDevToolsスクリーン
+ * ショット、2026-08-17)で構造を確認済み:
+ *   - トリガー: <a class="jsc_SB_modal_trigger SB_modal_add_coupon_btn" data-modal-url="couponAcd.html">クーポン選択</a>
+ *   - モーダル: <div id="couponWrap" class="couponContents jsc_SB_modal_target">
+ *     (開くとstyle="display: block;"になる。一覧はAJAXで読み込まれる可能性が
+ *     あるため、単にモーダルの表示だけでなく対象クーポンのinput要素の出現も待つ)
+ *   - 一覧: #couponArea > ul.couponListArea > li > label.db > input[type=hidden][value="CPxxxxxxxxxxxxxx"]
+ *   - 確定ボタン: .jsc_SB_modal_setting_btn(行選択前は視覚的に非活性、選択後に有効化される)
+ * クーポン一覧に対象が見つからない・操作に失敗した場合は、記事全体の投稿を
+ * 失敗させるほど致命的ではないため、警告ログを残してスキップする(記事本文・
+ * 画像は正常に投稿される)。
+ */
+async function selectBlogCoupon(page: Page, couponSelectValue: string, log: AutomationLogger): Promise<void> {
+  log('クーポン選択モーダルを開いています...')
+  const triggerHandle = await page.$('.jsc_SB_modal_trigger.SB_modal_add_coupon_btn')
+  if (!triggerHandle) {
+    log('警告: 「クーポン選択」ボタンが見つからないため、クーポン設定をスキップします')
+    return
+  }
+  await triggerHandle.click()
+
+  const found = await page
+    .waitForFunction(
+      (cp: string) => {
+        const wrap = document.getElementById('couponWrap')
+        if (!wrap || getComputedStyle(wrap).display === 'none') return false
+        const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
+        return inputs.some((el) => el.value === cp)
+      },
+      { timeout: 15000 },
+      couponSelectValue
+    )
+    .then(() => true)
+    .catch(() => false)
+
+  if (!found) {
+    log(`警告: クーポン一覧に対象のクーポン(${couponSelectValue})が見つかりませんでした。クーポン設定をスキップします`)
+    const closeBtn = await page.$('.jsc_SB_modal_close_btn')
+    if (closeBtn) await closeBtn.click().catch(() => {})
+    return
+  }
+
+  const clicked = await page.evaluate((cp: string) => {
+    const wrap = document.getElementById('couponWrap')
+    if (!wrap) return false
+    const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
+    const target = inputs.find((el) => el.value === cp)
+    if (!target) return false
+    const label = target.closest('label') as HTMLElement | null
+    if (!label) return false
+    label.click()
+    return true
+  }, couponSelectValue)
+
+  if (!clicked) {
+    log(`警告: クーポン(${couponSelectValue})の行をクリックできませんでした。クーポン設定をスキップします`)
+    return
+  }
+
+  log('クーポンを選択しました。「設定する」ボタンの活性化を待機中...')
+  await new Promise((resolve) => setTimeout(resolve, 500))
+  const settingBtn = await page.$('.jsc_SB_modal_setting_btn')
+  if (!settingBtn) {
+    log('警告: 「設定する」ボタンが見つかりませんでした。クーポン設定をスキップします')
+    return
+  }
+  await settingBtn.click()
+
+  const closed = await page
+    .waitForFunction(
+      () => {
+        const wrap = document.getElementById('couponWrap')
+        return !wrap || getComputedStyle(wrap).display === 'none'
+      },
+      { timeout: 10000 }
+    )
+    .then(() => true)
+    .catch(() => false)
+  log(closed ? 'クーポンの設定が完了しました' : '警告: 「設定する」押下後もクーポン選択モーダルが閉じたことを確認できませんでした')
+}
+
+/**
  * ブログ記事1件をSALON BOARDへ投稿(入力→確認→登録・反映)する。
  */
 export async function postBlogArticle(page: Page, input: BlogPostInput, log: AutomationLogger): Promise<void> {
@@ -1228,6 +1313,10 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     if (!selected) {
       log(`カテゴリ「${input.categoryValue}」に一致する選択肢が見つかりませんでした`)
     }
+  }
+
+  if (input.couponSelectValue) {
+    await selectBlogCoupon(page, input.couponSelectValue, log)
   }
 
   await page.evaluate((text: string) => {

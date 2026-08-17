@@ -99,6 +99,7 @@ export type ReadyArticleRow = {
   hpb_category_value: string | null
   category_name: string | null
   stylist_select_value: string | null
+  coupon_select_value: string | null
 }
 
 type ReadyArticleRowInternal = ReadyArticleRow & {
@@ -111,10 +112,12 @@ const READY_ARTICLE_SELECT = `
   SELECT
     a.id, a.user_id, a.salon_id, a.title, a.body, a.footer_enabled_flag, a.image_r2_key, a.image_file_name,
     bc.hpb_category_value, bc.name AS category_name,
-    st.salonboard_stylist_key AS stylist_select_value
+    st.salonboard_stylist_key AS stylist_select_value,
+    cp.salonboard_coupon_key AS coupon_select_value
   FROM blog_articles a
   LEFT JOIN blog_categories bc ON bc.id = a.category_id
   LEFT JOIN stylists st ON st.id = a.stylist_id
+  LEFT JOIN coupons cp ON cp.id = a.coupon_id
 `
 
 /**
