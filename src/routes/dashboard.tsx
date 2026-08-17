@@ -1112,10 +1112,16 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
       }
 
       // 有効化(is_active_workspace)とactive_salon_idを確定させる。
-      // 既に有効化・確定済みの場合は何も変わらない(冪等)。
+      // 2026-08-17追記(至急・重大バグ修正): 従来はis_active_workspaceを常に1へ
+      // 無条件でUPDATEしていたため、管理者サイト(/admin/salons)が明示的に
+      // 無効化(is_active_workspace=0)したサロンでも、利用者が通常の「サロンボード
+      // と同期する」操作をするたびに勝手に有効化へ戻ってしまっていた。
+      // activated_at IS NULL(=一度も有効化されたことが無い、真の初回)の場合のみ
+      // 有効化する。一度でも有効化された(activated_atが立っている)行は、その後
+      // 管理者が無効化した可能性があるため、ここでは触らない。
       await c.env.DB.prepare(
-        `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)
-         WHERE user_id = ? AND salon_key = ?`
+        `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ? AND salon_key = ? AND activated_at IS NULL`
       )
         .bind(user.id, groupTopResult.storeId)
         .run()
@@ -1207,9 +1213,12 @@ dashboard.post('/api/settings/select-salon', async (c) => {
     .bind(storeId, user.id, user.id, storeId)
     .run()
 
+  // 2026-08-17追記(至急・重大バグ修正): dashboard.tsx内の同種のUPDATEと同じ理由で、
+  // 管理者サイトが明示的に無効化したサロンを勝手に再有効化しないよう、真の初回
+  // (activated_at IS NULL)の場合のみ有効化する。
   await c.env.DB.prepare(
-    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP)
-     WHERE user_id = ? AND salon_key = ?`
+    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP
+     WHERE user_id = ? AND salon_key = ? AND activated_at IS NULL`
   )
     .bind(user.id, storeId)
     .run()
