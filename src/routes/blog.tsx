@@ -11,7 +11,7 @@ import {
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
-import { formatJstDateOnly } from '../lib/date-format'
+import { formatJstDateCompact } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
 import type { Bindings, AppUser } from '../types'
@@ -175,7 +175,7 @@ blog.get('/blog/salon', async (c) => {
             スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
           </p>
           <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at || '未取得'}（参考記事{referenceArticleCount}件）
+            最終取得: {profile?.salonboard_synced_at ? formatJstDateCompact(profile.salonboard_synced_at) : '未取得'}（参考記事{referenceArticleCount}件）
           </p>
         </div>
         <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
@@ -1675,14 +1675,14 @@ blog.get('/blog/articles', async (c) => {
                       checked={a.auto_post_enabled_flag === 1}
                       title="自動投稿の対象"
                     />
-                    {a.image_r2_key ? (
-                      <img src={`/blog/article/${a.id}/image`} class="w-10 h-14 md:w-16 md:h-16 object-cover rounded-lg bg-gray-50 border border-gray-200 flex-shrink-0" />
-                    ) : (
-                      <div class="w-10 h-14 md:w-16 md:h-16 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300 flex-shrink-0">
-                        <i class="fas fa-image text-xl"></i>
-                      </div>
-                    )}
                   </div>
+                  {a.image_r2_key ? (
+                    <img src={`/blog/article/${a.id}/image`} class="w-10 h-14 md:w-16 md:h-16 object-cover rounded-lg bg-gray-50 border border-gray-200 flex-shrink-0" />
+                  ) : (
+                    <div class="w-10 h-14 md:w-16 md:h-16 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300 flex-shrink-0">
+                      <i class="fas fa-image text-xl"></i>
+                    </div>
+                  )}
                   <div class="flex-1 min-w-0">
                     <a href={`/blog/articles/${a.id}/edit`} class="block truncate text-sm md:text-base font-medium text-gray-700 hover:text-pink-600">
                       {a.title || '（未生成）'}
@@ -1690,7 +1690,7 @@ blog.get('/blog/articles', async (c) => {
                     <p class="text-xs text-gray-400 flex gap-2 flex-wrap mt-0.5">
                       <span>{a.category_name || '-'}</span>
                       <span>{a.stylist_name || '-'}</span>
-                      {a.last_posted_at && <span>最終投稿 {formatJstDateOnly(a.last_posted_at)}(投稿{a.post_count}回)</span>}
+                      {a.last_posted_at && <span>最終投稿 {formatJstDateCompact(a.last_posted_at)}(投稿{a.post_count}回)</span>}
                     </p>
                     <div class="flex flex-wrap gap-1 mt-1">
                       <BlogAutoPostStatusBadges a={a} />
@@ -1757,7 +1757,7 @@ blog.get('/blog/articles', async (c) => {
           ) : (
             postedArticles.map((a) => (
               <div class="flex items-center gap-3 px-4 py-3 text-sm">
-                <span class="w-24 flex-shrink-0 text-xs text-gray-400 font-mono">{formatJstDateOnly(a.last_posted_at!)}</span>
+                <span class="w-24 flex-shrink-0 text-xs text-gray-400 font-mono">{formatJstDateCompact(a.last_posted_at!)}</span>
                 <a href={`/blog/articles/${a.id}/edit`} class="flex-1 min-w-0 truncate text-pink-600 hover:text-pink-700">
                   {a.title || '（未生成）'}
                 </a>

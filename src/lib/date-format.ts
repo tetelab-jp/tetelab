@@ -31,3 +31,19 @@ export function formatJstDateOnly(sqliteTimestamp: string | null | undefined): s
   const full = formatJstDateTime(sqliteTimestamp)
   return full.slice(0, 10)
 }
+
+/**
+ * 表示用の簡易日付(ハイフン無し・年は下2桁・月日は先頭ゼロ無し)。
+ * 例: "2026-08-18" → "26/8/18"(2026-08-18追記・ユーザー指定: ハイフン区切りは
+ * 使わずこの形式に統一する)。
+ */
+export function compactDate(yyyyMmDd: string | null | undefined): string {
+  if (!yyyyMmDd || yyyyMmDd.length < 10) return yyyyMmDd || ''
+  const [yyyy, mm, dd] = yyyyMmDd.slice(0, 10).split('-')
+  return `${yyyy.slice(-2)}/${Number(mm)}/${Number(dd)}`
+}
+
+/** formatJstDateOnly() + compactDate()。TIMESTAMPカラムを"26/8/18"形式で表示する。 */
+export function formatJstDateCompact(sqliteTimestamp: string | null | undefined): string {
+  return compactDate(formatJstDateOnly(sqliteTimestamp))
+}
