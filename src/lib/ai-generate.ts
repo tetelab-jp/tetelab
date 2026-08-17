@@ -291,6 +291,16 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。'
   ]
 
+  // 2026-08-17追記(ユーザー指定): 写真の説明を本文のメインテーマとして扱い、
+  // サロンの人格・季節感などの情報は軽く触れる程度に留める(重み付けの指示)。
+  if (input.imageDescription) {
+    systemLines.push(
+      '写真の説明に関連する具体的な内容(髪型・カラー・質感・スタイリングなど)を本文の中心テーマとし、' +
+        '本文全体の8〜9割程度をその内容に割いてください。サロンのコンセプト・強み・来てくれる人・季節感などの' +
+        '情報は、残り1〜2割程度の軽い触れ方(一文程度)に留めてください。'
+    )
+  }
+
   systemLines.push(...buildReferenceArticleLines(input.profile))
 
   // 2026-08-17追記(ユーザー指定): 文章スタイル選択ドロップダウン(style_mode)を
