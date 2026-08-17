@@ -1196,6 +1196,27 @@ async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: s
   }
 }
 
+// 2026-08-17追記(実機で判明した重大バグの対処): クーポンモーダルが「閉じた
+// ことを確認できない」状態のまま後続処理(画像アップロード)へ進むと、
+// 残留したモーダル(またはその全画面オーバーレイ .jsc_SB_modal_overlay)が
+// 画面全体を覆ったままになり、直後の画像アップロードモーダルの「登録する」
+// ボタンが一切活性化しない(isActiveクラスが永久に付かない)という致命的な
+// 連鎖障害が実機で確認された。クーポン機能自体は無くても記事投稿は成立する
+// 補助機能のため、正規の閉じ方(閉じるボタン等)で閉じたことを確認できない
+// 場合は、DOM操作で強制的にオーバーレイ・モーダルを非表示にしてから
+// 後続処理に進む(サイト側のJS状態がどうであれ、画面を必ず解放する)。
+async function forceCloseCouponModal(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const wrap = document.getElementById('couponWrap')
+      if (wrap) wrap.style.display = 'none'
+      document.querySelectorAll('.jsc_SB_modal_overlay, .SB_modal_overlay').forEach((el) => {
+        ;(el as HTMLElement).style.display = 'none'
+      })
+    })
+    .catch(() => {})
+}
+
 /**
  * ブログ記事へのクーポン紐付け。「クーポン選択」ボタン→モーダル内の一覧から
  * 対象クーポン(CP+14桁のコード、frmStyleEditStyleDto.couponIdと同じ形式)を
@@ -1209,75 +1230,87 @@ async function uploadBlogImage(page: Page, imageBuffer: ArrayBuffer, fileName: s
  *   - 確定ボタン: .jsc_SB_modal_setting_btn(行選択前は視覚的に非活性、選択後に有効化される)
  * クーポン一覧に対象が見つからない・操作に失敗した場合は、記事全体の投稿を
  * 失敗させるほど致命的ではないため、警告ログを残してスキップする(記事本文・
- * 画像は正常に投稿される)。
+ * 画像は正常に投稿される)。どの分岐で終わっても、モーダルが残留したまま
+ * 後続処理に進むことがないよう、関数を抜ける直前に必ず強制クローズを試みる。
  */
 async function selectBlogCoupon(page: Page, couponSelectValue: string, log: AutomationLogger): Promise<void> {
-  log('クーポン選択モーダルを開いています...')
-  const triggerHandle = await page.$('.jsc_SB_modal_trigger.SB_modal_add_coupon_btn')
-  if (!triggerHandle) {
-    log('警告: 「クーポン選択」ボタンが見つからないため、クーポン設定をスキップします')
-    return
+  try {
+    log('クーポン選択モーダルを開いています...')
+    const triggerHandle = await page.$('.jsc_SB_modal_trigger.SB_modal_add_coupon_btn')
+    if (!triggerHandle) {
+      log('警告: 「クーポン選択」ボタンが見つからないため、クーポン設定をスキップします')
+      return
+    }
+    await triggerHandle.click()
+
+    const found = await page
+      .waitForFunction(
+        (cp: string) => {
+          const wrap = document.getElementById('couponWrap')
+          if (!wrap || getComputedStyle(wrap).display === 'none') return false
+          const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
+          return inputs.some((el) => el.value === cp)
+        },
+        { timeout: 15000 },
+        couponSelectValue
+      )
+      .then(() => true)
+      .catch(() => false)
+
+    if (!found) {
+      log(`警告: クーポン一覧に対象のクーポン(${couponSelectValue})が見つかりませんでした。クーポン設定をスキップします`)
+      return
+    }
+
+    const clicked = await page.evaluate((cp: string) => {
+      const wrap = document.getElementById('couponWrap')
+      if (!wrap) return false
+      const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
+      const target = inputs.find((el) => el.value === cp)
+      if (!target) return false
+      const label = target.closest('label') as HTMLElement | null
+      if (!label) return false
+      label.click()
+      return true
+    }, couponSelectValue)
+
+    if (!clicked) {
+      log(`警告: クーポン(${couponSelectValue})の行をクリックできませんでした。クーポン設定をスキップします`)
+      return
+    }
+
+    log('クーポンを選択しました。「設定する」ボタンの活性化を待機中...')
+    // 2026-08-17追記: 500msでは行選択のAJAX処理(詳細プレビュー表示)が
+    // 完了しきらず、「設定する」を押しても何も起きない(モーダルが閉じない)
+    // 事例が実機で確認されたため、待機時間を伸ばす。
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+    const settingBtn = await page.$('.jsc_SB_modal_setting_btn')
+    if (!settingBtn) {
+      log('警告: 「設定する」ボタンが見つかりませんでした。クーポン設定をスキップします')
+      return
+    }
+    await settingBtn.click()
+
+    const closed = await page
+      .waitForFunction(
+        () => {
+          const wrap = document.getElementById('couponWrap')
+          return !wrap || getComputedStyle(wrap).display === 'none'
+        },
+        { timeout: 10000 }
+      )
+      .then(() => true)
+      .catch(() => false)
+    log(closed ? 'クーポンの設定が完了しました' : '警告: 「設定する」押下後もクーポン選択モーダルが閉じたことを確認できませんでした')
+  } catch (err: any) {
+    log(`警告: クーポン設定処理中に想定外のエラーが発生したためスキップします: ${String(err?.message || err)}`)
+  } finally {
+    // 上記のどの分岐で終わった場合でも、モーダル(またはその全画面
+    // オーバーレイ)が残留したまま後続の画像アップロード処理へ進むと、
+    // オーバーレイが画面全体を覆って以降のクリックを全て奪ってしまう
+    // 致命的な連鎖障害になるため、必ず強制クローズしてから抜ける。
+    await forceCloseCouponModal(page)
   }
-  await triggerHandle.click()
-
-  const found = await page
-    .waitForFunction(
-      (cp: string) => {
-        const wrap = document.getElementById('couponWrap')
-        if (!wrap || getComputedStyle(wrap).display === 'none') return false
-        const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
-        return inputs.some((el) => el.value === cp)
-      },
-      { timeout: 15000 },
-      couponSelectValue
-    )
-    .then(() => true)
-    .catch(() => false)
-
-  if (!found) {
-    log(`警告: クーポン一覧に対象のクーポン(${couponSelectValue})が見つかりませんでした。クーポン設定をスキップします`)
-    const closeBtn = await page.$('.jsc_SB_modal_close_btn')
-    if (closeBtn) await closeBtn.click().catch(() => {})
-    return
-  }
-
-  const clicked = await page.evaluate((cp: string) => {
-    const wrap = document.getElementById('couponWrap')
-    if (!wrap) return false
-    const inputs = Array.from(wrap.querySelectorAll('input[type="hidden"]')) as HTMLInputElement[]
-    const target = inputs.find((el) => el.value === cp)
-    if (!target) return false
-    const label = target.closest('label') as HTMLElement | null
-    if (!label) return false
-    label.click()
-    return true
-  }, couponSelectValue)
-
-  if (!clicked) {
-    log(`警告: クーポン(${couponSelectValue})の行をクリックできませんでした。クーポン設定をスキップします`)
-    return
-  }
-
-  log('クーポンを選択しました。「設定する」ボタンの活性化を待機中...')
-  await new Promise((resolve) => setTimeout(resolve, 500))
-  const settingBtn = await page.$('.jsc_SB_modal_setting_btn')
-  if (!settingBtn) {
-    log('警告: 「設定する」ボタンが見つかりませんでした。クーポン設定をスキップします')
-    return
-  }
-  await settingBtn.click()
-
-  const closed = await page
-    .waitForFunction(
-      () => {
-        const wrap = document.getElementById('couponWrap')
-        return !wrap || getComputedStyle(wrap).display === 'none'
-      },
-      { timeout: 10000 }
-    )
-    .then(() => true)
-    .catch(() => false)
-  log(closed ? 'クーポンの設定が完了しました' : '警告: 「設定する」押下後もクーポン選択モーダルが閉じたことを確認できませんでした')
 }
 
 /**
