@@ -1330,17 +1330,31 @@ dashboard.post('/api/settings/activate-additional-salon', async (c) => {
   }
 
   const salon = await c.env.DB.prepare(
-    'SELECT id, is_active_workspace FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
+    'SELECT id, is_active_workspace, activated_at FROM salonboard_salons WHERE user_id = ? AND salon_key = ?'
   )
     .bind(user.id, storeId)
-    .first<{ id: number; is_active_workspace: number }>()
+    .first<{ id: number; is_active_workspace: number; activated_at: string | null }>()
   if (!salon) return c.json({ success: false, error: '指定されたサロンが見つかりません' }, 400)
   if (salon.is_active_workspace === 1) {
     return c.json({ success: false, error: 'このサロンは既に有効化されています' }, 400)
   }
+  // 2026-08-17追記(至急・重大バグ修正): このエンドポイントだけ、他の全ての有効化
+  // 箇所(dashboard.tsx内の同期箇所・select-salon・admin.tsxのtoggle-workspace)と
+  // 異なり「真の初回(activated_at IS NULL)のみ有効化する」ガードが無かった。
+  // このため、管理者が/admin/salonsで明示的に無効化したサロンでも、利用者が
+  // このAPI(追加サロン選択画面)から選び直すだけで、管理者の操作を無視して
+  // 勝手に再有効化できてしまっていた(salon_slot_limitは有効化するたびに増加する
+  // のみで減らないため、一度でも有効化されたことがあるサロンは枠を使い切って
+  // いない限りいつでも再有効化できてしまう)。他の箇所と同じガードを追加する。
+  if (salon.activated_at) {
+    return c.json(
+      { success: false, error: 'このサロンは管理者により無効化されています。有効化については管理者にお問い合わせください' },
+      400
+    )
+  }
 
   await c.env.DB.prepare(
-    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ?`
+    `UPDATE salonboard_salons SET is_active_workspace = 1, activated_at = CURRENT_TIMESTAMP WHERE id = ? AND activated_at IS NULL`
   )
     .bind(salon.id)
     .run()
