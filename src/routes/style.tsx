@@ -580,6 +580,21 @@ style.get('/style/import', async (c) => {
         </div>
       </div>
 
+      <div id="import-progress-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
+        <div class="bg-white rounded-xl p-6 max-w-sm w-full text-center space-y-3">
+          <i class="fas fa-circle-notch fa-spin text-3xl text-pink-500"></i>
+          <p id="import-progress-text" class="font-semibold">取り込み中...</p>
+          <p class="text-xs text-gray-400">この画面を閉じずにそのままお待ちください</p>
+          <button
+            type="button"
+            id="import-abort-btn"
+            class="text-sm text-gray-500 hover:text-red-500 underline"
+          >
+            中止する
+          </button>
+        </div>
+      </div>
+
       <script src="/static/style-import.js"></script>
     </PageLayout>,
     { title: '既存スタイルの取り込み' }
@@ -708,7 +723,7 @@ style.post('/api/style/import/execute', async (c) => {
     await verifyLoggedInSalonMatches(c, page, user, () => {})
 
     if (!user.active_salon_id) return c.json({ success: false, error: '対象のサロンが選択されていません' }, 400)
-    const result = await importSelectedStyles(page, c.env, user.id, user.active_salon_id, styleIds, () => {})
+    const result = await importSelectedStyles(page, c.env, user.id, user.active_salon_id, styleIds, () => {}, c.req.raw.signal)
     return c.json({ success: true, ...result })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
