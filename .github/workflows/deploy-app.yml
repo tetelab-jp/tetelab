@@ -53,6 +53,10 @@ env:
   # (infra/ses.tf、非機密情報)。SNS_ALERT_TOPIC_ARNと同じ理由で、
   # 既存タスク定義には含まれていないため、下のステップで無ければ追加する。
   SES_FROM_EMAIL: noreply@salonmotion.com
+  # 管理者サイト(/admin)を公開する別ドメイン(infra/variables.tfのadmin_domain_name、
+  # 非機密情報)。SNS_ALERT_TOPIC_ARNと同じ理由で、既存タスク定義には
+  # 含まれていないため、下のステップで無ければ追加する。
+  ADMIN_HOST: www.salonmotion.com
   # 2026-08-14追記(重大バグ修正): NATゲートウェイ導入時、worker用の専用
   # プライベートサブネット(subnet-06aeffd3665aec13a)にECS_SUBNET_IDSを
   # 一時的に上書きしていたが、NATゲートウェイ撤去に伴いこのサブネット自体を
@@ -166,6 +170,26 @@ jobs:
                   (if ($names | index("SES_FROM_EMAIL"))
                     then ($existing | map(if .name == "SES_FROM_EMAIL" then .value = $email else . end))
                     else $existing + [{name: "SES_FROM_EMAIL", value: $email}]
+                  end)
+                )
+              else . end
+            )
+          ' task-definition.json > task-definition.fixed.json
+          mv task-definition.fixed.json task-definition.json
+
+      # SNS_ALERT_TOPIC_ARNと同様、古いタスク定義には存在しないため
+      # 無ければ追加・あれば更新の両方に対応する。
+      - name: Fix ADMIN_HOST environment variable
+        run: |
+          jq --arg name "$ECS_CONTAINER_NAME" --arg host "$ADMIN_HOST" '
+            .containerDefinitions |= map(
+              if .name == $name then
+                .environment = (
+                  (.environment // []) as $existing |
+                  ($existing | map(.name)) as $names |
+                  (if ($names | index("ADMIN_HOST"))
+                    then ($existing | map(if .name == "ADMIN_HOST" then .value = $host else . end))
+                    else $existing + [{name: "ADMIN_HOST", value: $host}]
                   end)
                 )
               else . end
