@@ -672,21 +672,23 @@ admin.post('/admin/salons/:userId/salon/:salonId/toggle-workspace', async (c) =>
   const page = String(body.page || '1')
   const q = String(body.q || '')
 
-  const salon = await c.env.DB.prepare(
-    'SELECT id, salon_key, is_active_workspace FROM salonboard_salons WHERE id = ? AND user_id = ?'
+  // 2026-08-17追記(ユーザー指定・重大バグ修正): toggleSalonFeature(style/blog/
+  // seo/review_enabled)と同じ理由で、従来は現在値をSELECTしてから逆の値を
+  // UPDATEしていた(read-then-write)。この手順はアトミックではなく、連打や
+  // 二重送信時に操作が失われ得るため、1文のUPDATEで値を反転させ、DBが実際に
+  // 確定した値をRETURNINGで取得する方式に変更する。
+  const toggled = await c.env.DB.prepare(
+    `UPDATE salonboard_salons SET is_active_workspace = 1 - is_active_workspace,
+       activated_at = CASE WHEN is_active_workspace = 0 THEN COALESCE(activated_at, CURRENT_TIMESTAMP) ELSE activated_at END
+     WHERE id = ? AND user_id = ?
+     RETURNING id, salon_key, is_active_workspace AS new_value, (1 - is_active_workspace) AS prev_value`
   )
     .bind(salonId, userId)
-    .first<{ id: number; salon_key: string | null; is_active_workspace: number }>()
+    .first<{ id: number; salon_key: string | null; new_value: number; prev_value: number }>()
 
-  if (salon) {
-    const next = salon.is_active_workspace === 1 ? 0 : 1
-    await c.env.DB.prepare(
-      `UPDATE salonboard_salons SET is_active_workspace = ?,
-         activated_at = CASE WHEN ? = 1 THEN COALESCE(activated_at, CURRENT_TIMESTAMP) ELSE activated_at END
-       WHERE id = ?`
-    )
-      .bind(next, next, salonId)
-      .run()
+  if (toggled) {
+    const salon = { id: toggled.id, salon_key: toggled.salon_key, is_active_workspace: toggled.prev_value }
+    const next = toggled.new_value
 
     if (next === 1) {
       const activeCountRow = await c.env.DB.prepare(
