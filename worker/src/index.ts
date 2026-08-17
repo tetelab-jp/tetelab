@@ -18,6 +18,7 @@ import {
   submitReflectApplication,
   postBlogArticle,
   fetchReviewList,
+  postReviewReply,
   launchBrowser,
   closeAnonymizedProxy,
   handleGroupTopIfPresent,
@@ -25,6 +26,7 @@ import {
   type StylePostInput,
   type BlogPostInput,
   type ReviewListRow,
+  type PostReviewReplyInput,
   type LaunchedBrowser
 } from './salonboard-automation'
 import type { Page } from 'puppeteer'
@@ -73,7 +75,13 @@ async function main(): Promise<void> {
   const jobId = requireEnv('JOB_ID')
   const jobToken = requireEnv('JOB_TOKEN')
   const jobType =
-    process.env.JOB_TYPE === 'blog' ? 'blog' : process.env.JOB_TYPE === 'review_sync' ? 'review_sync' : 'style'
+    process.env.JOB_TYPE === 'blog'
+      ? 'blog'
+      : process.env.JOB_TYPE === 'review_sync'
+        ? 'review_sync'
+        : process.env.JOB_TYPE === 'review_reply'
+          ? 'review_reply'
+          : 'style'
 
   const logs: string[] = []
   const log = (msg: string) => {
@@ -112,6 +120,22 @@ async function main(): Promise<void> {
     }
     await postReviewSyncResult(apiBase, jobId, jobToken, { ...reviewResult, logs })
     process.exit(reviewResult.success ? 0 : 1)
+  }
+
+  if (jobType === 'review_reply') {
+    let replyResult: Omit<ReviewReplyJobResult, 'logs'>
+    try {
+      const payload = await fetchReviewReplyJob(apiBase, jobId, jobToken)
+      replyResult = await runReviewReplyJob(payload, log)
+    } catch (err: any) {
+      replyResult = {
+        success: false,
+        step: 'login',
+        message: `ジョブ実行中に予期しないエラーが発生しました: ${String(err?.message || err)}`
+      }
+    }
+    await postReviewReplyResult(apiBase, jobId, jobToken, { ...replyResult, logs })
+    process.exit(replyResult.success ? 0 : 1)
   }
 
   let result: Omit<JobResult, 'logs'>
@@ -375,6 +399,111 @@ async function runReviewSyncJob(
       return { success: false, step: 'list_fetch', message: String(fetchError?.message || fetchError), proxySessionId, loginAttempts, rows: [] }
     }
     return { success: true, step: 'done', message: `口コミ一覧を${rows.length}件取得しました`, proxySessionId, loginAttempts, rows }
+  } finally {
+    await closeAttempt(attempt)
+  }
+}
+
+// ---------- 口コミ自動返信(2026-08-17追記) ----------
+
+type ReviewReplyJobPayload = {
+  loginId: string
+  password: string
+  proxySessionCandidates?: string[] | null
+  targetStoreId?: string | null
+  managementNo: string
+  replyContent: string
+}
+
+type ReviewReplyJobStep = 'login' | 'navigate' | 'input' | 'confirm' | 'done'
+
+type ReviewReplyJobResult = {
+  success: boolean
+  step: ReviewReplyJobStep
+  message: string
+  logs: string[]
+  proxySessionId?: string | null
+  loginAttempts?: LoginAttempt[]
+}
+
+async function fetchReviewReplyJob(apiBase: string, jobId: string, jobToken: string): Promise<ReviewReplyJobPayload> {
+  const res = await fetch(`${apiBase}/api/review-reply-automation/jobs/${jobId}`, {
+    headers: { Authorization: `Bearer ${jobToken}` }
+  })
+  if (!res.ok) throw new Error(`ジョブ取得に失敗しました(status=${res.status})`)
+  return (await res.json()) as ReviewReplyJobPayload
+}
+
+async function postReviewReplyResult(
+  apiBase: string,
+  jobId: string,
+  jobToken: string,
+  result: ReviewReplyJobResult
+): Promise<void> {
+  try {
+    await fetch(`${apiBase}/api/review-reply-automation/jobs/${jobId}/result`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(result)
+    })
+  } catch (err) {
+    console.error('結果の送信に失敗しました:', err)
+  }
+}
+
+/**
+ * ブログ投稿(runBlogJob)と同じ、1回きりの操作向けの構成
+ * (ログインセッション単位でのプロキシ候補切り替えのみ)。
+ */
+async function runReviewReplyJob(
+  payload: ReviewReplyJobPayload,
+  log: (msg: string) => void
+): Promise<Omit<ReviewReplyJobResult, 'logs'>> {
+  const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
+  const loginAttempts: LoginAttempt[] = []
+
+  const replyInput: PostReviewReplyInput = { managementNo: payload.managementNo, replyContent: payload.replyContent }
+  const styleLikePayload = { loginId: payload.loginId, password: payload.password, targetStoreId: payload.targetStoreId }
+
+  let attempt = await attemptLogin(styleLikePayload, log, candidates[0])
+  if (candidates[0]) loginAttempts.push({ sessionId: candidates[0], success: !attempt.error })
+
+  let postError: any = attempt.error ? null : new Error('未試行')
+  if (!attempt.error) {
+    try {
+      await postReviewReply(attempt.page!, replyInput, log)
+      postError = null
+    } catch (err: any) {
+      postError = err
+    }
+  }
+
+  for (let i = 1; i < candidates.length && (attempt.error || postError); i++) {
+    const reason = attempt.error ? 'ログイン' : '口コミ返信投稿'
+    log(`[プロキシ] セッションID(${candidates[i - 1]})での${reason}に失敗したため、次の候補セッションID(${candidates[i]})へ切り替えて再ログインします...`)
+    await closeAttempt(attempt)
+    attempt = await attemptLogin(styleLikePayload, log, candidates[i])
+    loginAttempts.push({ sessionId: candidates[i], success: !attempt.error })
+    postError = attempt.error ? null : new Error('未試行')
+    if (!attempt.error) {
+      try {
+        await postReviewReply(attempt.page!, replyInput, log)
+        postError = null
+      } catch (err: any) {
+        postError = err
+      }
+    }
+  }
+
+  try {
+    const { proxySessionId, error: loginError } = attempt
+    if (loginError) {
+      return { success: false, step: 'login', message: String(loginError?.message || loginError), proxySessionId: null, loginAttempts }
+    }
+    if (postError) {
+      return { success: false, step: 'input', message: String(postError?.message || postError), proxySessionId, loginAttempts }
+    }
+    return { success: true, step: 'done', message: '口コミへの返信投稿が完了しました', proxySessionId, loginAttempts }
   } finally {
     await closeAttempt(attempt)
   }

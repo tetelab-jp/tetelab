@@ -17,6 +17,7 @@ import { createStorage } from './lib/storage'
 import { backfillCompressStyleImages } from './lib/style-image-backfill'
 import { sweepPendingAccountDeletions } from './lib/account-deletion'
 import { sweepStaleReviewSyncJobs, runMonthlyReviewSyncSweep } from './lib/review-sync-runner'
+import { sweepStaleReviewReplyJobs, runReviewReplySweep } from './lib/review-reply-runner'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -929,6 +930,60 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(salon_profiles.footer_override_text)に失敗しました:', err)
   }
+  try {
+    // 2026-08-17追記(ユーザー指定): 口コミ自動返信機能。blog_post_schedules/
+    // blog_post_jobsと同じ設計方針(口コミ1件=1ジョブ)。対象は星4以上かつ
+    // HPB掲載済み(matched_at IS NOT NULL)の口コミのみ(詳細はmigrations-pg/
+    // 0034_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS replied_at TIMESTAMP`).run()
+    await bindings.DB.prepare(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS reply_content TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS reply_method TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE reviews ADD COLUMN IF NOT EXISTS ai_reply_draft TEXT`).run()
+
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS review_reply_schedules (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         enabled INTEGER NOT NULL DEFAULT 0,
+         paused_until TIMESTAMP,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         UNIQUE(salon_id)
+       )`
+    ).run()
+
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS review_reply_jobs (
+         id SERIAL PRIMARY KEY,
+         review_id INTEGER NOT NULL REFERENCES reviews(id) ON DELETE CASCADE,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         job_token TEXT NOT NULL UNIQUE,
+         trigger TEXT NOT NULL DEFAULT 'auto',
+         reply_content TEXT NOT NULL,
+         status TEXT NOT NULL DEFAULT 'pending',
+         ecs_task_arn TEXT,
+         result_step TEXT,
+         result_message TEXT,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+         completed_at TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_review_reply_jobs_one_in_flight_per_review
+       ON review_reply_jobs (review_id) WHERE status IN ('pending', 'running')`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_review_reply_jobs_user_id ON review_reply_jobs(user_id)`
+    ).run()
+
+    await bindings.DB.prepare(
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS consecutive_review_reply_failure_count INTEGER NOT NULL DEFAULT 0`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(口コミ自動返信テーブル)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。
@@ -964,6 +1019,24 @@ const bindings: Bindings = {
   }
   runReviewSync()
   setInterval(runReviewSync, 60 * 60 * 1000)
+
+  // 2026-08-17追記(ユーザー指定): 口コミ自動返信。review_syncと同じ理由
+  // (EventBridgeへの新規スケジュール追加を避ける)でアプリ内タイマーにする。
+  // 一度に大量送信してSALON BOARD側に不自然な負荷をかけないよう、1回の
+  // 巡回で対象サロンにつき返信ジョブを1件だけ投入する(runReviewReplySweep内)。
+  // 星4以上・HPB掲載済みの口コミへの返信なので、レビュー投稿から掲載まで
+  // 数営業日のラグがあることを踏まえ、review_sync(1時間毎)より短い10分毎で
+  // 十分(取りこぼしても次回巡回で拾われる)。
+  const runReviewReply = () => {
+    void sweepStaleReviewReplyJobs(bindings).catch((err) => {
+      console.error('口コミ返信ジョブのタイムアウト掃除に失敗しました:', err)
+    })
+    void runReviewReplySweep(bindings).catch((err) => {
+      console.error('口コミ自動返信の巡回に失敗しました:', err)
+    })
+  }
+  runReviewReply()
+  setInterval(runReviewReply, 10 * 60 * 1000)
 })
 
 app.use('*', async (c, next) => {

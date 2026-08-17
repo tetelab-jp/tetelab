@@ -200,4 +200,67 @@ document.addEventListener('DOMContentLoaded', () => {
       })
       .catch(() => {})
   }
+
+  // ---------- ③口コミ一覧: AI下書き生成・手動返信投稿 ----------
+  const listContainer = document.getElementById('review-list-container')
+  if (listContainer) {
+    listContainer.addEventListener('click', async (e) => {
+      const generateBtn = e.target.closest('.review-reply-generate-btn')
+      const sendBtn = e.target.closest('.review-reply-send-btn')
+
+      if (generateBtn) {
+        const reviewId = generateBtn.dataset.reviewId
+        const textarea = listContainer.querySelector(`.review-reply-textarea[data-review-id="${reviewId}"]`)
+        const statusEl = listContainer.querySelector(`.review-reply-status[data-review-id="${reviewId}"]`)
+        generateBtn.disabled = true
+        if (statusEl) statusEl.textContent = 'AIが返信文を作成中...'
+        try {
+          const res = await fetch(`/api/reviews/${reviewId}/generate-reply`, { method: 'POST' })
+          const data = await res.json()
+          if (!data.success) {
+            if (statusEl) statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
+          } else {
+            if (textarea) textarea.value = data.reply
+            if (statusEl) statusEl.textContent = '下書きを生成しました。内容を確認・修正してから返信してください'
+          }
+        } catch (err) {
+          if (statusEl) statusEl.textContent = '通信エラーが発生しました'
+        } finally {
+          generateBtn.disabled = false
+        }
+        return
+      }
+
+      if (sendBtn) {
+        const reviewId = sendBtn.dataset.reviewId
+        const textarea = listContainer.querySelector(`.review-reply-textarea[data-review-id="${reviewId}"]`)
+        const statusEl = listContainer.querySelector(`.review-reply-status[data-review-id="${reviewId}"]`)
+        const replyContent = textarea ? textarea.value.trim() : ''
+        if (!replyContent) {
+          if (statusEl) statusEl.textContent = '返信文を入力してください'
+          return
+        }
+        if (!confirm('この内容でSALON BOARDへ返信を投稿します。よろしいですか？')) return
+        sendBtn.disabled = true
+        if (statusEl) statusEl.textContent = '返信を投稿中です...'
+        try {
+          const res = await fetch(`/api/reviews/${reviewId}/send-reply`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ replyContent })
+          })
+          const data = await res.json()
+          if (!data.success) {
+            if (statusEl) statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
+            sendBtn.disabled = false
+          } else {
+            if (statusEl) statusEl.textContent = '返信処理を開始しました。完了まで少し時間がかかります(画面を更新して確認してください)'
+          }
+        } catch (err) {
+          if (statusEl) statusEl.textContent = '通信エラーが発生しました'
+          sendBtn.disabled = false
+        }
+      }
+    })
+  }
 })

@@ -1709,3 +1709,56 @@ export async function fetchReviewList(
 
   return allRows
 }
+
+// ---------- 口コミ自動返信(2026-08-17追記) ----------
+// 返信入力ページ(/CLP/bt/review/reviewReply/{管理番号})の実HTMLは確認済み
+// (フォーム#replySend、reviewId隠しフィールド、replyFrom任意入力(全角20文字
+// 以内)、replyContents必須テキストエリア(全角500文字以内・改行80回以内)、
+// 確認トリガー#replyConfirmはJS駆動のリンク(submitボタンではない))。
+// ただし#replyConfirmクリック後に表示される確認画面の実HTML、および最終的な
+// 「返信を登録する」相当のボタンのセレクタは未確認。ユーザー指定により、
+// 実画面を確認していない操作(特に実際の口コミへの返信という取り消しが
+// 困難な操作)を推測で実装しないため、このバージョンでは入力欄への入力までを
+// 行い、#replyConfirmはクリックしない(=実際の投稿は行わない)。確認画面の
+// 実HTMLが確認でき次第、その先を実装する。
+
+export type PostReviewReplyInput = {
+  managementNo: string
+  replyContent: string
+}
+
+export async function postReviewReply(page: Page, input: PostReviewReplyInput, log: AutomationLogger): Promise<void> {
+  log('口コミ返信入力ページへ遷移中...')
+  await page.goto(`${SALONBOARD_BASE_URL}/CLP/bt/review/reviewReply/${input.managementNo}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 30000
+  })
+  await page.waitForSelector('#replySend', { timeout: 15000 })
+
+  const reviewIdOnPage = await page
+    .evaluate(() => (document.querySelector('#replySend input[name="reviewId"]') as HTMLInputElement | null)?.value || null)
+    .catch(() => null)
+  if (!reviewIdOnPage) {
+    throw new Error(`返信入力ページの構造が想定と異なります(reviewId隠しフィールドが見つかりません。管理番号=${input.managementNo})`)
+  }
+
+  const filled = await page.evaluate((text: string) => {
+    const el = document.querySelector('#replySend textarea[name="replyContents"]') as HTMLTextAreaElement | null
+    if (!el) return false
+    el.value = text
+    el.dispatchEvent(new Event('input', { bubbles: true }))
+    el.dispatchEvent(new Event('change', { bubbles: true }))
+    return true
+  }, input.replyContent)
+  if (!filled) {
+    throw new Error(`返信本文の入力欄(replyContents)が見つかりませんでした(管理番号=${input.managementNo})`)
+  }
+  log('返信入力欄への入力が完了しました')
+
+  // 2026-08-17追記: #replyConfirmクリック後の確認画面・最終送信ボタンの実HTMLが
+  // 未確認のため、ここで意図的に停止する(詳細は上のコメント参照)。
+  throw new Error(
+    '返信内容の入力までは完了しましたが、確認画面(#replyConfirmクリック後)の実HTMLが未確認のため、' +
+      'このバージョンでは実際の返信投稿(登録)は行っていません。確認画面の実HTMLを確認後、実装を完了してください。'
+  )
+}

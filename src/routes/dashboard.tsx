@@ -841,6 +841,18 @@ dashboard.get('/settings/auto-update', async (c) => {
   const rankingEnabledOn = rankingSchedule?.enabled === 1
   const rankingLastRunAt = rankingSchedule?.last_run_at || null
 
+  const reviewEnabledFlag = user.review_enabled !== 0
+  const reviewReplySchedule = reviewEnabledFlag
+    ? await c.env.DB.prepare(`SELECT enabled, paused_until FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
+        .bind(user.id, salonId)
+        .first<{ enabled: number; paused_until: string | null }>()
+    : null
+  const reviewReplyEnabledOn = reviewReplySchedule?.enabled === 1
+  const reviewReplyPausedUntilMs = reviewReplySchedule?.paused_until
+    ? new Date(reviewReplySchedule.paused_until.replace(' ', 'T') + 'Z').getTime()
+    : null
+  const reviewReplyIsPaused = !!reviewReplyPausedUntilMs && reviewReplyPausedUntilMs > Date.now()
+
   return c.render(
     <PageLayout
       seoEnabled={seoEnabled}
@@ -1021,6 +1033,33 @@ dashboard.get('/settings/auto-update', async (c) => {
               </label>
             </form>
           </div>
+        </AutoUpdateSection>
+      )}
+
+      {reviewEnabledFlag && (
+        <AutoUpdateSection icon="fa-comments" colorClasses="bg-purple-100 text-purple-600" title="口コミ自動返信">
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">自動返信</p>
+            <form method="post" action="/reviews/reply/schedule" class="bg-gray-50 rounded-lg p-4">
+              <label class="flex items-center gap-3 cursor-pointer w-fit">
+                <span class="relative inline-flex items-center flex-shrink-0">
+                  <input type="checkbox" name="enabled" checked={reviewReplyEnabledOn} onchange="this.form.submit()" class="sr-only peer" />
+                  <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+                  <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+                </span>
+                <span class="text-sm font-medium text-gray-700">
+                  自動返信を有効にする（HPB掲載済み・星4以上の口コミにAIが返信文を作成し自動投稿。星3以下は「口コミ一覧」から手動またはAI生成→手動投稿）
+                </span>
+              </label>
+            </form>
+          </div>
+
+          {reviewReplyIsPaused && (
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+              <i class="fas fa-triangle-exclamation mr-2"></i>
+              連続で返信投稿に失敗したため、一時的に自動返信を停止しています(しばらくすると自動的に再開します)。
+            </div>
+          )}
         </AutoUpdateSection>
       )}
 

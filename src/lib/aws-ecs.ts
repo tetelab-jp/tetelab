@@ -41,7 +41,7 @@ export type RunStylePostTaskResult = {
 
 async function runPostTask(
   params: RunStylePostTaskParams,
-  jobType: 'style' | 'blog' | 'review_sync'
+  jobType: 'style' | 'blog' | 'review_sync' | 'review_reply'
 ): Promise<RunStylePostTaskResult> {
   const client = new ECSClient({
     region: params.awsRegion,
@@ -114,6 +114,16 @@ export async function runBlogPostTask(params: RunStylePostTaskParams): Promise<R
  */
 export async function runReviewSyncTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
   return runPostTask(params, 'review_sync')
+}
+
+/**
+ * 2026-08-17追記: 口コミ自動返信機能の返信投稿ジョブ版。style/blog/review_syncと
+ * 同じクラスタ/タスク定義/ワーカーコンテナを共用し、containerOverrides.environment
+ * のJOB_TYPE=review_replyでワーカー側(worker/src/index.ts)に処理を振り分ける。
+ * ジョブ取得/結果コールバック先は返信専用(GET/POST /api/review-reply-automation/jobs/:id)。
+ */
+export async function runReviewReplyTask(params: RunStylePostTaskParams): Promise<RunStylePostTaskResult> {
+  return runPostTask(params, 'review_reply')
 }
 
 export type StopStylePostTaskParams = {
