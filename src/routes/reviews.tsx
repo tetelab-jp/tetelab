@@ -11,6 +11,7 @@ import { Hono, type Context } from 'hono'
 import { requireAuth, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { getTrendSnapshots, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
+import { compactDate } from '../lib/date-format'
 import { generateReviewReply } from '../lib/ai-generate'
 import { dispatchManualReviewReply, loadSalonProfileForGeneration, loadRecentReviewReplies } from '../lib/review-reply-runner'
 import type { Bindings, AppUser } from '../types'
@@ -83,6 +84,17 @@ reviews.get('/reviews/trend', async (c) => {
 
       {backfillDone && (
         <>
+          {trendByNewest.length >= 2 && (
+            <div class="bg-white rounded-xl border border-gray-100 p-6">
+              <p class="text-xs text-gray-400 mb-1">現在の口コミ評価({compactDate(trendByNewest[0].date)}時点)</p>
+              <div class="flex items-baseline gap-2 flex-wrap">
+                <i class="fas fa-star text-amber-400 text-2xl"></i>
+                <span class="text-5xl font-bold text-gray-800">{trendByNewest[0].avgOverall.toFixed(2)}</span>
+                <span class="text-sm text-gray-400 ml-1">({trendByNewest[0].count}件)</span>
+              </div>
+            </div>
+          )}
+
           <div class="bg-white rounded-xl border border-gray-100 p-6">
             <p class="font-semibold mb-4">
               <i class="fas fa-chart-line mr-2 text-pink-500"></i>評価推移(総合スコア平均)
@@ -103,17 +115,17 @@ reviews.get('/reviews/trend', async (c) => {
                 <table class="w-full text-sm">
                   <thead class="bg-gray-50 text-gray-500 text-xs">
                     <tr>
-                      <th class="px-4 py-3 text-left font-medium">計測日</th>
-                      <th class="px-4 py-3 text-left font-medium">評価(総合スコア平均)</th>
-                      <th class="px-4 py-3 text-left font-medium">件数</th>
+                      <th class="px-4 py-3 text-left font-medium whitespace-nowrap">計測日</th>
+                      <th class="px-4 py-3 text-left font-medium whitespace-nowrap">評価(総合スコア平均)</th>
+                      <th class="px-4 py-3 text-left font-medium whitespace-nowrap">件数</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-50">
                     {trendByNewest.map((p) => (
                       <tr>
-                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600">{p.date}</td>
-                        <td class="px-4 py-2.5 font-semibold text-gray-800">{p.avgOverall.toFixed(2)}</td>
-                        <td class="px-4 py-2.5 text-gray-500">{p.count}件</td>
+                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">{compactDate(p.date)}</td>
+                        <td class="px-4 py-2.5 font-semibold text-gray-800 whitespace-nowrap">{p.avgOverall.toFixed(2)}</td>
+                        <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap">{p.count}件</td>
                       </tr>
                     ))}
                   </tbody>
@@ -374,13 +386,22 @@ reviews.get('/reviews/list', async (c) => {
                       <div class="review-reply-form hidden mt-3 bg-gray-50 rounded-lg p-4 space-y-3" data-review-id={r.id}>
                         <div class="flex items-center justify-between gap-2 flex-wrap">
                           <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
-                          <button
-                            type="button"
-                            class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
-                            data-review-id={r.id}
-                          >
-                            <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
-                          </button>
+                          <div class="flex items-center gap-2">
+                            <button
+                              type="button"
+                              class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                              data-review-id={r.id}
+                            >
+                              <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
+                            </button>
+                            <button
+                              type="button"
+                              class="review-reply-close-btn bg-white border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                              data-review-id={r.id}
+                            >
+                              <i class="fas fa-xmark mr-1"></i>閉じる
+                            </button>
+                          </div>
                         </div>
                         <textarea
                           class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"

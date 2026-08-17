@@ -121,18 +121,27 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // X軸ラベル(狭い幅では間引く数を増やして重なりを防ぐ)
+    // 2026-08-18追記(ユーザー指定・重大バグ修正): 先頭・末尾のラベルを他と
+    // 同じtext-anchor:middleで描画すると、ラベルの左半分(先頭)・右半分
+    // (末尾)がSVGの表示領域からはみ出して見切れてしまっていた
+    // (特にモバイルの狭い幅で顕著)。先頭は左揃え・末尾は右揃えにして
+    // ラベルが常に表示領域内に収まるようにする。
     const maxLabels = Math.max(2, Math.floor(plotW / 45))
     const labelEvery = Math.max(1, Math.ceil(points.length / maxLabels))
     points.forEach((p, i) => {
       if (i % labelEvery !== 0 && i !== points.length - 1) return
+      const isFirst = i === 0
+      const isLast = i === points.length - 1
+      const anchor = isFirst ? 'start' : isLast ? 'end' : 'middle'
       const label = svgEl('text', {
         x: xOf(i),
         y: height - padB + 14,
-        'text-anchor': 'middle',
+        'text-anchor': anchor,
         'font-size': 9,
         fill: AXIS_TEXT
       })
-      label.textContent = p.date.slice(2).replace(/-/g, '/')
+      const dateParts = p.date.split('-')
+      label.textContent = dateParts.length === 3 ? `${dateParts[0].slice(-2)}/${Number(dateParts[1])}/${Number(dateParts[2])}` : p.date
       svg.appendChild(label)
     })
 
@@ -262,6 +271,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (listContainer) {
     listContainer.addEventListener('click', async (e) => {
       const openBtn = e.target.closest('.review-reply-open-btn')
+      const closeBtn = e.target.closest('.review-reply-close-btn')
       const generateBtn = e.target.closest('.review-reply-generate-btn')
       const sendBtn = e.target.closest('.review-reply-send-btn')
 
@@ -274,13 +284,25 @@ document.addEventListener('DOMContentLoaded', () => {
           // 表示直後はautosize-textarea.js側のscrollHeight計算がまだ効いて
           // いない(直前までdisplay:noneだったため)ため、ここで明示的に
           // 高さを再計算させる。
+          // 2026-08-18追記(ユーザー指定・重大バグ修正): ここでtextarea.focus()を
+          // 呼んでいたため、モバイルで「開く」ボタンを押した瞬間にソフトキー
+          // ボードが自動的に立ち上がってしまっていた。タップして初めて入力
+          // できる通常のtextareaの挙動に戻すため、自動フォーカスは行わない。
           if (textarea) {
             textarea.style.height = 'auto'
             textarea.style.height = textarea.scrollHeight + 'px'
-            textarea.focus()
           }
         }
         openBtn.classList.add('hidden')
+        return
+      }
+
+      if (closeBtn) {
+        const reviewId = closeBtn.dataset.reviewId
+        const form = listContainer.querySelector(`.review-reply-form[data-review-id="${reviewId}"]`)
+        const openBtnForReview = listContainer.querySelector(`.review-reply-open-btn[data-review-id="${reviewId}"]`)
+        if (form) form.classList.add('hidden')
+        if (openBtnForReview) openBtnForReview.classList.remove('hidden')
         return
       }
 

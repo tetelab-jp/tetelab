@@ -162,16 +162,25 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // 2026-08-18追記(ユーザー指定・重大バグ修正): ページ送り後、前ページの
+  // 最下部までスクロールした状態がそのまま維持され、新しいページの先頭
+  // (例: 2ページ目ならNo.101)ではなく末尾(No.200)が表示された状態に
+  // なっていた。ページ送りのたびに一覧の先頭へスクロールし直す。
+  function scrollToListTop() {
+    if (listContainer) listContainer.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
   if (pagePrevBtn) {
     pagePrevBtn.addEventListener('click', () => {
       currentPage -= 1
       renderPage()
+      scrollToListTop()
     })
   }
   if (pageNextBtn) {
     pageNextBtn.addEventListener('click', () => {
       currentPage += 1
       renderPage()
+      scrollToListTop()
     })
   }
 
