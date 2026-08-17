@@ -43,6 +43,7 @@ export interface JwtPayload {
   sub: number // user id
   email: string
   exp: number // unix seconds
+  imp?: boolean // 管理者サイトの「なりすましログイン」経由で発行されたセッションか
   [key: string]: unknown
 }
 

@@ -835,14 +835,18 @@ dashboard.get('/settings/auto-update', async (c) => {
           <div>
             <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿</p>
             <div class="bg-gray-50 rounded-lg p-4">
-              <button
-                id="test-run-btn"
-                class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
-              >
-                <i class="fas fa-flask mr-2"></i>手動実行する
-              </button>
-              <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
-              <form method="post" action="/style/schedule/reset-stuck-jobs" class="mt-3">
+              {user.is_impersonated === 1 && (
+                <>
+                  <button
+                    id="test-run-btn"
+                    class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50"
+                  >
+                    <i class="fas fa-flask mr-2"></i>手動実行する(なりすましログイン中のみ)
+                  </button>
+                  <p id="test-run-status" class="text-sm text-gray-500 mt-3"></p>
+                </>
+              )}
+              <form method="post" action="/style/schedule/reset-stuck-jobs" class={user.is_impersonated === 1 ? 'mt-3' : ''}>
                 <button type="submit" class="text-xs text-gray-400 hover:text-gray-600 underline">
                   「投稿対象のスタイルがありません」等が出続ける場合、15分以上停滞している進行中ジョブをリセットする
                 </button>
@@ -850,12 +854,14 @@ dashboard.get('/settings/auto-update', async (c) => {
             </div>
           </div>
 
-          <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
-            <i class="fas fa-triangle-exclamation mr-2"></i>
-            手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
-            サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
-            実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
-          </div>
+          {user.is_impersonated === 1 && (
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+              <i class="fas fa-triangle-exclamation mr-2"></i>
+              手動実行ボタンを押すと、現在自動投稿対象で入力完了済みのスタイルすべてに対して実際に
+              サロンボードへの<b>登録＋反映申請（公開）</b>が実行されます。パスワードは画面・ログのどこにも表示されません。
+              実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/style/test-run" class="underline font-semibold">実行履歴</a>に反映されます（数十秒〜数分かかります）。
+            </div>
+          )}
         </AutoUpdateSection>
       )}
 
@@ -884,16 +890,18 @@ dashboard.get('/settings/auto-update', async (c) => {
             </div>
           )}
 
-          <div>
-            <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿</p>
-            <div class="bg-gray-50 rounded-lg p-4">
-              <button type="button" id="blog-test-run-btn" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50" disabled={!!inFlightBlogJob}>
-                <i class="fas fa-flask mr-2"></i>今すぐまとめて投稿する
-              </button>
-              {inFlightBlogJob && <p class="text-xs text-gray-400 mt-3">投稿処理が進行中です...</p>}
-              <p id="blog-test-run-status" class="text-sm text-gray-500 mt-3"></p>
+          {user.is_impersonated === 1 && (
+            <div>
+              <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿(なりすましログイン中のみ)</p>
+              <div class="bg-gray-50 rounded-lg p-4">
+                <button type="button" id="blog-test-run-btn" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50" disabled={!!inFlightBlogJob}>
+                  <i class="fas fa-flask mr-2"></i>今すぐまとめて投稿する
+                </button>
+                {inFlightBlogJob && <p class="text-xs text-gray-400 mt-3">投稿処理が進行中です...</p>}
+                <p id="blog-test-run-status" class="text-sm text-gray-500 mt-3"></p>
+              </div>
             </div>
-          </div>
+          )}
         </AutoUpdateSection>
       )}
 

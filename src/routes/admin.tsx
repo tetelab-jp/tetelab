@@ -55,11 +55,13 @@ async function setAdminSession(c: any, adminId: number, email: string) {
 
 // なりすましログイン用: サロン側auth.tsxのsetSession()と同じ組み立て方で、
 // 対象サロンの通常セッションCookie(session)をそのまま発行する(パスワードは一切扱わない)。
+// imp:trueを載せることで、requireAuthがこのセッションを「なりすまし中」と
+// 区別できるようにする(手動実行ボタンの表示制御等に使う。src/lib/auth-middleware.ts参照)。
 async function impersonateSalonSession(c: any, userId: number, email: string) {
   const secret = c.env.JWT_SECRET
   if (!secret) throw new Error('JWT_SECRETが未設定です')
   const exp = Math.floor(Date.now() / 1000) + IMPERSONATE_SESSION_TTL_SECONDS
-  const token = await signJwt({ sub: userId, email, exp }, secret)
+  const token = await signJwt({ sub: userId, email, exp, imp: true }, secret)
   const isHttps = c.req.header('x-forwarded-proto') === 'https' || c.req.url.startsWith('https://')
   setCookie(c, SESSION_COOKIE_NAME, token, {
     httpOnly: true,

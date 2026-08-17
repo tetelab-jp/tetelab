@@ -1,5 +1,11 @@
 import { Hono } from 'hono'
-import { requireAuth, requireStyleEnabled, requireBlogEnabled, requireReviewEnabled } from '../lib/auth-middleware'
+import {
+  requireAuth,
+  requireStyleEnabled,
+  requireBlogEnabled,
+  requireReviewEnabled,
+  requireImpersonated
+} from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import {
   runStyleAutomationForUser,
@@ -342,7 +348,9 @@ automation.get('/style/test-run', requireAuth, async (c) => {
 
 // ---------- 手動実行API（ログイン中ユーザー本人のみ） ----------
 
-automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, async (c) => {
+// 2026-08-17追記(ユーザー指定): 手動実行は一般ユーザーには提供せず、
+// 管理者サイトの「なりすましログイン」経由(検証用)のみに限定する。
+automation.post('/api/automation/test-run', requireAuth, requireStyleEnabled, requireImpersonated, async (c) => {
   const user = c.get('user')
   try {
     const summary = await runStyleAutomationForUser(c.env, user.id, user.active_salon_id, 'manual-test')
@@ -662,7 +670,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
 // ため、reflect(反映申請)相当の別ステップは無い。
 // ============================================
 
-automation.post('/api/blog-automation/test-run', requireAuth, requireBlogEnabled, async (c) => {
+automation.post('/api/blog-automation/test-run', requireAuth, requireBlogEnabled, requireImpersonated, async (c) => {
   const user = c.get('user')
   try {
     const summary = await runBlogAutomationForUser(c.env, user.id, user.active_salon_id)
