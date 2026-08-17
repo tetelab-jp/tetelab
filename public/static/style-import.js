@@ -61,6 +61,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const CACHE_KEY = 'salonmotion_style_import_cache_v2_' + cacheScope
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
+  // 2026-08-18追記(ユーザー指定・重大バグ修正): 全選択/全解除ボタンが
+  // allStyles(取得した全ページ分)を対象にしていたため、「1〜100件」の
+  // ページで「全選択」を押しただけで、全600件のような取得済み全件が
+  // 選択されてしまい、そのまま実行すると意図せず大量のスタイルが
+  // 取り込まれてしまっていた。現在表示中のページの範囲だけを対象にする。
+  function getCurrentPageStyles() {
+    const totalPages = Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))
+    const page = Math.min(Math.max(1, currentPage), totalPages)
+    const start = (page - 1) * PAGE_SIZE
+    return allStyles.slice(start, start + PAGE_SIZE)
+  }
+
   function renderPage() {
     const totalPages = Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))
     currentPage = Math.min(Math.max(1, currentPage), totalPages)
@@ -151,13 +163,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const deselectAllBtn = document.getElementById('import-deselect-all-btn')
   if (selectAllBtn) {
     selectAllBtn.addEventListener('click', () => {
-      allStyles.forEach((s) => selectedIds.add(s.styleId))
+      getCurrentPageStyles().forEach((s) => selectedIds.add(s.styleId))
       renderPage()
     })
   }
   if (deselectAllBtn) {
     deselectAllBtn.addEventListener('click', () => {
-      selectedIds.clear()
+      getCurrentPageStyles().forEach((s) => selectedIds.delete(s.styleId))
       renderPage()
     })
   }
