@@ -115,9 +115,9 @@ const READY_ARTICLE_SELECT = `
     st.salonboard_stylist_key AS stylist_select_value,
     cp.salonboard_coupon_key AS coupon_select_value
   FROM blog_articles a
-  LEFT JOIN blog_categories bc ON bc.id = a.category_id
-  LEFT JOIN stylists st ON st.id = a.stylist_id
-  LEFT JOIN coupons cp ON cp.id = a.coupon_id
+  LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
+  LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
+  LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
 `
 
 /**
