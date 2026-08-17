@@ -1438,6 +1438,18 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }`
   )
 
+  // 2026-08-17追記(ユーザー指摘に基づく安全策): 編集フォーム上のカウンタ
+  // (#confirm押下前)だけでは、確認画面への遷移中に画像が失われるケースを
+  // 検知できない。確認画面のimg要素が1件も無ければ(サイト共通のロゴ・
+  // アイコン類すら無いことは通常あり得ないため)、記事の写真が確実に
+  // 欠落していると判断できる。この場合は「登録が完了しました」の表示だけを
+  // もって成功と誤認しないよう、ここで明確に失敗させる(何枚のうちどれが
+  // 記事の写真かまでは実HTML未確認のため判別できないが、0件は曖昧さの
+  // 無い失敗シグナルとして扱う)。
+  if (input.imageBuffer && input.imageFileName && confirmScreenImageInfo && confirmScreenImageInfo.length === 0) {
+    throw new Error('確認画面に画像が1件も表示されていません(記事の写真が欠落している可能性が高いため登録を中断しました)')
+  }
+
   log('「登録・反映する」を実行中...')
   await Promise.all([
     page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
