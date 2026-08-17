@@ -559,11 +559,28 @@ dashboard.get('/settings/account', async (c) => {
       )}
 
       <div class="max-w-2xl">
+        <div id="account-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
+          <div>
+            <p class="font-semibold">
+              <i class="fas fa-user-gear mr-2 text-pink-500"></i>メールアドレス・パスワードの変更
+            </p>
+            <p class="text-xs text-gray-500 mt-1">現在のメールアドレス: {user.email}</p>
+          </div>
+          <button
+            type="button"
+            id="account-edit-open-btn"
+            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
+          >
+            変更する
+          </button>
+        </div>
+
         <form
+          id="account-edit-form"
           method="post"
           action="/settings/account"
           autocomplete="off"
-          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
+          class={`bg-white rounded-xl border border-gray-100 p-6 space-y-4 ${error ? '' : 'hidden'}`}
         >
           <p class="font-semibold">
             <i class="fas fa-user-gear mr-2 text-pink-500"></i>メールアドレス・パスワードの変更
@@ -611,6 +628,8 @@ dashboard.get('/settings/account', async (c) => {
           </button>
         </form>
       </div>
+
+      <script src="/static/account-settings.js"></script>
     </PageLayout>,
     { title: 'アカウント設定' }
   )
