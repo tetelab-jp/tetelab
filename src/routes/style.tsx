@@ -650,7 +650,8 @@ style.post('/api/style/import/execute', async (c) => {
     await loginToSalonBoard(page, loginId, password, () => {}, c.env, user.id)
     await ensureSalonSelected(page, cred.target_store_id, () => {})
 
-    const result = await importSelectedStyles(page, c.env, user.id, styleIds, () => {})
+    if (!user.active_salon_id) return c.json({ success: false, error: '対象のサロンが選択されていません' }, 400)
+    const result = await importSelectedStyles(page, c.env, user.id, user.active_salon_id, styleIds, () => {})
     return c.json({ success: true, ...result })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)
