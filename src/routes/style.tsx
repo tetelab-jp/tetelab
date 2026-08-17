@@ -1355,25 +1355,6 @@ style.post('/api/style/reorder', async (c) => {
   return c.json({ success: true })
 })
 
-style.post('/api/style/bulk-select', async (c) => {
-  const user = c.get('user')
-  const { selected } = await c.req.json<{ selected: boolean }>()
-
-  await c.env.DB.prepare(
-    'UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?'
-  )
-    .bind(selected ? 1 : 0, user.id, user.active_salon_id)
-    .run()
-
-  const row = await c.env.DB.prepare(
-    'SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ cnt: number }>()
-
-  return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
-})
-
 // テンプレート一括適用(docs/phase3-mvp-design.md 5-4)。
 // 画像は変更せず、テンプレート項目(タイトルを除く。担当スタイリストは含む)を反映する。
 // タイトルは各スタイル固有のものとして扱い、一括適用では上書きしない。
