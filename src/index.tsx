@@ -911,6 +911,14 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時シード(初期管理者アカウント)に失敗しました:', err)
   }
+  try {
+    // 2026-08-17追記(ユーザー指定): ブログフッター(サロン基本情報から自動生成
+    // される記事末尾の文言)のプレビューを直接編集できるようにする上書き列
+    // (詳細はmigrations-pg/0033_*.sql参照)。NULL/空文字なら従来通り自動生成。
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS footer_override_text TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(salon_profiles.footer_override_text)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。

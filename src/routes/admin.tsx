@@ -1134,18 +1134,22 @@ admin.post('/admin/tool/:id/toggle-review', (c) => toggleSalonFeature(c, 'review
 // automation.tsxのジョブ結果コールバックで更新)を一覧表示する。
 // 5回以上連続失敗した/そこから復旧した瞬間はSNS経由でメール通知される
 // (src/lib/sns-alert.ts、automation.tsxのupdateConsecutiveFailureAndNotify)。
-// ブログは自動投稿機能が未実装のため対象外(実装後に別途追加する)。
+// ブログ自動投稿の連続失敗回数(users.consecutive_blog_failure_count、
+// blog-post-runner.tsのupdateBlogConsecutiveFailureAndNotifyで更新)も同様に表示する。
 
 const STATUS_PAGE_SIZE = 20
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+const BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
 
 type StatusSalonRow = {
   id: number
   email: string
   salon_name: string | null
   consecutive_failure_count: number
+  consecutive_blog_failure_count: number
   is_active: number
   style_enabled: number
+  blog_enabled: number
   seq: number
 }
 
@@ -1182,7 +1186,7 @@ admin.get('/admin/status', async (c) => {
 
   // サロン一覧(/admin/salons)と同じ並び順(契約中を上位・契約外を最後尾)にする。
   const { results: salons } = await c.env.DB.prepare(
-    `SELECT id, email, salon_name, consecutive_failure_count, is_active, style_enabled,
+    `SELECT id, email, salon_name, consecutive_failure_count, consecutive_blog_failure_count, is_active, style_enabled, blog_enabled,
        ROW_NUMBER() OVER (ORDER BY is_active DESC, created_at ASC) AS seq
      FROM users
      WHERE ${contractedAndActiveFilter} AND (? = '' OR salon_name ILIKE ? OR email ILIKE ?)
@@ -1193,6 +1197,7 @@ admin.get('/admin/status', async (c) => {
     .all<StatusSalonRow>()
 
   const alertingCount = salons.filter((s) => s.consecutive_failure_count >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD).length
+  const blogAlertingCount = salons.filter((s) => s.consecutive_blog_failure_count >= BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD).length
 
   return c.render(
     <AdminPageLayout active="admin-status" adminEmail={adminUser.email} title="稼働状況">
@@ -1200,6 +1205,12 @@ admin.get('/admin/status', async (c) => {
         <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-triangle-exclamation mr-2"></i>
           このページ内に{CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続で失敗しているサロンが{alertingCount}件あります
+        </div>
+      )}
+      {blogAlertingCount > 0 && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-triangle-exclamation mr-2"></i>
+          このページ内にブログ自動投稿が{BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続で失敗しているサロンが{blogAlertingCount}件あります
         </div>
       )}
 
@@ -1236,38 +1247,55 @@ admin.get('/admin/status', async (c) => {
                 <th class="px-4 py-3 text-left font-medium">サロン名</th>
                 <th class="px-4 py-3 text-left font-medium">メールアドレス</th>
                 <th class="px-4 py-3 text-left font-medium">スタイル連続失敗</th>
+                <th class="px-4 py-3 text-left font-medium">ブログ連続失敗</th>
                 <th class="px-4 py-3 text-left font-medium">状態</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-50">
               {salons.map((salon) => {
                 const isAlerting = salon.consecutive_failure_count >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+                const isBlogAlerting = salon.consecutive_blog_failure_count >= BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD
                 const isInactive = salon.is_active === 0 || salon.style_enabled === 0
+                const isBlogInactive = salon.is_active === 0 || salon.blog_enabled === 0
                 return (
                   <tr>
                     <td class="px-4 py-3 text-gray-400">{salon.seq}</td>
                     <td class="px-4 py-3 font-medium text-gray-800">{salon.salon_name || '(未設定)'}</td>
                     <td class="px-4 py-3 text-gray-500">{salon.email}</td>
                     <td class="px-4 py-3 text-gray-700">{salon.consecutive_failure_count}回</td>
+                    <td class="px-4 py-3 text-gray-700">{salon.consecutive_blog_failure_count}回</td>
                     <td class="px-4 py-3">
-                      {isInactive ? (
-                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-400">
-                          対象外(契約OFF/機能OFF)
-                        </span>
-                      ) : isAlerting ? (
-                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">
-                          異常({CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続失敗)
-                        </span>
-                      ) : (
-                        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">正常</span>
-                      )}
+                      <div class="flex flex-col gap-1">
+                        {isInactive ? (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-400 w-fit">
+                            スタイル対象外(契約OFF/機能OFF)
+                          </span>
+                        ) : isAlerting ? (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600 w-fit">
+                            スタイル異常({CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続失敗)
+                          </span>
+                        ) : (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600 w-fit">スタイル正常</span>
+                        )}
+                        {isBlogInactive ? (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-gray-100 text-gray-400 w-fit">
+                            ブログ対象外(契約OFF/機能OFF)
+                          </span>
+                        ) : isBlogAlerting ? (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600 w-fit">
+                            ブログ異常({BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上連続失敗)
+                          </span>
+                        ) : (
+                          <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600 w-fit">ブログ正常</span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 )
               })}
               {salons.length === 0 && (
                 <tr>
-                  <td colspan={5} class="px-4 py-8 text-center text-gray-400">
+                  <td colspan={6} class="px-4 py-8 text-center text-gray-400">
                     該当するサロンがありません
                   </td>
                 </tr>

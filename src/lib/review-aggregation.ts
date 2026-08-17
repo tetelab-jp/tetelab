@@ -72,14 +72,17 @@ export type StylistBreakdownResult = {
  * ②スタイリスト別評価。period='all'なら全期間、'YYYY-MM'ならその月のみ。
  * stylist_idがNULL(名前不一致で未マッチ)の行はunmatchedStylistCountに
  * カウントするのみで、スタイリスト別ランキングには含めない。
+ * sort='rating'(既定): 評価(総合スコア平均)順。sort='count': 件数順。
  */
 export async function getStylistBreakdown(
   env: Bindings,
   salonId: number,
-  period: 'all' | string
+  period: 'all' | string,
+  sort: 'rating' | 'count' = 'rating'
 ): Promise<StylistBreakdownResult> {
   const periodClause = period === 'all' ? '' : `AND to_char(posted_at, 'YYYY-MM') = ?`
   const bindArgs: (number | string)[] = period === 'all' ? [salonId] : [salonId, period]
+  const orderClause = sort === 'count' ? 'cnt DESC, avg_overall DESC NULLS LAST' : 'avg_overall DESC NULLS LAST, cnt DESC'
 
   const { results } = await env.DB.prepare(
     `SELECT
@@ -100,7 +103,7 @@ export async function getStylistBreakdown(
      JOIN stylists st ON st.id = r.stylist_id
      WHERE r.salon_id = ? AND r.matched_at IS NOT NULL ${periodClause}
      GROUP BY st.id, st.name
-     ORDER BY avg_overall DESC NULLS LAST, cnt DESC`
+     ORDER BY ${orderClause}`
   )
     .bind(...bindArgs)
     .all<{

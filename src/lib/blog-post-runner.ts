@@ -14,7 +14,7 @@ import { runBlogPostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
 import { getFooterTextForSalon } from './blog-footer'
 
-const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
+const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
 
 export async function updateBlogConsecutiveFailureAndNotify(env: Bindings, userId: number, salonId: number | null, success: boolean): Promise<void> {
   const before = await env.DB.prepare(
@@ -389,16 +389,21 @@ export async function runBlogAutomationForUser(env: Bindings, userId: number, sa
   }
 }
 
-const BLACKOUT_START_MINUTES = 2 * 60 // 02:00
-const BLACKOUT_END_MINUTES = 7 * 60 // 07:00
-// スタイル投稿(60分おきに巡回)と異なり、ブログ記事は「1日1本」を想定した
-// 生成テンプレート(写真1枚=記事1本)のため、cronからの巡回間隔は20時間とする
-// (多少前後してもおおよそ1日1回のペースになる)。
-const POST_INTERVAL_MINUTES = 20 * 60
+// 2026-08-17追記(ユーザー指定): ブログの投稿日時は毎日AM8:00固定とする
+// (ranking.tsxの「定期測定は毎週月曜日固定」と同じ、cronは1分間隔で叩かれる
+// (infra/eventbridge.tf、rate(1 minute))が、実際の投稿はこちら側で
+// 「JST 08:00を過ぎていて、かつ今日(JST)まだ投稿していなければ1回だけ」に
+// ゲートする方式)。
+const DAILY_POST_TIME_LABEL = '08:00'
 
-function jstMinutesOfDay(nowLabel: string): number {
-  const [hh, mm] = nowLabel.split(':').map(Number)
-  return hh * 60 + mm
+function jstYmdFromUtcTimestamp(utcTimestamp: string): string {
+  const jst = new Date(new Date(utcTimestamp.replace(' ', 'T') + 'Z').getTime() + 9 * 60 * 60 * 1000)
+  return `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(jst.getUTCDate()).padStart(2, '0')}`
+}
+
+function jstYmdNow(): string {
+  const jst = new Date(Date.now() + 9 * 60 * 60 * 1000)
+  return `${jst.getUTCFullYear()}-${String(jst.getUTCMonth() + 1).padStart(2, '0')}-${String(jst.getUTCDate()).padStart(2, '0')}`
 }
 
 type BlogScheduleState = {
@@ -407,8 +412,7 @@ type BlogScheduleState = {
 }
 
 async function shouldPostNow(env: Bindings, userId: number, salonId: number | null, nowLabel: string, schedule: BlogScheduleState): Promise<boolean> {
-  const nowMinutes = jstMinutesOfDay(nowLabel)
-  if (nowMinutes >= BLACKOUT_START_MINUTES && nowMinutes < BLACKOUT_END_MINUTES) return false
+  if (nowLabel < DAILY_POST_TIME_LABEL) return false
 
   if (schedule.paused_until) {
     const pausedUntilMs = new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime()
@@ -422,17 +426,16 @@ async function shouldPostNow(env: Bindings, userId: number, salonId: number | nu
     .first<{ x: number }>()
   if (inFlight) return false
 
+  // 今日(JST)すでに投稿(ジョブ投入)済みなら、1日1回のペースを守るためスキップする。
   const lastRow = await env.DB.prepare(`SELECT MAX(created_at) as last_at FROM blog_post_jobs WHERE user_id = ? AND salon_id = ?`)
     .bind(userId, salonId)
     .first<{ last_at: string | null }>()
   if (!lastRow?.last_at) return true
-  const lastAtMs = new Date(lastRow.last_at.replace(' ', 'T') + 'Z').getTime()
-  const minutesSinceLast = (Date.now() - lastAtMs) / 60000
-  return minutesSinceLast >= POST_INTERVAL_MINUTES
+  return jstYmdFromUtcTimestamp(lastRow.last_at) !== jstYmdNow()
 }
 
 /**
- * 深夜2:00〜7:00を除く時間帯に、約1日1本のペースで記事を巡回投稿する。
+ * 毎日JST 08:00に、1日1本のペースで記事を巡回投稿する。
  * 外部Cronから1分間隔で呼ばれる想定(style-post-runner.tsのrunNextStyleForUserと同じ形)。
  */
 export async function runNextArticleForUser(env: Bindings, userId: number, salonId: number | null, scheduledTimeLabel: string): Promise<BlogRunSummary | null> {

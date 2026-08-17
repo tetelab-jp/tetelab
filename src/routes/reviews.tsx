@@ -142,9 +142,10 @@ reviews.get('/reviews/by-stylist', async (c) => {
   const backfillDone = !!state?.backfill_completed_at
 
   const period = c.req.query('period') || 'all'
+  const sort = c.req.query('sort') === 'count' ? 'count' : 'rating'
   const availableMonths = backfillDone ? await getAvailableReviewMonths(c.env, salonId) : []
   const breakdown = backfillDone
-    ? await getStylistBreakdown(c.env, salonId, period === 'all' ? 'all' : period)
+    ? await getStylistBreakdown(c.env, salonId, period === 'all' ? 'all' : period, sort)
     : { stylists: [], unmatchedStylistCount: 0 }
 
   return c.render(
@@ -158,20 +159,34 @@ reviews.get('/reviews/by-stylist', async (c) => {
               <p class="font-semibold">
                 <i class="fas fa-star mr-2 text-pink-500"></i>スタイリスト別評価(総合スコア平均)
               </p>
-              <select
-                id="review-stylist-period-select"
-                class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
-                onchange="location.href='/reviews/by-stylist?period='+this.value"
-              >
-                <option value="all" selected={period === 'all'}>
-                  すべての期間
-                </option>
-                {availableMonths.map((m) => (
-                  <option value={m} selected={period === m}>
-                    {m}
+              <div class="flex items-center gap-2 flex-wrap">
+                <select
+                  id="review-stylist-sort-select"
+                  class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
+                  onchange={`location.href='/reviews/by-stylist?period=${encodeURIComponent(period)}&sort='+this.value`}
+                >
+                  <option value="rating" selected={sort === 'rating'}>
+                    評価順
                   </option>
-                ))}
-              </select>
+                  <option value="count" selected={sort === 'count'}>
+                    件数順
+                  </option>
+                </select>
+                <select
+                  id="review-stylist-period-select"
+                  class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2"
+                  onchange={`location.href='/reviews/by-stylist?sort=${sort}&period='+this.value`}
+                >
+                  <option value="all" selected={period === 'all'}>
+                    すべての期間
+                  </option>
+                  {availableMonths.map((m) => (
+                    <option value={m} selected={period === m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
             {breakdown.stylists.length === 0 ? (
               <p class="text-sm text-gray-400 text-center py-10">この期間に評点付きの口コミがありません</p>

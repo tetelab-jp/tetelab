@@ -558,54 +558,25 @@ dashboard.get('/settings/account', async (c) => {
         </div>
       )}
 
-      <div class="max-w-2xl">
-        <div id="account-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
-          <div>
-            <p class="font-semibold">
-              <i class="fas fa-user-gear mr-2 text-pink-500"></i>メールアドレス・パスワードの変更
-            </p>
-            <p class="text-xs text-gray-500 mt-1">現在のメールアドレス: {user.email}</p>
-          </div>
-          <button
-            type="button"
-            id="account-edit-open-btn"
-            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
-          >
-            変更する
-          </button>
-        </div>
-
+      <div class="max-w-2xl space-y-6">
         <form
-          id="account-edit-form"
           method="post"
-          action="/settings/account"
+          action="/settings/account/email"
           autocomplete="off"
-          class={`bg-white rounded-xl border border-gray-100 p-6 space-y-4 ${error ? '' : 'hidden'}`}
+          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
         >
           <p class="font-semibold">
-            <i class="fas fa-user-gear mr-2 text-pink-500"></i>メールアドレス・パスワードの変更
+            <i class="fas fa-envelope mr-2 text-pink-500"></i>メールアドレスの変更
           </p>
-          <p class="text-xs text-gray-500 leading-relaxed">
-            変更を保存するには、確認のため現在のパスワードの入力が必要です。
-            メールアドレス・新しいパスワードは、変更したい項目だけ入力してください。
-          </p>
+          <p class="text-xs text-gray-500 leading-relaxed">現在のメールアドレス: {user.email}</p>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス（現在: {user.email}）</label>
+            <label class="block text-sm font-medium text-gray-700 mb-1">新しいメールアドレス</label>
             <input
+              required
               type="email"
               name="new_email"
               autocomplete="off"
-              placeholder="変更する場合のみ入力"
-              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
-            />
-          </div>
-          <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
-            <input
-              type="password"
-              name="new_password"
-              autocomplete="new-password"
-              placeholder="変更する場合のみ入力（8文字以上）"
+              placeholder="新しいメールアドレスを入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
           </div>
@@ -624,31 +595,67 @@ dashboard.get('/settings/account', async (c) => {
             type="submit"
             class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
           >
-            保存する
+            メールアドレスを変更する
+          </button>
+        </form>
+
+        <form
+          method="post"
+          action="/settings/account/password"
+          autocomplete="off"
+          class="bg-white rounded-xl border border-gray-100 p-6 space-y-4"
+        >
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <p class="font-semibold">
+              <i class="fas fa-key mr-2 text-pink-500"></i>パスワードの変更
+            </p>
+            <a href="/forgot-password" class="text-xs text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">新しいパスワード</label>
+            <input
+              required
+              type="password"
+              name="new_password"
+              autocomplete="new-password"
+              placeholder="8文字以上で入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <div class="pt-3 border-t border-gray-100">
+            <label class="block text-sm font-medium text-gray-700 mb-1">現在のパスワード（確認のため必須）</label>
+            <input
+              required
+              type="password"
+              name="current_password"
+              autocomplete="current-password"
+              placeholder="現在お使いのパスワードを入力"
+              class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
+            />
+          </div>
+          <button
+            type="submit"
+            class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition"
+          >
+            パスワードを変更する
           </button>
         </form>
       </div>
-
-      <script src="/static/account-settings.js"></script>
     </PageLayout>,
     { title: 'アカウント設定' }
   )
 })
 
-dashboard.post('/settings/account', async (c) => {
+dashboard.post('/settings/account/email', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const newEmail = String(body.new_email || '').trim().toLowerCase()
-  const newPassword = String(body.new_password || '')
   const currentPassword = String(body.current_password || '')
 
   const redirectError = (message: string) => c.redirect('/settings/account?error=' + encodeURIComponent(message))
 
-  if (!newEmail && !newPassword) {
-    return redirectError('メールアドレスまたはパスワードのどちらか一方は入力してください')
-  }
-  if (newPassword && newPassword.length < 8) {
-    return redirectError('新しいパスワードは8文字以上で入力してください')
+  if (!newEmail) {
+    return redirectError('新しいメールアドレスを入力してください')
   }
 
   const current = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
@@ -659,7 +666,7 @@ dashboard.post('/settings/account', async (c) => {
     return redirectError('現在のパスワードが正しくありません')
   }
 
-  if (newEmail && newEmail !== user.email) {
+  if (newEmail !== user.email) {
     const existing = await c.env.DB.prepare('SELECT id FROM users WHERE email = ? AND id != ?')
       .bind(newEmail, user.id)
       .first<{ id: number }>()
@@ -671,12 +678,33 @@ dashboard.post('/settings/account', async (c) => {
       .run()
   }
 
-  if (newPassword) {
-    const passwordHash = await hashPassword(newPassword)
-    await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(passwordHash, user.id)
-      .run()
+  return c.redirect('/settings/account?saved=1')
+})
+
+dashboard.post('/settings/account/password', async (c) => {
+  const user = c.get('user')
+  const body = await c.req.parseBody()
+  const newPassword = String(body.new_password || '')
+  const currentPassword = String(body.current_password || '')
+
+  const redirectError = (message: string) => c.redirect('/settings/account?error=' + encodeURIComponent(message))
+
+  if (!newPassword || newPassword.length < 8) {
+    return redirectError('新しいパスワードは8文字以上で入力してください')
   }
+
+  const current = await c.env.DB.prepare('SELECT password_hash FROM users WHERE id = ?')
+    .bind(user.id)
+    .first<{ password_hash: string }>()
+  const passwordOk = await verifyPasswordConstantTime(currentPassword, current?.password_hash ?? null)
+  if (!passwordOk) {
+    return redirectError('現在のパスワードが正しくありません')
+  }
+
+  const passwordHash = await hashPassword(newPassword)
+  await c.env.DB.prepare('UPDATE users SET password_hash = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .bind(passwordHash, user.id)
+    .run()
 
   return c.redirect('/settings/account?saved=1')
 })

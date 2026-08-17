@@ -567,6 +567,17 @@ style.get('/style/import', async (c) => {
         </div>
         <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
+        <div id="import-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
+          <span id="import-pagination-label"></span>
+          <div class="flex gap-3">
+            <button type="button" id="import-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+              ← 前へ
+            </button>
+            <button type="button" id="import-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+              次へ →
+            </button>
+          </div>
+        </div>
       </div>
 
       <script src="/static/style-import.js"></script>
@@ -831,7 +842,16 @@ function StyleForm({
         {detail?.front_style_image_id && (
           <img src={`/style/image/${detail.front_style_image_id}`} class="w-32 h-40 object-cover rounded-lg border border-gray-200 mb-2" />
         )}
-        <input type="file" name="image" accept="image/*" class="block w-full text-sm border border-gray-300 rounded-lg px-3 py-2" />
+        <label
+          for="style-image-input"
+          id="style-image-dropzone"
+          class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
+        >
+          <i class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+          <span id="style-image-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
+          <span class="text-xs text-gray-400">{detail?.front_style_image_id ? '変更する場合のみ選択してください' : 'このスタイルの画像として登録します'}</span>
+        </label>
+        <input type="file" id="style-image-input" name="image" accept="image/*" class="hidden" />
       </div>
 
       <div>
