@@ -15,8 +15,12 @@ import {
   findSalonRankInPage,
   extractSalonAreaFromSlnPage,
   parseHpbReviewPage,
+  extractSalonProfileFromSlnPage,
+  parseHpbBlogListPage,
   type SalonAreaInfo,
-  type HpbReviewItem
+  type HpbReviewItem,
+  type SalonHpbProfileInfo,
+  type HpbBlogListItem
 } from './ranking-parse'
 
 const USER_AGENT =
@@ -203,4 +207,58 @@ export async function fetchHpbReviewList(
   }
 
   return { items, pagesScanned, salonAverageScore }
+}
+
+// --------------------------------------------
+// ブログ参考材料機能(2026-08-17追記): HPB公開サロンページ・公開ブログ一覧の取得
+// --------------------------------------------
+
+/** サロンの公開ページからキャッチコピー・紹介文・「からの一言」メッセージを取得する */
+export async function fetchSalonProfileFromHpb(
+  hpbSlnId: string,
+  options: ScrapeOptions = {}
+): Promise<SalonHpbProfileInfo> {
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+  const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/`, dispatcher, options.signal)
+  return extractSalonProfileFromSlnPage(html)
+}
+
+export type HpbBlogArticlesResult = {
+  items: HpbBlogListItem[]
+  pagesScanned: number
+}
+
+const DEFAULT_MAX_BLOG_ARTICLES = 100
+const DEFAULT_HPB_BLOG_PAGE_DELAY_MS = 800
+
+/**
+ * HPB公開ブログ一覧(https://beauty.hotpepper.jp/{hpbSlnId}/blog/)を、
+ * 最大件数(デフォルト100件)に達するかページが尽きるまで巡回して取得する。
+ * ログイン不要・Puppeteer不要。一覧の抜粋のみを取得し、個別記事ページへの
+ * 追加アクセスは行わない(AI生成の参考材料としては抜粋で十分なため)。
+ */
+export async function fetchHpbBlogArticles(
+  hpbSlnId: string,
+  options: ScrapeOptions & { maxArticles?: number } = {}
+): Promise<HpbBlogArticlesResult> {
+  const maxArticles = options.maxArticles ?? DEFAULT_MAX_BLOG_ARTICLES
+  const maxPages = options.maxPages ?? DEFAULT_MAX_HPB_REVIEW_PAGES
+  const delayMs = options.delayMs ?? DEFAULT_HPB_BLOG_PAGE_DELAY_MS
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+
+  const items: HpbBlogListItem[] = []
+  let url: string | null = `https://beauty.hotpepper.jp/${hpbSlnId}/blog/`
+  let pagesScanned = 0
+
+  while (url && pagesScanned < maxPages && items.length < maxArticles) {
+    const html = await fetchHtml(url, dispatcher, options.signal)
+    const parsed = parseHpbBlogListPage(html)
+    pagesScanned += 1
+    items.push(...parsed.items)
+    if (!parsed.nextPageUrl) break
+    url = parsed.nextPageUrl
+    await sleep(delayMs)
+  }
+
+  return { items: items.slice(0, maxArticles), pagesScanned }
 }

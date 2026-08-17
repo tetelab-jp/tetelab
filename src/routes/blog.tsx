@@ -11,6 +11,7 @@ import {
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
 import { formatJstDateOnly } from '../lib/date-format'
+import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -70,17 +71,28 @@ type SalonProfileRow = {
   footer_separator: string | null
   footer_keywords_json: string | null
   salonboard_synced_at: string | null
+  hpb_catch: string | null
+  hpb_copy: string | null
+  hpb_message: string | null
 }
 
 async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfileRow | null> {
   return c.env.DB.prepare(
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
             business_hours, closing_days, strengths, price_range, reference_text, first_person,
-            sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at
+            sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at,
+            hpb_catch, hpb_copy, hpb_message
      FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
   )
     .bind(user.id, user.active_salon_id)
     .first<SalonProfileRow>()
+}
+
+async function getBlogReferenceArticleCount(c: AppContext, user: AppUser): Promise<number> {
+  const row = await c.env.DB.prepare('SELECT COUNT(*) AS cnt FROM blog_reference_articles WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first<{ cnt: number }>()
+  return row?.cnt ?? 0
 }
 
 type SalonAreaLookupRow = { salon_name: string | null; middle_area_name: string | null; small_area_name: string | null }
@@ -102,7 +114,15 @@ async function getSalonForProfile(c: AppContext, user: AppUser): Promise<SalonAr
 }
 
 async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promise<SalonProfileForGeneration> {
-  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
+  const [profile, salon, referenceArticles] = await Promise.all([
+    getSalonProfile(c, user),
+    getSalonForProfile(c, user),
+    c.env.DB.prepare(
+      'SELECT title, excerpt FROM blog_reference_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC LIMIT 10'
+    )
+      .bind(user.id, user.active_salon_id)
+      .all<{ title: string | null; excerpt: string }>()
+  ])
   if (!profile) return null
   const areaLabel = [salon?.middle_area_name, salon?.small_area_name].filter(Boolean).join(' > ') || null
   return {
@@ -116,7 +136,11 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
     first_person: profile.first_person,
     sentence_ending: profile.sentence_ending,
     ng_words: profile.ng_words,
-    reference_text: profile.reference_text
+    reference_text: profile.reference_text,
+    hpb_catch: profile.hpb_catch,
+    hpb_copy: profile.hpb_copy,
+    hpb_message: profile.hpb_message,
+    reference_articles: referenceArticles.results || []
   }
 }
 
@@ -125,7 +149,7 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
-  const profile = await getSalonProfile(c, user)
+  const [profile, referenceArticleCount] = await Promise.all([getSalonProfile(c, user), getBlogReferenceArticleCount(c, user)])
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="ブログスタイル設定" styleEnabled={user.style_enabled !== 0}>
@@ -138,9 +162,11 @@ blog.get('/blog/salon', async (c) => {
       <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
         <div class="flex-1 min-w-[240px]">
           <p class="font-semibold text-sm">サロンボードから読み込む</p>
-          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
           <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at || '未取得'}
+            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージと過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
+          </p>
+          <p class="text-xs text-gray-400 mt-1">
+            最終取得: {profile?.salonboard_synced_at || '未取得'}（参考記事{referenceArticleCount}件）
           </p>
         </div>
         <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
@@ -224,28 +250,77 @@ blog.post('/blog/salon', async (c) => {
 })
 
 // サロンボード同期(既存の/api/settings/sync-stylists-coupons、dashboard.tsx参照)を
-// 呼び出した後にこの画面から叩く、最終取得日時の記録のみを行う軽量エンドポイント。
-// 同期の実処理(ブラウザ起動・ログイン・スクレイピング)自体は既存エンドポイントを再利用し、
-// 二重実装を避ける(public/static/blog-salon.js参照)。
+// 呼び出した後にこの画面から叩く、最終取得日時の記録エンドポイント。
+// スタイリスト・クーポン取得の実処理(ブラウザ起動・ログイン・スクレイピング)自体は
+// 既存エンドポイントを再利用し、二重実装を避ける(public/static/blog-salon.js参照)。
+// 2026-08-17追記(ユーザー指定): このタイミングでHPB公開ページ(ログイン不要・
+// fetchのみ)からキャッチ・コピー・「からの一言」メッセージと、過去のブログ記事
+// (最大100件、一覧の抜粋のみ)を取得し、AI記事生成の参考材料として保存する。
 blog.post('/blog/salon/mark-synced', async (c) => {
   const user = c.get('user')
   const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ? AND salon_id = ?')
     .bind(user.id, user.active_salon_id)
     .first()
+  const salon = await c.env.DB.prepare('SELECT hpb_sln_id FROM salonboard_salons WHERE id = ?')
+    .bind(user.active_salon_id)
+    .first<{ hpb_sln_id: string | null }>()
+
+  let hpbCatch: string | null = null
+  let hpbCopy: string | null = null
+  let hpbMessage: string | null = null
+  let articleCount = 0
+  let hpbError: string | null = null
+
+  if (!salon?.hpb_sln_id) {
+    hpbError = 'HPB公開ページのサロンIDが未検出のため、キャッチ・コピー・メッセージ・ブログ記事の取得はスキップされました'
+  } else {
+    try {
+      const [profileInfo, blogResult] = await Promise.all([
+        fetchSalonProfileFromHpb(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }),
+        fetchHpbBlogArticles(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL })
+      ])
+      hpbCatch = profileInfo.catchCopy
+      hpbCopy = profileInfo.description
+      hpbMessage = profileInfo.message
+
+      // 毎回全置き換え(差分更新ではなく、HPB側の最新一覧をそのまま反映する)
+      await c.env.DB.prepare('DELETE FROM blog_reference_articles WHERE user_id = ? AND salon_id = ?')
+        .bind(user.id, user.active_salon_id)
+        .run()
+      let sortOrder = 0
+      for (const item of blogResult.items) {
+        await c.env.DB.prepare(
+          `INSERT INTO blog_reference_articles (user_id, salon_id, title, excerpt, source_url, posted_date, sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+        )
+          .bind(user.id, user.active_salon_id, item.title, item.excerpt, item.sourceUrl, item.postedDate, sortOrder)
+          .run()
+        sortOrder += 1
+      }
+      articleCount = blogResult.items.length
+    } catch (err: any) {
+      hpbError = `HPBからの参考情報取得に失敗しました: ${err?.message || String(err)}`
+    }
+  }
+
   if (existing) {
     await c.env.DB.prepare(
-      'UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?'
+      `UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP,
+         hpb_catch = COALESCE(?, hpb_catch), hpb_copy = COALESCE(?, hpb_copy), hpb_message = COALESCE(?, hpb_message)
+       WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(user.id, user.active_salon_id)
+      .bind(hpbCatch, hpbCopy, hpbMessage, user.id, user.active_salon_id)
       .run()
   } else {
     await c.env.DB.prepare(
-      'INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at) VALUES (?, ?, CURRENT_TIMESTAMP)'
+      `INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at, hpb_catch, hpb_copy, hpb_message)
+       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)`
     )
-      .bind(user.id, user.active_salon_id)
+      .bind(user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage)
       .run()
   }
-  return c.json({ success: true })
+
+  return c.json({ success: true, articleCount, hpbError })
 })
 
 // ---------- 2. 生成テンプレート ----------
@@ -260,7 +335,6 @@ type CategoryRow = {
   key_message: string | null
   title_prompt: string | null
   body_prompt: string | null
-  style_mode: string | null
   season_months_json: string | null
 }
 
@@ -285,18 +359,12 @@ function parseSeasonMonths(json: string | null): number[] {
   }
 }
 
-const STYLE_MODE_LABEL: Record<string, string> = {
-  scraped: '過去のブログ記事を参照（未実装のため、当面はパラメータのみで生成されます）',
-  reference: '参考文章を参照（サロン基本情報の「参考文章」）',
-  params: '文体パラメータのみを使用（一人称・語尾・文体・トーン）'
-}
-
 blog.get('/blog/template', async (c) => {
   const user = c.get('user')
   const saved = c.req.query('saved')
 
   const { results: categories } = await c.env.DB.prepare(
-    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, style_mode, season_months_json
+    `SELECT id, name, is_active, sort_order, hpb_category_value, default_stylist_id, key_message, title_prompt, body_prompt, season_months_json
      FROM blog_categories WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC, id ASC`
   )
     .bind(user.id, user.active_salon_id)
@@ -312,9 +380,14 @@ blog.get('/blog/template', async (c) => {
     .bind(user.id, user.active_salon_id)
     .all<{ id: number; name: string }>()
 
-  const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
+  const [profile, salon, referenceArticleCount] = await Promise.all([
+    getSalonProfile(c, user),
+    getSalonForProfile(c, user),
+    getBlogReferenceArticleCount(c, user)
+  ])
   const footerText = buildFooterText(salon?.salon_name || null, profile)
   const footerLines = footerText ? footerText.split('\n').length : 0
+  const hasReferenceMaterial = Boolean(profile?.salonboard_synced_at) && referenceArticleCount > 0
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
@@ -398,14 +471,19 @@ blog.get('/blog/template', async (c) => {
                   </div>
                 </div>
                 <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">文章スタイル</label>
-                  <select name="style_mode" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                    {(['params', 'reference', 'scraped'] as const).map((mode) => (
-                      <option value={mode} selected={(selected.style_mode || 'params') === mode}>
-                        {STYLE_MODE_LABEL[mode]}
-                      </option>
-                    ))}
-                  </select>
+                  {hasReferenceMaterial ? (
+                    <p class="text-xs text-green-600 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                      <i class="fas fa-circle-check mr-1"></i>
+                      サロンボードから読み込んだ過去のブログ記事・キャッチ・コピー・メッセージを参考に生成します
+                    </p>
+                  ) : (
+                    <p class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <i class="fas fa-triangle-exclamation mr-1"></i>
+                      生成するためには先に
+                      <a href="/blog/salon" class="underline font-semibold">「サロンボードから読み込む」</a>
+                      を実行してください
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label class="block text-sm font-medium text-gray-700 mb-1">
@@ -614,8 +692,6 @@ blog.post('/blog/template/categories/:id', async (c) => {
   const id = Number(c.req.param('id'))
   const body = await c.req.parseBody()
 
-  const styleMode = ['params', 'reference', 'scraped'].includes(String(body.style_mode)) ? String(body.style_mode) : 'params'
-
   const seasonPairsRaw = body.season_pairs
   const seasonPairs = Array.isArray(seasonPairsRaw) ? seasonPairsRaw : seasonPairsRaw ? [seasonPairsRaw] : []
   const seasonMonths = Array.from(
@@ -630,7 +706,7 @@ blog.post('/blog/template/categories/:id', async (c) => {
   ).sort((a, b) => a - b)
 
   await c.env.DB.prepare(
-    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, style_mode=?, season_months_json=?
+    `UPDATE blog_categories SET name=?, hpb_category_value=?, default_stylist_id=?, key_message=?, body_prompt=?, season_months_json=?
      WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
@@ -639,7 +715,6 @@ blog.post('/blog/template/categories/:id', async (c) => {
       body.default_stylist_id ? Number(body.default_stylist_id) : null,
       String(body.key_message || '').trim() || null,
       String(body.body_prompt || '').trim() || null,
-      styleMode,
       JSON.stringify(seasonMonths),
       id,
       user.id,
@@ -715,7 +790,6 @@ async function generateOneArticle(
     couponName: null,
     bodyMaxChars,
     profile,
-    styleMode: (category.style_mode as any) || 'params',
     seasonMonths
   })
 
@@ -1195,7 +1269,7 @@ blog.post('/blog/generate', async (c) => {
 
   const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(categoryId, user.id, user.active_salon_id)
     .first<CategoryRow>()
@@ -1237,7 +1311,6 @@ blog.post('/blog/generate', async (c) => {
       couponName: null,
       bodyMaxChars,
       profile,
-      styleMode: (category.style_mode as any) || 'params',
       seasonMonths
     })
 
@@ -1644,7 +1717,7 @@ blog.post('/api/blog/articles/:id/regenerate-body', async (c) => {
   if (!article.category_id) return c.json({ error: 'カテゴリが設定されていません' }, 400)
 
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, style_mode, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(article.category_id, user.id, user.active_salon_id)
     .first<CategoryRow>()

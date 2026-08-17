@@ -812,6 +812,34 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(review_trend_snapshots)に失敗しました:', err)
   }
   try {
+    // 2026-08-17追記(ユーザー指定): ブログ「サロンボードから読み込む」を拡張し、
+    // HPB公開ページからキャッチ・コピー・からの一言(メッセージ)と、過去の
+    // ブログ記事(最大100件、一覧ページの抜粋のみ)を取得してAI生成の参考材料に
+    // する。廃止する文章スタイル選択ドロップダウン(style_mode/reference_text)の
+    // 置き換え(詳細はmigrations-pg/0031_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_catch TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_copy TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_message TEXT`).run()
+    await bindings.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS blog_reference_articles (
+         id SERIAL PRIMARY KEY,
+         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         salon_id INTEGER NOT NULL REFERENCES salonboard_salons(id) ON DELETE CASCADE,
+         title TEXT,
+         excerpt TEXT NOT NULL,
+         source_url TEXT NOT NULL,
+         posted_date DATE,
+         sort_order INTEGER NOT NULL DEFAULT 0,
+         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+       )`
+    ).run()
+    await bindings.DB.prepare(
+      `CREATE INDEX IF NOT EXISTS idx_blog_reference_articles_salon ON blog_reference_articles(salon_id, sort_order)`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_reference_articles)に失敗しました:', err)
+  }
+  try {
     // 2026-08-16追記(ユーザー指定・至急対応): 管理者サイト「機能設定」
     // (/admin/tool)の見た目はサロン単位だったが、実際のON/OFFはusers側の
     // アカウント単位の列(style_enabled等)で管理していたため、複数サロンを
