@@ -555,7 +555,7 @@ style.get('/style/import', async (c) => {
         自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
       </div>
 
-      <div id="import-list-container" class="bg-white rounded-xl border border-gray-100 p-6 hidden">
+      <div id="import-list-container" data-cache-scope={`${user.id}_${user.active_salon_id ?? ''}`} class="bg-white rounded-xl border border-gray-100 p-6 hidden">
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-1">
           <button
             id="import-execute-btn"
