@@ -10,7 +10,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
-import { buildFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
+import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
 import { formatJstDateOnly } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
@@ -72,6 +72,7 @@ type SalonProfileRow = {
   sentence_ending: string | null
   footer_separator: string | null
   footer_keywords_json: string | null
+  footer_override_text: string | null
   salonboard_synced_at: string | null
   hpb_catch: string | null
   hpb_copy: string | null
@@ -85,7 +86,7 @@ async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfi
   return c.env.DB.prepare(
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
             business_hours, closing_days, strengths, price_range, reference_text, first_person,
-            sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at,
+            sentence_ending, footer_separator, footer_keywords_json, footer_override_text, salonboard_synced_at,
             hpb_catch, hpb_copy, hpb_message, hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio
      FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
   )
@@ -596,11 +597,29 @@ blog.get('/blog/template', async (c) => {
               />
             </div>
           </div>
-          <p class="text-xs font-medium text-gray-500 mb-1">プレビュー</p>
-          <pre class="bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 whitespace-pre-wrap">{footerText || '（サロン名・住所等を入力すると表示されます）'}</pre>
+          <div class="flex items-center justify-between mb-1">
+            <p class="text-xs font-medium text-gray-500">プレビュー（直接編集できます）</p>
+            <button
+              type="button"
+              id="footer-reset-btn"
+              class="text-xs text-pink-600 hover:underline"
+            >
+              自動生成に戻す
+            </button>
+          </div>
+          <textarea
+            id="footer-preview-textarea"
+            name="footer_override_text"
+            rows={6}
+            data-auto-text={buildAutoFooterText(salon?.salon_name || null, profile)}
+            data-salon-name={salon?.salon_name || ''}
+            class="w-full bg-gray-50 border border-gray-100 rounded-lg p-3 text-xs text-gray-600 font-mono"
+          >{footerText}</textarea>
           <p class="text-xs text-gray-400 mt-2">
-            {footerText.length}文字 / 改行{footerLines}行
-            {footerText.length > 350 && <span class="text-amber-600 font-semibold ml-2">※350文字を超えています(本文の生成余地が減ります)</span>}
+            <span id="footer-preview-count">{footerText.length}文字 / 改行{footerLines}行</span>
+            <span id="footer-preview-warning" class={`text-amber-600 font-semibold ml-2 ${footerText.length > 350 ? '' : 'hidden'}`}>
+              ※350文字を超えています(本文の生成余地が減ります)
+            </span>
           </p>
         </div>
 
@@ -658,23 +677,30 @@ blog.post('/blog/template/salon-info', async (c) => {
         .split(',')
         .map((k) => k.trim())
         .filter(Boolean)
-    )
+    ),
+    // 2026-08-17追記(ユーザー指定): フッタープレビューを直接編集できるように
+    // した上書き列。blog-template.js側で「自動生成の内容から変更されていない
+    // 場合は空文字を送る」ようにしているため、空文字ならNULLとして保存し、
+    // 以後も自動生成に追従させる。
+    footer_override_text: String(body.footer_override_text || '').trim() || null
   }
 
   // /blog/salonのPOSTハンドラと同じ理由で、この画面が担当する列(基本情報・
   // フッター)だけを更新する(ON CONFLICT DO UPDATEで相手の列には触れない)。
   await c.env.DB.prepare(
-    `INSERT INTO salon_profiles (user_id, salon_id, address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO salon_profiles (user_id, salon_id, address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json, footer_override_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT (salon_id) DO UPDATE SET
        address = EXCLUDED.address, nearest_station = EXCLUDED.nearest_station, walk_minutes = EXCLUDED.walk_minutes,
        business_hours = EXCLUDED.business_hours, closing_days = EXCLUDED.closing_days,
        footer_separator = EXCLUDED.footer_separator, footer_keywords_json = EXCLUDED.footer_keywords_json,
+       footer_override_text = EXCLUDED.footer_override_text,
        updated_at = CURRENT_TIMESTAMP`
   )
     .bind(
       user.id, user.active_salon_id, fields.address, fields.nearest_station, fields.walk_minutes,
-      fields.business_hours, fields.closing_days, fields.footer_separator, fields.footer_keywords_json
+      fields.business_hours, fields.closing_days, fields.footer_separator, fields.footer_keywords_json,
+      fields.footer_override_text
     )
     .run()
 
@@ -906,6 +932,9 @@ function ArticleForm({
   const monthTags: number[] = detail ? JSON.parse(detail.month_tags_json || '[]') : []
   const submitLabel = mode === 'new' || generatedNotice ? '投稿一覧に追加' : '保存する'
   const initialBody = detail ? detail.body || '' : footerText ? `\n\n${footerText}` : ''
+  const selectedCategoryHpbValue = detail?.category_id
+    ? categories.find((cat) => cat.id === detail.category_id)?.hpb_category_value || ''
+    : ''
 
   return (
     <div class="space-y-6">
@@ -928,19 +957,26 @@ function ArticleForm({
           {detail?.image_r2_key && (
             <img src={`/blog/article/${detail.id}/image`} class="w-32 h-32 object-cover rounded-lg bg-gray-50 mb-3" />
           )}
-          <div class="flex items-center gap-3 flex-wrap">
-            <input type="file" name="image" accept="image/*" class="text-sm" />
-            {detail?.id && (
-              <button
-                type="button"
-                id="article-regen-description-btn"
-                data-article-id={detail.id}
-                class="text-xs text-pink-600 hover:underline disabled:opacity-50"
-              >
-                <i class="fas fa-wand-magic-sparkles mr-1"></i>画像の説明をAIで再生成
-              </button>
-            )}
-          </div>
+          <label
+            for="article-image-input"
+            id="article-image-dropzone"
+            class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
+          >
+            <i class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+            <span id="article-image-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
+            <span class="text-xs text-gray-400">{detail?.image_r2_key ? '変更する場合のみ選択してください' : 'この画像を記事に使用します'}</span>
+          </label>
+          <input type="file" id="article-image-input" name="image" accept="image/*" class="hidden" />
+          {detail?.id && (
+            <button
+              type="button"
+              id="article-regen-description-btn"
+              data-article-id={detail.id}
+              class="mt-3 text-xs text-pink-600 hover:underline disabled:opacity-50"
+            >
+              <i class="fas fa-wand-magic-sparkles mr-1"></i>画像の説明をAIで再生成
+            </button>
+          )}
         </div>
 
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
@@ -972,14 +1008,11 @@ function ArticleForm({
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ</label>
-              <select name="category_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ（HPBブログカテゴリ）</label>
+              <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
-                {categories.map((cat) => (
-                  <option value={cat.id} selected={detail?.category_id === cat.id}>
-                    {cat.name}
-                    {!cat.hpb_category_value ? '(HPB未設定)' : ''}
-                  </option>
+                {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
+                  <option value={opt} selected={selectedCategoryHpbValue === opt}>{opt}</option>
                 ))}
               </select>
             </div>
@@ -1069,7 +1102,6 @@ function parseArticleForm(body: Record<string, any>) {
   return {
     title: String(body.title || '').trim().slice(0, 25),
     body: String(body.body || '').trim(),
-    categoryId: body.category_id ? Number(body.category_id) : null,
     stylistId: body.stylist_id ? Number(body.stylist_id) : null,
     couponId: body.coupon_id ? Number(body.coupon_id) : null,
     monthTags,
@@ -1078,22 +1110,56 @@ function parseArticleForm(body: Record<string, any>) {
   }
 }
 
-// 2026-08-17追記(至急・アカウント跨ぎのデータ混入対策): category_id/stylist_id/
-// coupon_idはフォームから送られてくる数値IDをそのまま保存していたため、
-// 他アカウント(他サロン)のIDを直接POSTされた場合にそのまま保存されてしまう
+// 2026-08-17追記(ユーザー指定): 投稿記事一覧の新規作成/編集フォームのカテゴリを、
+// ユーザーが自由に名付けられるblog_categoriesではなく、生成テンプレート
+// (/blog/template)の「HPBブログカテゴリ」と同じ固定ドロップダウン
+// (HPB_BLOG_CATEGORY_OPTIONS)に統一する。DB上はこれまで通りblog_articles.
+// category_id(blog_categoriesへのFK)で保持する設計を崩さないため、選択された
+// 固定値と同じhpb_category_valueを持つblog_categories行を探し、無ければ
+// (name=hpb_category_valueとして)自動作成してそのidを使う。
+async function resolveArticleCategoryId(c: AppContext, user: AppUser, hpbCategoryValue: string): Promise<number | null> {
+  if (!hpbCategoryValue) return null
+
+  const existing = await c.env.DB.prepare(
+    'SELECT id FROM blog_categories WHERE user_id = ? AND salon_id = ? AND hpb_category_value = ?'
+  )
+    .bind(user.id, user.active_salon_id, hpbCategoryValue)
+    .first<{ id: number }>()
+  if (existing) return existing.id
+
+  // /blog/templateと同じ上限(10件)に達している場合は新規作成できない
+  // (テンプレート側で手動管理しているカテゴリ枠を自動生成で圧迫しないため)。
+  const countRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM blog_categories WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first<{ cnt: number }>()
+  if ((countRow?.cnt ?? 0) >= 10) return null
+
+  const nextOrderRow = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_categories WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ n: number }>()
+
+  const insert = await c.env.DB.prepare(
+    'INSERT INTO blog_categories (user_id, salon_id, name, hpb_category_value, sort_order) VALUES (?, ?, ?, ?, ?)'
+  )
+    .bind(user.id, user.active_salon_id, hpbCategoryValue, hpbCategoryValue, nextOrderRow?.n ?? 0)
+    .run()
+  return Number(insert.meta.last_row_id)
+}
+
+// 2026-08-17追記(至急・アカウント跨ぎのデータ混入対策): stylist_id/coupon_idは
+// フォームから送られてくる数値IDをそのまま保存していたため、他アカウント
+// (他サロン)のIDを直接POSTされた場合にそのまま保存されてしまう
 // (一覧表示や記事生成時にJOIN/SELECTで他サロンの名前が引けてしまう)。
 // 保存前に必ずこのサロン自身が所有するIDかを検証し、所有していなければnullにする。
+// (category_idはresolveArticleCategoryIdがuser_id/salon_idスコープ内で
+// find-or-createするため、既に所有済みでこのチェックは不要)
 async function sanitizeOwnedArticleRefs(
   c: AppContext,
   user: AppUser,
-  parsed: { categoryId: number | null; stylistId: number | null; couponId: number | null }
+  parsed: { stylistId: number | null; couponId: number | null }
 ): Promise<void> {
-  if (parsed.categoryId) {
-    const owned = await c.env.DB.prepare('SELECT id FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?')
-      .bind(parsed.categoryId, user.id, user.active_salon_id)
-      .first()
-    if (!owned) parsed.categoryId = null
-  }
   if (parsed.stylistId) {
     const owned = await c.env.DB.prepare('SELECT id FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
       .bind(parsed.stylistId, user.id, user.active_salon_id)
@@ -1156,6 +1222,7 @@ blog.post('/blog/articles/new', async (c) => {
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
+  const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
   if (parsed.footerEnabled) {
     const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterText(parsed.body, footerText)
@@ -1174,7 +1241,7 @@ blog.post('/blog/articles/new', async (c) => {
      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unapproved', ?)`
   )
     .bind(
-      user.id, user.active_salon_id, parsed.categoryId, parsed.stylistId, parsed.couponId,
+      user.id, user.active_salon_id, categoryId, parsed.stylistId, parsed.couponId,
       parsed.title, parsed.body, JSON.stringify(parsed.monthTags),
       parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
     )
@@ -1238,6 +1305,7 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
+  const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
 
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
@@ -1246,7 +1314,7 @@ blog.post('/blog/articles/:id/edit', async (c) => {
      WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
-      parsed.categoryId, parsed.stylistId, parsed.couponId, parsed.title, parsed.body,
+      categoryId, parsed.stylistId, parsed.couponId, parsed.title, parsed.body,
       JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0,
       id, user.id, user.active_salon_id
     )

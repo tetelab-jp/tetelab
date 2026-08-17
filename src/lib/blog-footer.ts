@@ -17,9 +17,11 @@ export type SalonProfileFooterFields = {
   closing_days: string | null
   footer_separator: string | null
   footer_keywords_json: string | null
+  footer_override_text?: string | null
 }
 
-export function buildFooterText(salonName: string | null, profile: SalonProfileFooterFields | null): string {
+/** サロン基本情報から自動生成したフッター文言(上書きなしの場合の値)。プレビューの「自動生成に戻す」等で使う。 */
+export function buildAutoFooterText(salonName: string | null, profile: SalonProfileFooterFields | null): string {
   if (!profile) return ''
   const sep = (profile.footer_separator || '＊').repeat(16)
   const lines = [sep, salonName || '']
@@ -36,6 +38,17 @@ export function buildFooterText(salonName: string | null, profile: SalonProfileF
   const keywords: string[] = JSON.parse(profile.footer_keywords_json || '[]')
   if (keywords.length > 0) lines.push('', `[${keywords.join('/')}]`)
   return lines.join('\n')
+}
+
+/**
+ * 実際に記事末尾へ付けるフッター文字列。footer_override_text(プレビューを
+ * 直接編集して保存した内容)が設定されていればそれをそのまま使い、
+ * 未設定(NULL/空文字)ならbuildAutoFooterText()の自動生成結果を使う。
+ */
+export function buildFooterText(salonName: string | null, profile: SalonProfileFooterFields | null): string {
+  const override = profile?.footer_override_text?.trim()
+  if (override) return override
+  return buildAutoFooterText(salonName, profile)
 }
 
 /**
@@ -56,7 +69,7 @@ export function stripTrailingFooterText(body: string, footerText: string): strin
 export async function getFooterTextForSalon(env: Bindings, userId: number, salonId: number | null): Promise<string> {
   const [profile, salon] = await Promise.all([
     env.DB.prepare(
-      `SELECT address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json
+      `SELECT address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json, footer_override_text
        FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
     )
       .bind(userId, salonId)

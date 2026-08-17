@@ -7,6 +7,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const executeBtn = document.getElementById('import-execute-btn')
   const executeBtnLabel = document.getElementById('import-execute-btn-label')
   const executeStatusEl = document.getElementById('import-execute-status')
+  const paginationEl = document.getElementById('import-pagination')
+  const paginationLabelEl = document.getElementById('import-pagination-label')
+  const pagePrevBtn = document.getElementById('import-page-prev')
+  const pageNextBtn = document.getElementById('import-page-next')
+
+  // 2026-08-17追記(ユーザー指定): 取得件数が多いと一覧が長くなりすぎるため、
+  // 100件ずつのページ表示にする。チェック状態はページをまたいでも保持する
+  // 必要があるため、DOMの再描画とは別にselectedIdsで選択状態を管理する。
+  const PAGE_SIZE = 100
+  let allStyles = []
+  let currentPage = 1
+  const selectedIds = new Set()
 
   // 2026-08-13追記(ユーザー指定): 取得した一覧はこれまでサーバーに保存されず、
   // ページを離れると消えて再取得(サロンボードへの再ログイン・再取得)が
@@ -28,10 +40,14 @@ document.addEventListener('DOMContentLoaded', () => {
   const CACHE_KEY = 'salonmotion_style_import_cache_v2_' + cacheScope
   const CACHE_TTL_MS = 24 * 60 * 60 * 1000
 
-  function renderList(styles) {
-    statusEl.textContent = styles.length + '件のスタイルが見つかりました'
+  function renderPage() {
+    const totalPages = Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))
+    currentPage = Math.min(Math.max(1, currentPage), totalPages)
+    const start = (currentPage - 1) * PAGE_SIZE
+    const pageStyles = allStyles.slice(start, start + PAGE_SIZE)
+
     listEl.innerHTML = ''
-    styles.forEach((s) => {
+    pageStyles.forEach((s) => {
       const li = document.createElement('li')
       li.className = 'flex items-center gap-3 py-2'
 
@@ -39,6 +55,11 @@ document.addEventListener('DOMContentLoaded', () => {
       cb.type = 'checkbox'
       cb.className = 'import-checkbox w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0'
       cb.value = s.styleId
+      cb.checked = selectedIds.has(s.styleId)
+      cb.addEventListener('change', () => {
+        if (cb.checked) selectedIds.add(s.styleId)
+        else selectedIds.delete(s.styleId)
+      })
 
       const noEl = document.createElement('span')
       noEl.className = 'w-8 text-center text-xs font-semibold text-gray-400 flex-shrink-0'
@@ -79,6 +100,43 @@ document.addEventListener('DOMContentLoaded', () => {
       listEl.appendChild(li)
     })
     listContainer.classList.remove('hidden')
+
+    if (paginationEl) {
+      if (allStyles.length > PAGE_SIZE) {
+        paginationEl.classList.remove('hidden')
+        paginationEl.classList.add('flex')
+        if (paginationLabelEl) {
+          paginationLabelEl.textContent =
+            (start + 1) + '〜' + (start + pageStyles.length) + '件 / 全' + allStyles.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
+        }
+        if (pagePrevBtn) pagePrevBtn.disabled = currentPage <= 1
+        if (pageNextBtn) pageNextBtn.disabled = currentPage >= totalPages
+      } else {
+        paginationEl.classList.add('hidden')
+        paginationEl.classList.remove('flex')
+      }
+    }
+  }
+
+  function setStyles(styles) {
+    statusEl.textContent = styles.length + '件のスタイルが見つかりました'
+    allStyles = styles
+    currentPage = 1
+    selectedIds.clear()
+    renderPage()
+  }
+
+  if (pagePrevBtn) {
+    pagePrevBtn.addEventListener('click', () => {
+      currentPage -= 1
+      renderPage()
+    })
+  }
+  if (pageNextBtn) {
+    pageNextBtn.addEventListener('click', () => {
+      currentPage += 1
+      renderPage()
+    })
   }
 
   function saveCache(styles) {
@@ -102,7 +160,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const cached = loadCache()
   if (cached && cached.styles.length > 0) {
-    renderList(cached.styles)
+    setStyles(cached.styles)
     const minutesAgo = Math.floor((Date.now() - cached.fetchedAt) / 60000)
     statusEl.textContent =
       cached.styles.length + '件のスタイル（' + minutesAgo + '分前に取得したもの）を表示しています。最新の状態にするには再取得してください。'
@@ -124,7 +182,7 @@ document.addEventListener('DOMContentLoaded', () => {
           statusEl.textContent = '取り込み可能なスタイルが見つかりませんでした'
           return
         }
-        renderList(data.styles)
+        setStyles(data.styles)
         saveCache(data.styles)
       } catch (e) {
         statusEl.textContent = '通信エラーが発生しました'
@@ -137,7 +195,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   if (executeBtn) {
     executeBtn.addEventListener('click', async () => {
-      const styleIds = Array.from(document.querySelectorAll('.import-checkbox:checked')).map((cb) => cb.value)
+      // ページをまたいで選択できるため、現在のDOM(表示中のページ分のみ)ではなく
+      // selectedIds(全ページ分の選択状態)から取得する。
+      const styleIds = Array.from(selectedIds)
       if (styleIds.length === 0) {
         alert('取り込むスタイルを選択してください')
         return

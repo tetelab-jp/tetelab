@@ -1,6 +1,17 @@
 // 記事編集ページ(/blog/articles/:id/edit)・新規作成ページ(/blog/articles/new)の
 // AI再生成ボタン、フッター追加チェックボックス用JS
 document.addEventListener('DOMContentLoaded', () => {
+  // 画像ドロップゾーン: 選択したファイル名をラベルに表示(AI記事生成ページと同じUI)
+  var imageInput = document.getElementById('article-image-input')
+  var imageDropzoneLabel = document.getElementById('article-image-dropzone-label')
+  if (imageInput && imageDropzoneLabel) {
+    var imageDefaultLabel = imageDropzoneLabel.textContent
+    imageInput.addEventListener('change', function () {
+      var file = imageInput.files && imageInput.files[0]
+      imageDropzoneLabel.textContent = file ? file.name : imageDefaultLabel
+    })
+  }
+
   // フッターを追加するチェックボックス: ON/OFFで本文欄末尾にフッター文言を挿入/削除
   var footerCheckbox = document.getElementById('footer-enabled-checkbox')
   var bodyTextarea = document.getElementById('article-body-textarea')
