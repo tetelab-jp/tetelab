@@ -300,7 +300,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       currentAbortController = null
       executeBtn.disabled = false
-      if (executeBtnLabel) executeBtnLabel.textContent = '選択したスタイルを取り込む'
+      if (executeBtnLabel) executeBtnLabel.textContent = '登録スタイルへ追加'
     })
   }
 })
