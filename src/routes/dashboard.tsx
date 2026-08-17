@@ -577,6 +577,7 @@ dashboard.get('/settings/account', async (c) => {
             <input
               type="email"
               name="new_email"
+              autocomplete="off"
               placeholder="変更する場合のみ入力"
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
             />
