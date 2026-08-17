@@ -120,7 +120,7 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
   }
 }
 
-// ---------- 1. サロン基本情報 ----------
+// ---------- 1. ブログスタイル設定 ----------
 
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
@@ -128,12 +128,26 @@ blog.get('/blog/salon', async (c) => {
   const profile = await getSalonProfile(c, user)
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="サロン基本情報" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="ブログスタイル設定" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
         </div>
       )}
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
+        <div class="flex-1 min-w-[240px]">
+          <p class="font-semibold text-sm">サロンボードから読み込む</p>
+          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
+          <p class="text-xs text-gray-400 mt-1">
+            最終取得: {profile?.salonboard_synced_at || '未取得'}
+          </p>
+        </div>
+        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+          読み込む
+        </button>
+        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
+      </div>
 
       <form method="post" action="/blog/salon" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -162,37 +176,6 @@ blog.get('/blog/salon', async (c) => {
           </div>
         </div>
 
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-pen mr-2 text-pink-500"></i>書き方
-          </p>
-          <div class="mb-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">
-              参考文章<span class="text-xs text-gray-400 ml-2">生成テンプレートで「参考文章を参照」を選んだ場合に使われます</span>
-            </label>
-            <textarea name="reference_text" rows={4} placeholder="お手本にしたい過去のブログ記事などを貼り付けてください" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.reference_text || ''}</textarea>
-          </div>
-          <p class="text-sm font-medium text-gray-700 mb-2">文体パラメータ</p>
-          <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">一人称</label>
-              <input type="text" name="first_person" value={profile?.first_person || ''} placeholder="例）私たち" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">語尾</label>
-              <input type="text" name="sentence_ending" value={profile?.sentence_ending || ''} placeholder="例）です・ます" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">文体・トーン</label>
-              <input type="text" name="writing_tone" value={profile?.writing_tone || ''} placeholder="例）カジュアル・親しみやすい" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-            </div>
-          </div>
-          <div class="mt-4">
-            <label class="block text-sm font-medium text-gray-700 mb-1">NGワード・避けたい表現（任意）</label>
-            <input type="text" name="ng_words" value={profile?.ng_words || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-          </div>
-        </div>
-
         <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
           保存する
         </button>
@@ -203,8 +186,9 @@ blog.get('/blog/salon', async (c) => {
         画面に移動しました。
       </p>
 
+      <script src="/static/blog-salon.js"></script>
     </PageLayout>,
-    { title: 'サロン基本情報' }
+    { title: 'ブログスタイル設定' }
   )
 })
 
@@ -215,32 +199,25 @@ blog.post('/blog/salon', async (c) => {
     concept: String(body.concept || '').trim(),
     strengths: String(body.strengths || '').trim(),
     target_customer: String(body.target_customer || '').trim(),
-    price_range: String(body.price_range || '').trim(),
-    reference_text: String(body.reference_text || '').trim(),
-    first_person: String(body.first_person || '').trim(),
-    sentence_ending: String(body.sentence_ending || '').trim(),
-    writing_tone: String(body.writing_tone || '').trim(),
-    ng_words: String(body.ng_words || '').trim()
+    price_range: String(body.price_range || '').trim()
   }
 
-  // 2026-08-16追記(ブログ機能再設計): このページは「サロンの人格」「書き方」の
-  // 列だけを更新する。「基本情報」「フッター」は/blog/templateページ側の
-  // POSTハンドラが担当し、同じsalon_profiles行の別の列を更新するため、
-  // ON CONFLICT DO UPDATEで自分が担当する列だけを書き換え、相手の列には触れない。
+  // 2026-08-16追記(ブログ機能再設計): このページは「サロンの人格」の列だけを
+  // 更新する。「基本情報」「フッター」は/blog/templateページ側のPOSTハンドラが
+  // 担当し、同じsalon_profiles行の別の列を更新するため、ON CONFLICT DO UPDATEで
+  // 自分が担当する列だけを書き換え、相手の列には触れない。
+  // 2026-08-17追記(ユーザー指定): 「書き方」欄(参考文章・文体パラメータ・
+  // NGワード)をUI上から削除したため、reference_text/first_person/
+  // sentence_ending/writing_tone/ng_words列はこのハンドラでは更新しない
+  // (既存データを無言で空上書きしないよう、触れないままにする)。
   await c.env.DB.prepare(
-    `INSERT INTO salon_profiles (user_id, salon_id, concept, strengths, target_customer, price_range, reference_text, first_person, sentence_ending, writing_tone, ng_words)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO salon_profiles (user_id, salon_id, concept, strengths, target_customer, price_range)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT (salon_id) DO UPDATE SET
        concept = EXCLUDED.concept, strengths = EXCLUDED.strengths, target_customer = EXCLUDED.target_customer,
-       price_range = EXCLUDED.price_range, reference_text = EXCLUDED.reference_text, first_person = EXCLUDED.first_person,
-       sentence_ending = EXCLUDED.sentence_ending, writing_tone = EXCLUDED.writing_tone, ng_words = EXCLUDED.ng_words,
-       updated_at = CURRENT_TIMESTAMP`
+       price_range = EXCLUDED.price_range, updated_at = CURRENT_TIMESTAMP`
   )
-    .bind(
-      user.id, user.active_salon_id, fields.concept, fields.strengths, fields.target_customer,
-      fields.price_range, fields.reference_text, fields.first_person, fields.sentence_ending,
-      fields.writing_tone, fields.ng_words
-    )
+    .bind(user.id, user.active_salon_id, fields.concept, fields.strengths, fields.target_customer, fields.price_range)
     .run()
 
   return c.redirect('/blog/salon?saved=1')
@@ -483,20 +460,6 @@ blog.get('/blog/template', async (c) => {
         )}
       </div>
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
-        <div class="flex-1 min-w-[240px]">
-          <p class="font-semibold text-sm">サロンボードから読み込む</p>
-          <p class="text-xs text-gray-400 mt-1">スタイリスト・クーポン・サロン名を取得します(住所等は現時点では手動入力です)</p>
-          <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at || '未取得'}
-          </p>
-        </div>
-        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-          読み込む
-        </button>
-        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
-      </div>
-
       <form method="post" action="/blog/template/salon-info" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-3">
@@ -559,7 +522,6 @@ blog.get('/blog/template', async (c) => {
         </button>
       </form>
 
-      <script src="/static/blog-salon.js"></script>
       <script src="/static/blog-template.js"></script>
     </PageLayout>,
     { title: '生成テンプレート' }
