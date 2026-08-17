@@ -820,6 +820,12 @@ const bindings: Bindings = {
     await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_catch TEXT`).run()
     await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_copy TEXT`).run()
     await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_message TEXT`).run()
+    // 2026-08-17追記(ユーザー指定): 「来てくれる人」「価格帯」のAI生成材料が
+    // 不足していたため、HPB公開ページの平均予約金額・来店者の性別/年代比率も
+    // 取得範囲に追加する。
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_avg_price_first TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_avg_price_repeat TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_customer_ratio TEXT`).run()
     await bindings.DB.prepare(
       `CREATE TABLE IF NOT EXISTS blog_reference_articles (
          id SERIAL PRIMARY KEY,

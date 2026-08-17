@@ -336,6 +336,19 @@ export function parseHpbReviewPage(html: string): HpbReviewPageResult {
 // キャッチ・コピー・からの一言(メッセージ)、および公開ブログ一覧の抜粋の抽出
 // --------------------------------------------
 
+export type SalonGenderPercentages = {
+  ladies: number
+  mens: number
+  others: number
+}
+
+/** 年代比率(%)。5要素固定順: [〜10代, 20代, 30代, 40代, 50代〜]。データが無い年代はnull */
+export type SalonAgePercentages = {
+  ladies: (number | null)[]
+  mens: (number | null)[]
+  others: (number | null)[]
+}
+
 export type SalonHpbProfileInfo = {
   /** .shopCatchCopy */
   catchCopy: string | null
@@ -345,11 +358,22 @@ export type SalonHpbProfileInfo = {
    *  サイト側の変更に多少強い。同じクラスが他の見出しにも使われているため
    *  テキスト内容で判定する) */
   message: string | null
+  /** table.averageCostTbl > .jscAveragePriceFirstArea(初来店の平均予約金額) */
+  avgPriceFirstVisit: string | null
+  /** table.averageCostTbl > .jscAveragePriceSecondOnwardsArea(2回目以降来店の平均予約金額) */
+  avgPriceRepeat: string | null
+  /** #jsiSalonGraphData(ld+json)内のsalonGenderPercentages */
+  genderRatio: SalonGenderPercentages | null
+  /** #jsiSalonGraphData(ld+json)内のsalonAgePercentages */
+  ageRatio: SalonAgePercentages | null
 }
+
+const AGE_RATIO_BUCKET_LABELS = ['〜10代', '20代', '30代', '40代', '50代〜']
 
 /**
  * サロンの公開ページ(https://beauty.hotpepper.jp/sln{STORE_ID}/)から
- * キャッチコピー・紹介文・「からの一言」メッセージを抽出する。
+ * キャッチコピー・紹介文・「からの一言」メッセージ・平均予約金額・来店者の
+ * 性別/年代比率を抽出する。
  */
 export function extractSalonProfileFromSlnPage(html: string): SalonHpbProfileInfo {
   const $ = cheerio.load(html)
@@ -375,7 +399,61 @@ export function extractSalonProfileFromSlnPage(html: string): SalonHpbProfileInf
     return false // 最初に一致したセクションのみ採用
   })
 
-  return { catchCopy, description, message }
+  const avgPriceFirstVisit = $('.jscAveragePriceFirstArea').first().text().replace(/\s+/g, ' ').trim() || null
+  const avgPriceRepeat = $('.jscAveragePriceSecondOnwardsArea').first().text().replace(/\s+/g, ' ').trim() || null
+
+  // 性別・年代比率は #jsiSalonGraphData(type="application/ld+json") に
+  // サーバーサイドでそのまま埋め込まれている(表示側の<span>はJSで穴埋めされる
+  // 空要素のため、DOMテキストからは取得できない)。
+  let genderRatio: SalonGenderPercentages | null = null
+  let ageRatio: SalonAgePercentages | null = null
+  const graphDataText = $('#jsiSalonGraphData').first().text().trim()
+  if (graphDataText) {
+    try {
+      const parsed = JSON.parse(graphDataText)
+      const g = parsed?.salonGenderPercentages
+      if (g && typeof g.ladies === 'number' && typeof g.mens === 'number' && typeof g.others === 'number') {
+        genderRatio = { ladies: g.ladies, mens: g.mens, others: g.others }
+      }
+      const a = parsed?.salonAgePercentages
+      if (a && Array.isArray(a.ladies) && Array.isArray(a.mens) && Array.isArray(a.others)) {
+        ageRatio = { ladies: a.ladies, mens: a.mens, others: a.others }
+      }
+    } catch {
+      // 埋め込みJSONの形式が変わった場合はnullのまま(呼び出し側でベストエフォート扱い)
+    }
+  }
+
+  return { catchCopy, description, message, avgPriceFirstVisit, avgPriceRepeat, genderRatio, ageRatio }
+}
+
+/**
+ * genderRatio/ageRatioを、AI生成の参考材料として使える1行の日本語テキストに整形する。
+ * どちらも取得できていない場合はnullを返す。
+ */
+export function formatCustomerRatioText(genderRatio: SalonGenderPercentages | null, ageRatio: SalonAgePercentages | null): string | null {
+  const parts: string[] = []
+  if (genderRatio) {
+    parts.push(`性別比率は女性${genderRatio.ladies}%・男性${genderRatio.mens}%・未設定その他${genderRatio.others}%`)
+  }
+  if (ageRatio) {
+    const formatByGender = (label: string, values: (number | null)[]) => {
+      const segs = AGE_RATIO_BUCKET_LABELS.map((bucketLabel, i) => {
+        const v = values[i]
+        return v === null || v === undefined ? null : `${bucketLabel}${v}%`
+      }).filter((s): s is string => s !== null)
+      return segs.length > 0 ? `${label}=${segs.join('/')}` : null
+    }
+    const genderSegs = [
+      formatByGender('女性', ageRatio.ladies),
+      formatByGender('男性', ageRatio.mens),
+      formatByGender('その他', ageRatio.others)
+    ].filter((s): s is string => s !== null)
+    if (genderSegs.length > 0) {
+      parts.push(`年代内訳は${genderSegs.join('、')}`)
+    }
+  }
+  return parts.length > 0 ? parts.join('。') : null
 }
 
 export type HpbBlogListItem = {
