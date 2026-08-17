@@ -53,44 +53,6 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  // 全選択
-  const selectAllBtn = document.getElementById('select-all-btn')
-  if (selectAllBtn) {
-    selectAllBtn.addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/style/bulk-select', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selected: true })
-        })
-        const data = await res.json()
-        document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = true))
-        updateSelectedCount(data.selectedCount)
-      } catch (err) {
-        alert('更新に失敗しました。')
-      }
-    })
-  }
-
-  // 全解除
-  const deselectAllBtn = document.getElementById('deselect-all-btn')
-  if (deselectAllBtn) {
-    deselectAllBtn.addEventListener('click', async () => {
-      try {
-        const res = await fetch('/api/style/bulk-select', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ selected: false })
-        })
-        const data = await res.json()
-        document.querySelectorAll('.style-checkbox').forEach((cb) => (cb.checked = false))
-        updateSelectedCount(data.selectedCount)
-      } catch (err) {
-        alert('更新に失敗しました。')
-      }
-    })
-  }
-
   // テンプレート反映対象の選択(自動投稿対象=auto_post_enabled_flagとは別物、
   // DBには保存しないページ内限定の一時的な選択。常に未選択から始まる)
   const templateTargetCountEl = document.getElementById('template-target-selected-count')

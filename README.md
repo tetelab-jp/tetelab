@@ -59,7 +59,6 @@
 | POST | `/style/library/upload` | 要 | multipart `images`（最大30枚）を一括アップロード |
 | POST | `/style/library/delete/:id` | 要 | 画像を削除（R2＋D1） |
 | POST | `/api/style/toggle` | 要 | body `{imageId, selected}` — チェックボックス切替、`{success, selectedCount}`を返す |
-| POST | `/api/style/bulk-select` | 要 | body `{selected}` — 全画像を一括選択/解除 |
 | GET | `/style/schedule` | 要 | スタイル投稿スケジュール設定画面 |
 | POST | `/style/schedule` | 要 | `enabled`, `times_per_day`, `run_time_slot[]` を保存 |
 | GET | `/blog/master` | 要 | サロンプロフィール＋投稿者/カテゴリ/クーポンのマスタ管理画面 |
