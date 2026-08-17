@@ -12,6 +12,7 @@ import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
 import { formatJstDateOnly } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
+import { formatCustomerRatioText } from '../lib/ranking-parse'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -74,6 +75,9 @@ type SalonProfileRow = {
   hpb_catch: string | null
   hpb_copy: string | null
   hpb_message: string | null
+  hpb_avg_price_first: string | null
+  hpb_avg_price_repeat: string | null
+  hpb_customer_ratio: string | null
 }
 
 async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfileRow | null> {
@@ -81,7 +85,7 @@ async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfi
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
             business_hours, closing_days, strengths, price_range, reference_text, first_person,
             sentence_ending, footer_separator, footer_keywords_json, salonboard_synced_at,
-            hpb_catch, hpb_copy, hpb_message
+            hpb_catch, hpb_copy, hpb_message, hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio
      FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
   )
     .bind(user.id, user.active_salon_id)
@@ -140,6 +144,9 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
     hpb_catch: profile.hpb_catch,
     hpb_copy: profile.hpb_copy,
     hpb_message: profile.hpb_message,
+    hpb_avg_price_first: profile.hpb_avg_price_first,
+    hpb_avg_price_repeat: profile.hpb_avg_price_repeat,
+    hpb_customer_ratio: profile.hpb_customer_ratio,
     reference_articles: referenceArticles.results || []
   }
 }
@@ -163,7 +170,7 @@ blog.get('/blog/salon', async (c) => {
         <div class="flex-1 min-w-[240px]">
           <p class="font-semibold text-sm">サロンボードから読み込む</p>
           <p class="text-xs text-gray-400 mt-1">
-            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージと過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
+            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
           </p>
           <p class="text-xs text-gray-400 mt-1">
             最終取得: {profile?.salonboard_synced_at || '未取得'}（参考記事{referenceArticleCount}件）
@@ -268,6 +275,9 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   let hpbCatch: string | null = null
   let hpbCopy: string | null = null
   let hpbMessage: string | null = null
+  let hpbAvgPriceFirst: string | null = null
+  let hpbAvgPriceRepeat: string | null = null
+  let hpbCustomerRatio: string | null = null
   let articleCount = 0
   let hpbError: string | null = null
 
@@ -282,6 +292,9 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       hpbCatch = profileInfo.catchCopy
       hpbCopy = profileInfo.description
       hpbMessage = profileInfo.message
+      hpbAvgPriceFirst = profileInfo.avgPriceFirstVisit
+      hpbAvgPriceRepeat = profileInfo.avgPriceRepeat
+      hpbCustomerRatio = formatCustomerRatioText(profileInfo.genderRatio, profileInfo.ageRatio)
 
       // 毎回全置き換え(差分更新ではなく、HPB側の最新一覧をそのまま反映する)
       await c.env.DB.prepare('DELETE FROM blog_reference_articles WHERE user_id = ? AND salon_id = ?')
@@ -306,17 +319,20 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   if (existing) {
     await c.env.DB.prepare(
       `UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP,
-         hpb_catch = COALESCE(?, hpb_catch), hpb_copy = COALESCE(?, hpb_copy), hpb_message = COALESCE(?, hpb_message)
+         hpb_catch = COALESCE(?, hpb_catch), hpb_copy = COALESCE(?, hpb_copy), hpb_message = COALESCE(?, hpb_message),
+         hpb_avg_price_first = COALESCE(?, hpb_avg_price_first), hpb_avg_price_repeat = COALESCE(?, hpb_avg_price_repeat),
+         hpb_customer_ratio = COALESCE(?, hpb_customer_ratio)
        WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(hpbCatch, hpbCopy, hpbMessage, user.id, user.active_salon_id)
+      .bind(hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio, user.id, user.active_salon_id)
       .run()
   } else {
     await c.env.DB.prepare(
-      `INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at, hpb_catch, hpb_copy, hpb_message)
-       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)`
+      `INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at, hpb_catch, hpb_copy, hpb_message,
+         hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio)
+       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)`
     )
-      .bind(user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage)
+      .bind(user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio)
       .run()
   }
 

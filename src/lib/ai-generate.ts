@@ -37,6 +37,11 @@ export type SalonProfileForGeneration = {
   hpb_catch: string | null
   hpb_copy: string | null
   hpb_message: string | null
+  // 2026-08-17追記: 「来てくれる人」「価格帯」の材料が不足していたため、
+  // HPB公開ページの平均予約金額・来店者の性別/年代比率も参考材料に追加。
+  hpb_avg_price_first: string | null
+  hpb_avg_price_repeat: string | null
+  hpb_customer_ratio: string | null
   reference_articles: BlogReferenceArticle[]
 } | null
 
@@ -63,6 +68,12 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   if (profile?.hpb_catch) lines.push(`サロンのキャッチコピー: ${profile.hpb_catch}`)
   if (profile?.hpb_copy) lines.push(`サロンの紹介文: ${profile.hpb_copy}`)
   if (profile?.hpb_message) lines.push(`サロンからの一言メッセージ: ${profile.hpb_message}`)
+  if (profile?.hpb_avg_price_first || profile?.hpb_avg_price_repeat) {
+    const first = profile.hpb_avg_price_first ? `初回${profile.hpb_avg_price_first}` : null
+    const repeat = profile.hpb_avg_price_repeat ? `2回目以降${profile.hpb_avg_price_repeat}` : null
+    lines.push(`平均予約金額（HPB実績）: ${[first, repeat].filter(Boolean).join(' / ')}`)
+  }
+  if (profile?.hpb_customer_ratio) lines.push(`来店者の性別・年代比率（HPB実績）: ${profile.hpb_customer_ratio}`)
   return lines
 }
 
