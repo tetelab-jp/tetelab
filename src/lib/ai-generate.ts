@@ -250,6 +250,17 @@ const DEFAULT_BODY_PROMPT = `{サロン名}のブログとして、{カテゴリ
 読み手は{客層}。{文体}で、{本文上限}文字以内。
 最後は来店を促す一文で締めてください。`
 
+/**
+ * スタイリスト名(SalonBoard由来のフリーテキスト)から苗字だけを取り出す。
+ * 全角/半角スペースで姓名が区切られている場合のみ先頭(姓)を採用し、
+ * 区切りが無く姓名の境界を判別できない場合はそのまま返す。
+ */
+function extractLastName(name: string): string {
+  const trimmed = name.trim()
+  const parts = trimmed.split(/[\s　]+/).filter(Boolean)
+  return parts.length >= 2 ? parts[0] : trimmed
+}
+
 function fillPromptVariables(template: string, input: ArticleGenerationInput): string {
   const toneLabel = [input.profile?.writing_tone, input.profile?.first_person, input.profile?.sentence_ending]
     .filter(Boolean)
@@ -262,7 +273,7 @@ function fillPromptVariables(template: string, input: ArticleGenerationInput): s
     .replaceAll('{画像の説明}', input.imageDescription || '')
     .replaceAll('{客層}', input.profile?.target_customer || '幅広いお客様')
     .replaceAll('{文体}', toneLabel || '親しみやすい文体')
-    .replaceAll('{スタイリスト}', input.stylistName || '')
+    .replaceAll('{スタイリスト}', input.stylistName ? extractLastName(input.stylistName) : '')
     .replaceAll('{クーポン名}', input.couponName || '')
     .replaceAll('{本文上限}', String(input.bodyMaxChars))
 }
