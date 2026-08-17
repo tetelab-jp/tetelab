@@ -1240,12 +1240,29 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }
   }, input.title)
 
+  // 2026-08-17追記(ユーザー指摘に基づく重大バグ修正・再修正): 画像は本文より
+  // 先にアップロードする(ユーザー指定: 本文入力後に画像を挿入すると、
+  // アップロード機能が「その時点のカーソル位置(＝既存本文の末尾)」に画像を
+  // 挿入するため、画像が本文の下に配置されてしまう。画像を先に挿入すれば
+  // 空の編集領域の先頭に入るため、画像が上・本文が下という意図した配置になる)。
+  // ただし直後の本文書き込み処理(下記)が編集領域を丸ごと上書きする方式のままだと、
+  // 先に挿入した画像ごと消えてしまう(前回の実機報告で確認済みの不具合)ため、
+  // 本文書き込み処理側を「既存内容(＝アップロード済みの画像)を残したまま追記する」
+  // 方式に変更する。
+  if (input.imageBuffer && input.imageFileName) {
+    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
+  }
+
   // 本文: nicEditのリッチテキストエディタが元のtextareaを隠し、代わりに
   // 編集用のiframe(またはcontenteditable領域)を表示する。フォーム送信時、
   // nicEdit自身がその「編集領域の内容」を元のtextareaへ上書き同期するため、
   // textareaの.valueへ直接セットするだけでは、送信直前にnicEditによって
   // (何も入力されていない)空の内容で上書きされてしまう(2026-08-15の実機
   // テストで確認された不具合)。nicEditの編集領域そのものへ書き込む。
+  // 2026-08-17追記: 画像アップロードで既にこの編集領域に画像が挿入されて
+  // いる可能性があるため、現在の内容を丸ごと上書きするのではなく、既存内容の
+  // 末尾に本文を追記する(既存内容の取得に失敗した場合のみ、従来通りの
+  // 上書きにフォールバックする)。
   await page.evaluate((text: string) => {
     const w = window as any
     let filled = false
@@ -1253,7 +1270,8 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     if (w.nicEditors && typeof w.nicEditors.findEditor === 'function') {
       const editor = w.nicEditors.findEditor('blogContents')
       if (editor && typeof editor.setContent === 'function') {
-        editor.setContent(text)
+        const existing = typeof editor.getContent === 'function' ? editor.getContent() || '' : ''
+        editor.setContent(existing + text)
         filled = true
       }
     }
@@ -1261,7 +1279,7 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     if (!filled) {
       const iframe = document.querySelector('iframe[id^="blogContents"], .nicEdit-main iframe') as HTMLIFrameElement | null
       if (iframe && iframe.contentDocument && iframe.contentDocument.body) {
-        iframe.contentDocument.body.innerHTML = text
+        iframe.contentDocument.body.innerHTML = (iframe.contentDocument.body.innerHTML || '') + text
         filled = true
       }
     }
@@ -1269,12 +1287,14 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     if (!filled) {
       const editableDiv = document.querySelector('.nicEdit-main') as HTMLElement | null
       if (editableDiv) {
-        editableDiv.innerHTML = text
+        editableDiv.innerHTML = (editableDiv.innerHTML || '') + text
         filled = true
       }
     }
     // 元のtextarea自体にも念のためセットしておく(上記のいずれの方法が
     // 実際に使われているかに関わらず、送信直前の状態を保険として揃える)。
+    // こちらは画像を含まないプレーンテキスト本文のみで良い(nicEdit側の
+    // 編集領域の内容が優先されて送信時に同期されるため、あくまで保険)。
     const el = document.getElementById('blogContents') as HTMLTextAreaElement | null
     if (el) {
       el.value = text
@@ -1283,20 +1303,6 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }
     ;(w.__blogContentsFillMethod as any) = filled ? 'nicedit' : 'textarea-only'
   }, input.body)
-
-  // 2026-08-17追記(ユーザー指摘に基づく重大バグ修正): 画像アップロードは
-  // 本文入力より前ではなく後に行う。「アップロード」ボタンはnicEditの本文
-  // 編集領域そのものに画像を挿入する機能(featured imageのような独立した
-  // 添付枠ではない)である疑いが強く、実際その場合、先に画像を挿入しても
-  // 直後の本文書き込み(editor.setContent()/iframe.innerHTML=等、編集領域を
-  // 丸ごと上書きする方式)で挿入した画像ごと消えてしまう。これは「投稿ログは
-  // 成功と表示されるのに実際には写真が反映されない」という繰り返し報告
-  // (確認画面に記事写真のプレビュー要素自体が存在しないことも実機で確認済み、
-  // 独立添付枠ではなく本文内挿入である傍証)と完全に整合するため、本文を
-  // 先に確定させてから画像を挿入する順序に変更する。
-  if (input.imageBuffer && input.imageFileName) {
-    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
-  }
 
   // 即時投稿を明示する(SALON BOARD側の予約投稿機能は使わない)
   await page.evaluate(() => {
