@@ -1135,9 +1135,16 @@ dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
 
       const resolvedSalon = groupTopResult.salons.find((s) => s.storeId === groupTopResult.storeId)
       if (resolvedSalon?.type === 'kirei') {
-        // キレイサロン(ネイル/まつげ等)にはスタイル機能が存在しないため無効化する
-        await c.env.DB.prepare('UPDATE users SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-          .bind(user.id)
+        // キレイサロン(ネイル/まつげ等)にはスタイル機能が存在しないため無効化する。
+        // 2026-08-17追記(至急・バグ修正): 2026-08-16のサロン単位化以降、実際の機能
+        // ゲート判定はsalonboard_salons.style_enabled(サロン単位)のみを見ており、
+        // users.style_enabled(アカウント単位)は既に参照されなくなっていた。この
+        // ままではキレイサロンでもスタイル機能が使えてしまうため、対象サロンの
+        // salonboard_salons側を無効化するよう修正する。
+        await c.env.DB.prepare(
+          'UPDATE salonboard_salons SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_key = ?'
+        )
+          .bind(user.id, groupTopResult.storeId)
           .run()
       }
     }
@@ -1231,8 +1238,13 @@ dashboard.post('/api/settings/select-salon', async (c) => {
     .run()
 
   if (salon.salon_type === 'kirei') {
-    await c.env.DB.prepare('UPDATE users SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-      .bind(user.id)
+    // 2026-08-17追記(至急・バグ修正): dashboard.tsx内の同種の箇所と同じ理由で、
+    // 参照されなくなったusers.style_enabledではなく、対象サロンのsalonboard_salons
+    // 側を無効化する。
+    await c.env.DB.prepare(
+      'UPDATE salonboard_salons SET style_enabled = 0, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_key = ?'
+    )
+      .bind(user.id, storeId)
       .run()
   }
 
