@@ -947,6 +947,30 @@ app.use('*', async (c, next) => {
   await next()
 })
 
+// 2026-08-17追記(ユーザー指定): 管理者サイトをADMIN_HOST(例: www.salonmotion.com)
+// という本体とは別のホスト名で公開する。ブラウザのフォーム自動補完・キャッシュは
+// オリジン(ホスト名)単位で分離される仕組みのため、管理者ログインと通常ユーザーの
+// ログインが同じホスト名を共有していると、同じ端末を使い回した際に片方の入力
+// 履歴がもう片方に補完されてしまう不具合が実際に発生した。ADMIN_HOST未設定
+// (terraform未反映)の間は何もせず、従来通り同一ドメインで動作する。
+app.use('*', async (c, next) => {
+  const adminHost = c.env.ADMIN_HOST
+  if (adminHost) {
+    const host = (c.req.header('host') || '').split(':')[0]
+    const isAdminHost = host === adminHost
+    const isSharedPath = c.req.path.startsWith('/admin') || c.req.path.startsWith('/static/')
+    if (isAdminHost && !isSharedPath && c.env.APP_BASE_URL) {
+      const url = new URL(c.req.url)
+      return c.redirect(`${c.env.APP_BASE_URL}${url.pathname}${url.search}`)
+    }
+    if (!isAdminHost && c.req.path.startsWith('/admin')) {
+      const url = new URL(c.req.url)
+      return c.redirect(`https://${adminHost}${url.pathname}${url.search}`)
+    }
+  }
+  await next()
+})
+
 app.use(renderer)
 
 // トップページ: ログイン状態に応じてリダイレクト

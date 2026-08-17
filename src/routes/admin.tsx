@@ -63,11 +63,20 @@ async function impersonateSalonSession(c: any, userId: number, email: string) {
   const exp = Math.floor(Date.now() / 1000) + IMPERSONATE_SESSION_TTL_SECONDS
   const token = await signJwt({ sub: userId, email, exp, imp: true }, secret)
   const isHttps = c.req.header('x-forwarded-proto') === 'https' || c.req.url.startsWith('https://')
+  // 2026-08-17追記: 管理者サイト(ADMIN_HOST、例: www.salonmotion.com)が
+  // 本体ドメイン(例: salonmotion.com)と別ホスト名の場合、このCookieは
+  // なりすまし後のリダイレクト先である本体ドメイン側で読み取れる必要がある。
+  // Cookieはデフォルトでは発行したホスト限定(host-only)になるため、
+  // 親ドメイン(.salonmotion.com)スコープで発行して両ホストから読めるようにする
+  // (通常ログイン時に発行されるCookieの挙動には影響しない)。
+  const mainHost = c.env.APP_BASE_URL ? new URL(c.env.APP_BASE_URL).hostname : undefined
+  const cookieDomain = c.env.ADMIN_HOST && mainHost ? `.${mainHost}` : undefined
   setCookie(c, SESSION_COOKIE_NAME, token, {
     httpOnly: true,
     secure: isHttps,
     sameSite: 'Lax',
     path: '/',
+    domain: cookieDomain,
     maxAge: IMPERSONATE_SESSION_TTL_SECONDS
   })
 }

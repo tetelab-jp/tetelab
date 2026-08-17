@@ -57,6 +57,19 @@ variable "manage_dns_in_route53" {
   default     = true
 }
 
+# 2026-08-17追記(ユーザー指定): 管理者サイト(/admin)を本体とは別のホスト名
+# (例: www.salonmotion.com)で公開する。理由: ブラウザのフォーム自動補完・
+# パスワードマネージャーはオリジン(ホスト名)単位で保存領域が分かれるため、
+# 管理者ログインと通常ユーザーのログインが同一ホスト名を共有していると、
+# 同じ端末を使い回した際に片方の入力履歴がもう片方の欄に補完されてしまう
+# (実際に発生した不具合)。空文字のままなら従来通りdomain_name配下の
+# /adminをそのまま使う(別ドメインは作らない)。
+variable "admin_domain_name" {
+  description = "管理者サイトを公開するホスト名(例: www.salonmotion.com)。domain_nameと同じACM証明書にSubject Alternative Nameとして追加する。空文字なら別ドメインは作らない。"
+  type        = string
+  default     = ""
+}
+
 variable "db_name" {
   type    = string
   default = "tetelab"

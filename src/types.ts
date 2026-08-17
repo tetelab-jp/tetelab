@@ -30,6 +30,10 @@ export type Bindings = {
   // ---- 管理者サイト(/admin) ----
   // サロン側のJWT_SECRET/セッションCookieとは完全に分離する。
   ADMIN_JWT_SECRET?: string
+  // 2026-08-17追記(ユーザー指定): 管理者サイトを本体とは別のホスト名
+  // (例: www.salonmotion.com)で公開するための設定。未設定なら従来通り
+  // 本体ドメイン配下の/adminをそのまま使う(index.tsxのホスト振り分け参照)。
+  ADMIN_HOST?: string
   // 初期管理者アカウント(inc.tete@gmail.com)のパスワードのシード用。
   // 起動時にadmin_usersが空の場合のみ、この値をハッシュ化して1件だけ投入する
   // (コード内に平文パスワードをハードコードしないため、環境変数経由で渡す)。
