@@ -370,11 +370,23 @@ const REVIEW_REPLY_MAX_CHARS_HINT = 400
  * 下書きさせる。自動返信(星4以上のみ対象)・手動返信フロー(修正可能な
  * 下書き)の両方から呼ばれる共通関数。
  */
+const MAX_PAST_REPLIES_IN_PROMPT = 5
+
 export async function generateReviewReply(
   env: Bindings,
   review: ReviewForReplyGeneration,
-  profile: SalonProfileForGeneration
+  profile: SalonProfileForGeneration,
+  pastReplies: string[] = []
 ): Promise<string> {
+  const referenceLines =
+    pastReplies.length > 0
+      ? [
+          '以下は過去に実際にこのサロンから投稿した返信文の例です。文体・言い回し・トーンの参考にしてください' +
+            '(内容そのものを使い回さないこと。今回の口コミの内容に合わせて書いてください):',
+          ...pastReplies.slice(0, MAX_PAST_REPLIES_IN_PROMPT).flatMap((r) => ['---', r.slice(0, 300)])
+        ]
+      : []
+
   const systemLines = [
     'あなたは美容サロンのオーナーとして、お客様からの口コミに返信する担当者です。',
     ...buildSalonPersonaLines(profile),
@@ -383,6 +395,11 @@ export async function generateReviewReply(
       '具体的に触れながら感謝を伝えてください。',
     '口コミに書かれていない事実(施術内容やエピソード)を創作しないでください。',
     '定型文の羅列にならないよう、その口コミならではの一言を必ず含めてください。',
+    // 2026-08-18追記(ユーザー指定): 冒頭のお客様への呼びかけ(お名前+「様」)は
+    // システム側で機械的に付加し改行を挟むため、AIには本文部分のみを
+    // 生成させる(AI任せだと呼びかけの有無・改行位置がぶれるため)。
+    '出力するのは、お客様への呼びかけ(お名前+「様」等)を含まない、本文部分のみにしてください。呼びかけは別途システム側で自動的に付加します。',
+    ...referenceLines,
     '必ず指定されたJSON形式のみで出力してください。'
   ]
 
@@ -394,14 +411,19 @@ export async function generateReviewReply(
     `口コミ本文: ${review.content || '(本文なし)'}`
   ].filter((l): l is string => l !== null)
 
-  const userPrompt = `以下の口コミへの返信文を作成してください。
+  const userPrompt = `以下の口コミへの返信文(本文のみ、呼びかけ無し)を作成してください。
 ${reviewLines.join('\n')}
 
 出力は必ず以下のJSON形式のみで返してください(説明文やコードブロックは不要):
-{"reply": "返信文"}`
+{"reply": "返信本文"}`
 
   const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'review_reply')
-  return String(parsed.reply || '').trim()
+  const body = String(parsed.reply || '').trim()
+
+  // 2026-08-18追記(ユーザー指定): 口コミ投稿者の名前と本文は必ず改行する。
+  // AI生成のばらつきを避けるため、呼びかけ行はここで機械的に組み立てる。
+  const greeting = review.hpbNickname ? `${review.hpbNickname}様` : null
+  return greeting ? `${greeting}\n\n${body}` : body
 }
 
 /**

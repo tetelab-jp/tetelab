@@ -12,7 +12,7 @@ import { requireAuth, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { getTrendSnapshots, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
 import { generateReviewReply } from '../lib/ai-generate'
-import { dispatchManualReviewReply, loadSalonProfileForGeneration } from '../lib/review-reply-runner'
+import { dispatchManualReviewReply, loadSalonProfileForGeneration, loadRecentReviewReplies } from '../lib/review-reply-runner'
 import type { Bindings, AppUser } from '../types'
 
 const reviews = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -78,7 +78,7 @@ reviews.get('/reviews/trend', async (c) => {
   const trendByNewest = [...trend].reverse()
 
   return c.render(
-    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価推移" reviewEnabled={true}>
+    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true}>
       <SyncStatusPanel backfillDone={backfillDone} />
 
       {backfillDone && (
@@ -131,7 +131,7 @@ reviews.get('/reviews/trend', async (c) => {
       ></script>
       <script src="/static/reviews.js"></script>
     </PageLayout>,
-    { title: '口コミ評価推移' }
+    { title: '口コミ評価' }
   )
 })
 
@@ -308,7 +308,7 @@ reviews.get('/reviews/list', async (c) => {
     : { results: [] as ReviewListRowForUi[] }
 
   return c.render(
-    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ一覧" reviewEnabled={true}>
+    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ返信" reviewEnabled={true}>
       <SyncStatusPanel backfillDone={backfillDone} />
 
       {backfillDone && (
@@ -363,35 +363,44 @@ reviews.get('/reviews/list', async (c) => {
                       <p class="text-sm text-gray-700 whitespace-pre-wrap">{r.reply_content}</p>
                     </div>
                   ) : (
-                    <div class="mt-3 bg-gray-50 rounded-lg p-4 space-y-3">
-                      <div class="flex items-center justify-between gap-2 flex-wrap">
-                        <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
-                        <button
-                          type="button"
-                          class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
-                          data-review-id={r.id}
-                        >
-                          <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
-                        </button>
-                      </div>
-                      <textarea
-                        class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
-                        rows={4}
-                        maxlength={500}
-                        placeholder="「AI下書きを生成」を押すか、直接入力してください(全角500文字以内)"
+                    <div class="mt-3">
+                      <button
+                        type="button"
+                        class="review-reply-open-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-sm font-semibold px-4 py-2 rounded-lg"
                         data-review-id={r.id}
                       >
-                        {r.ai_reply_draft || ''}
-                      </textarea>
-                      <div class="flex items-center justify-between gap-2">
-                        <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
-                        <button
-                          type="button"
-                          class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                        <i class="fas fa-reply mr-1"></i>口コミを返信する
+                      </button>
+                      <div class="review-reply-form hidden mt-3 bg-gray-50 rounded-lg p-4 space-y-3" data-review-id={r.id}>
+                        <div class="flex items-center justify-between gap-2 flex-wrap">
+                          <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
+                          <button
+                            type="button"
+                            class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                            data-review-id={r.id}
+                          >
+                            <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
+                          </button>
+                        </div>
+                        <textarea
+                          class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
+                          rows={4}
+                          maxlength={500}
+                          placeholder="「AI下書きを生成」を押すか、直接入力してください(全角500文字以内)"
                           data-review-id={r.id}
                         >
-                          この内容で返信する
-                        </button>
+                          {r.ai_reply_draft || ''}
+                        </textarea>
+                        <div class="flex items-center justify-between gap-2">
+                          <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
+                          <button
+                            type="button"
+                            class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                            data-review-id={r.id}
+                          >
+                            この内容で返信する
+                          </button>
+                        </div>
                       </div>
                     </div>
                   )}
@@ -404,7 +413,7 @@ reviews.get('/reviews/list', async (c) => {
 
       <script src="/static/reviews.js"></script>
     </PageLayout>,
-    { title: '口コミ一覧' }
+    { title: '口コミ返信' }
   )
 })
 
@@ -442,7 +451,10 @@ reviews.post('/api/reviews/:id/generate-reply', async (c) => {
   if (!review) return c.json({ success: false, error: '対象の口コミが見つかりません' }, 404)
 
   try {
-    const profile = await loadSalonProfileForGeneration(c.env, user.id, user.active_salon_id)
+    const [profile, pastReplies] = await Promise.all([
+      loadSalonProfileForGeneration(c.env, user.id, user.active_salon_id),
+      loadRecentReviewReplies(c.env, user.active_salon_id)
+    ])
     const reply = await generateReviewReply(
       c.env,
       {
@@ -452,7 +464,8 @@ reviews.post('/api/reviews/:id/generate-reply', async (c) => {
         hpbNickname: review.hpb_nickname,
         menuUsed: review.menu_used
       },
-      profile
+      profile,
+      pastReplies
     )
     await c.env.DB.prepare(`UPDATE reviews SET ai_reply_draft = ? WHERE id = ?`).bind(reply, reviewId).run()
     return c.json({ success: true, reply })

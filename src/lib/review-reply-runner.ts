@@ -93,6 +93,24 @@ export async function loadSalonProfileForGeneration(
   }
 }
 
+const PAST_REPLIES_LOOKBACK_LIMIT = 5
+
+/**
+ * AI返信文生成の文体参考材料として、このサロンが過去に実際に投稿した
+ * 返信文(直近の成功分)を取得する(2026-08-18追記・ユーザー指定)。
+ */
+export async function loadRecentReviewReplies(env: Bindings, salonId: number | null): Promise<string[]> {
+  if (!salonId) return []
+  const { results } = await env.DB.prepare(
+    `SELECT reply_content FROM reviews
+     WHERE salon_id = ? AND reply_content IS NOT NULL AND replied_at IS NOT NULL
+     ORDER BY replied_at DESC LIMIT ${PAST_REPLIES_LOOKBACK_LIMIT}`
+  )
+    .bind(salonId)
+    .all<{ reply_content: string }>()
+  return (results || []).map((r) => r.reply_content)
+}
+
 export async function updateReviewReplyConsecutiveFailureAndNotify(
   env: Bindings,
   userId: number,
@@ -269,6 +287,7 @@ export async function runNextReviewReplyForUser(env: Bindings, userId: number, s
   if (!review) return { dispatched: false }
 
   const profile = await loadSalonProfileForGeneration(env, userId, salonId)
+  const pastReplies = await loadRecentReviewReplies(env, salonId)
   const reviewInput: ReviewForReplyGeneration = {
     scoreOverall: review.score_overall,
     content: review.content,
@@ -278,7 +297,7 @@ export async function runNextReviewReplyForUser(env: Bindings, userId: number, s
   }
 
   try {
-    const replyContent = await generateReviewReply(env, reviewInput, profile)
+    const replyContent = await generateReviewReply(env, reviewInput, profile, pastReplies)
     if (!replyContent) throw new Error('AI返信文の生成結果が空でした')
     const jobId = await dispatchReviewReplyJob(env, userId, salonId, review.id, replyContent, 'auto')
     return { dispatched: true, jobId, reviewId: review.id }

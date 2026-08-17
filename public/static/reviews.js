@@ -44,19 +44,52 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
-  // ---------- ①口コミ評価推移(折れ線グラフ) ----------
-  function renderTrendChart() {
-    const container = document.getElementById('review-trend-chart')
-    const data = readJsonData('review-trend-data')
-    if (!container || !data || !data.trend || data.trend.length === 0) return
+  // ---------- ①口コミ評価(折れ線グラフ) ----------
+  // 2026-08-18追記(ユーザー指定): 計測件数によってデザインを変える。
+  //   1件のみ: 折れ線グラフにする意味が無い(点1つだけの寂しい見た目に
+  //     なっていた)ため、大きな数字で見せる「統計タイル」表示にする。
+  //   2件以上: 折れ線グラフ。ただし従来は固定viewBox(720x140)を
+  //     w-full/h-autoでCSS縮小表示していたため、スマホ幅では文字・点まで
+  //     一律に縮小され、著しく読みにくくなっていた(ユーザー報告)。
+  //     実際のコンテナ幅を都度測ってviewBoxに使うことで、SVG内の
+  //     font-size/線幅がそのまま実寸ピクセルに対応するようにし、
+  //     画面幅に関わらず可読性を保つ。
+  function renderSinglePointStat(container, p) {
+    container.innerHTML = ''
+    const wrap = document.createElement('div')
+    wrap.className = 'flex flex-col items-center justify-center gap-1 py-6 text-center'
+    const dateEl = document.createElement('p')
+    dateEl.className = 'text-xs text-gray-400'
+    dateEl.textContent = p.date + ' 時点'
+    const valueWrap = document.createElement('div')
+    valueWrap.className = 'flex items-baseline gap-2'
+    valueWrap.innerHTML =
+      '<i class="fas fa-star text-amber-400 text-2xl"></i>' +
+      '<span class="text-5xl font-bold text-gray-800">' + p.avgOverall.toFixed(2) + '</span>'
+    const countEl = document.createElement('p')
+    countEl.className = 'text-xs text-gray-400'
+    countEl.textContent = p.count + '件の口コミ'
+    const noteEl = document.createElement('p')
+    noteEl.className = 'text-xs text-gray-400 mt-3'
+    noteEl.textContent = '次回以降の計測結果がたまると、ここに推移グラフが表示されます'
+    wrap.appendChild(dateEl)
+    wrap.appendChild(valueWrap)
+    wrap.appendChild(countEl)
+    wrap.appendChild(noteEl)
+    container.appendChild(wrap)
+  }
 
-    const points = data.trend
-    const width = 720
-    const height = 140
-    const padL = 36
-    const padR = 16
-    const padT = 16
-    const padB = 24
+  function renderLineChart(container, points) {
+    // コンテナの実際の表示幅をSVG座標系にそのまま使う(px≒座標単位)。
+    // 極端に狭い場合(初回描画タイミング等)は最低幅を確保する。
+    const width = Math.max(260, Math.round(container.getBoundingClientRect().width) || 320)
+    // 横幅に対して縦横比を可変にし、スマホの狭い幅でも点が詰まりすぎず、
+    // かつ広い画面で間延びしすぎないようにする。
+    const height = Math.max(130, Math.min(220, Math.round(width * 0.34)))
+    const padL = 34
+    const padR = 14
+    const padT = 14
+    const padB = 22
     const plotW = width - padL - padR
     const plotH = height - padT - padB
 
@@ -71,7 +104,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const svg = svgEl('svg', {
       viewBox: `0 0 ${width} ${height}`,
-      class: 'w-full h-auto',
+      width: '100%',
+      height: height,
       role: 'img',
       'aria-label': '口コミ評価の推移'
     })
@@ -81,23 +115,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const v = Math.round((yMin + i * 0.1) * 10) / 10
       const y = yOf(v)
       svg.appendChild(svgEl('line', { x1: padL, x2: width - padR, y1: y, y2: y, stroke: GRID, 'stroke-width': 1 }))
-      const label = svgEl('text', { x: padL - 8, y: y + 4, 'text-anchor': 'end', 'font-size': 11, fill: AXIS_TEXT })
+      const label = svgEl('text', { x: padL - 6, y: y + 3, 'text-anchor': 'end', 'font-size': 10, fill: AXIS_TEXT })
       label.textContent = v.toFixed(1)
       svg.appendChild(label)
     }
 
-    // X軸ラベル(件数が多い場合は間引く)
-    const labelEvery = Math.max(1, Math.ceil(points.length / 8))
+    // X軸ラベル(狭い幅では間引く数を増やして重なりを防ぐ)
+    const maxLabels = Math.max(2, Math.floor(plotW / 45))
+    const labelEvery = Math.max(1, Math.ceil(points.length / maxLabels))
     points.forEach((p, i) => {
       if (i % labelEvery !== 0 && i !== points.length - 1) return
       const label = svgEl('text', {
         x: xOf(i),
-        y: height - padB + 15,
+        y: height - padB + 14,
         'text-anchor': 'middle',
-        'font-size': 8,
+        'font-size': 9,
         fill: AXIS_TEXT
       })
-      label.textContent = p.date.slice(5).replace('-', '/')
+      label.textContent = p.date.slice(2).replace(/-/g, '/')
       svg.appendChild(label)
     })
 
@@ -123,6 +158,27 @@ document.addEventListener('DOMContentLoaded', () => {
     container.innerHTML = ''
     container.appendChild(svg)
   }
+
+  function renderTrendChart() {
+    const container = document.getElementById('review-trend-chart')
+    const data = readJsonData('review-trend-data')
+    if (!container || !data || !data.trend || data.trend.length === 0) return
+
+    const points = data.trend
+    if (points.length === 1) {
+      renderSinglePointStat(container, points[0])
+      return
+    }
+    renderLineChart(container, points)
+  }
+
+  // ウィンドウ幅が変わった場合(端末回転・PCウィンドウのリサイズ等)、
+  // グラフをコンテナの新しい実寸幅で再描画する(簡易デバウンス)。
+  let resizeTimer = null
+  window.addEventListener('resize', () => {
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(renderTrendChart, 200)
+  })
 
   // ②スタイリスト別評価はSSRのカード一覧で表示するため、JSでの描画は不要になった。
 
@@ -205,8 +261,28 @@ document.addEventListener('DOMContentLoaded', () => {
   const listContainer = document.getElementById('review-list-container')
   if (listContainer) {
     listContainer.addEventListener('click', async (e) => {
+      const openBtn = e.target.closest('.review-reply-open-btn')
       const generateBtn = e.target.closest('.review-reply-generate-btn')
       const sendBtn = e.target.closest('.review-reply-send-btn')
+
+      if (openBtn) {
+        const reviewId = openBtn.dataset.reviewId
+        const form = listContainer.querySelector(`.review-reply-form[data-review-id="${reviewId}"]`)
+        if (form) {
+          form.classList.remove('hidden')
+          const textarea = form.querySelector('.review-reply-textarea')
+          // 表示直後はautosize-textarea.js側のscrollHeight計算がまだ効いて
+          // いない(直前までdisplay:noneだったため)ため、ここで明示的に
+          // 高さを再計算させる。
+          if (textarea) {
+            textarea.style.height = 'auto'
+            textarea.style.height = textarea.scrollHeight + 'px'
+            textarea.focus()
+          }
+        }
+        openBtn.classList.add('hidden')
+        return
+      }
 
       if (generateBtn) {
         const reviewId = generateBtn.dataset.reviewId

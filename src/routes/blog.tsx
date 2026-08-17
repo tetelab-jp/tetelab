@@ -1567,7 +1567,7 @@ blog.get('/blog/articles', async (c) => {
   let cursor = 0
   for (let i = 0; i < previewDays; i++) {
     const d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + i)
-    const dateLabel = `${d.getMonth() + 1}/${d.getDate()}`
+    const dateLabel = `${String(d.getFullYear()).slice(-2)}/${d.getMonth() + 1}/${d.getDate()}`
     const month = d.getMonth() + 1
 
     if (postable.length === 0) {
@@ -1593,11 +1593,18 @@ blog.get('/blog/articles', async (c) => {
     }
   }
 
+  // 投稿済タブ: 過去に投稿したことがある記事(last_posted_at設定済み)を、
+  // 最新の投稿日時順(新しい順)に並べる。
+  const postedArticles = [...articles]
+    .filter((a) => a.last_posted_at)
+    .sort((a, b) => (a.last_posted_at! < b.last_posted_at! ? 1 : a.last_posted_at! > b.last_posted_at! ? -1 : 0))
+
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
       <div class="flex gap-2 border-b border-gray-100">
         <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-pink-500 text-pink-600" data-tab="list">一覧</button>
-        <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400" data-tab="calendar">投稿カレンダー</button>
+        <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400" data-tab="calendar">投稿予定</button>
+        <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400" data-tab="posted">投稿済</button>
       </div>
 
       <div data-tab-panel="list">
@@ -1647,41 +1654,42 @@ blog.get('/blog/articles', async (c) => {
             <div id="blog-article-list" class="divide-y divide-gray-100">
               {articles.map((a) => (
                 <div
-                  class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3"
+                  class="flex items-start md:items-center gap-2 md:gap-4 py-1.5 md:py-3"
                   data-article-id={a.id}
                   data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
                   data-category-id={a.category_id ?? ''}
                   data-month-tags={a.month_tags_json || '[]'}
                 >
-                  <input
-                    type="number"
-                    min="1"
-                    value={a.no}
-                    class="blog-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                    data-article-id={a.id}
-                  />
-                  <input
-                    type="checkbox"
-                    class="blog-auto-post-toggle w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
-                    data-article-id={a.id}
-                    checked={a.auto_post_enabled_flag === 1}
-                    title="自動投稿の対象"
-                  />
-                  {a.image_r2_key ? (
-                    <img src={`/blog/article/${a.id}/image`} class="w-10 h-14 md:w-16 md:h-16 object-cover rounded-lg bg-gray-50 border border-gray-200 flex-shrink-0" />
-                  ) : (
-                    <div class="w-10 h-14 md:w-16 md:h-16 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300 flex-shrink-0">
-                      <i class="fas fa-image text-xl"></i>
-                    </div>
-                  )}
+                  <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
+                    <input
+                      type="number"
+                      min="1"
+                      value={a.no}
+                      class="blog-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      data-article-id={a.id}
+                    />
+                    <input
+                      type="checkbox"
+                      class="blog-auto-post-toggle w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
+                      data-article-id={a.id}
+                      checked={a.auto_post_enabled_flag === 1}
+                      title="自動投稿の対象"
+                    />
+                    {a.image_r2_key ? (
+                      <img src={`/blog/article/${a.id}/image`} class="w-10 h-14 md:w-16 md:h-16 object-cover rounded-lg bg-gray-50 border border-gray-200 flex-shrink-0" />
+                    ) : (
+                      <div class="w-10 h-14 md:w-16 md:h-16 bg-gray-50 rounded-lg border border-gray-200 flex items-center justify-center text-gray-300 flex-shrink-0">
+                        <i class="fas fa-image text-xl"></i>
+                      </div>
+                    )}
+                  </div>
                   <div class="flex-1 min-w-0">
-                    <a href={`/blog/articles/${a.id}/edit`} class="block truncate font-medium text-gray-700 hover:text-pink-600">
+                    <a href={`/blog/articles/${a.id}/edit`} class="block truncate text-sm md:text-base font-medium text-gray-700 hover:text-pink-600">
                       {a.title || '（未生成）'}
                     </a>
                     <p class="text-xs text-gray-400 flex gap-2 flex-wrap mt-0.5">
                       <span>{a.category_name || '-'}</span>
                       <span>{a.stylist_name || '-'}</span>
-                      <span>{a.coupon_name || '-'}</span>
                       {a.last_posted_at && <span>最終投稿 {formatJstDateOnly(a.last_posted_at)}(投稿{a.post_count}回)</span>}
                     </p>
                     <div class="flex flex-wrap gap-1 mt-1">
@@ -1740,6 +1748,24 @@ blog.get('/blog/articles', async (c) => {
         <p class="text-xs text-gray-400 mt-2">
           ※Phase 1では実際の自動投稿はまだ行われません。自動投稿ONの記事を投稿順に1日1本ずつ投稿した場合の見込みを表示しています。
         </p>
+      </div>
+
+      <div data-tab-panel="posted" class="hidden">
+        <div class="bg-white rounded-xl border border-gray-100 divide-y divide-gray-50">
+          {postedArticles.length === 0 ? (
+            <p class="text-sm text-gray-400 text-center py-10">まだ投稿済みの記事がありません</p>
+          ) : (
+            postedArticles.map((a) => (
+              <div class="flex items-center gap-3 px-4 py-3 text-sm">
+                <span class="w-24 flex-shrink-0 text-xs text-gray-400 font-mono">{formatJstDateOnly(a.last_posted_at!)}</span>
+                <a href={`/blog/articles/${a.id}/edit`} class="flex-1 min-w-0 truncate text-pink-600 hover:text-pink-700">
+                  {a.title || '（未生成）'}
+                </a>
+                <span class="text-xs text-gray-400 flex-shrink-0">投稿{a.post_count}回</span>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <script src="/static/blog-articles.js"></script>
