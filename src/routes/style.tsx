@@ -565,6 +565,14 @@ style.get('/style/import', async (c) => {
           </button>
           <p class="font-semibold"><i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択</p>
         </div>
+        <div class="flex items-center gap-3 mb-3 text-xs">
+          <button type="button" id="import-select-all-btn" class="text-pink-600 hover:text-pink-700 font-semibold underline">
+            全選択
+          </button>
+          <button type="button" id="import-deselect-all-btn" class="text-gray-500 hover:text-gray-700 font-semibold underline">
+            全解除
+          </button>
+        </div>
         <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
         <div id="import-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">

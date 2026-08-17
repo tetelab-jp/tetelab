@@ -147,6 +147,21 @@ document.addEventListener('DOMContentLoaded', () => {
     renderPage()
   }
 
+  const selectAllBtn = document.getElementById('import-select-all-btn')
+  const deselectAllBtn = document.getElementById('import-deselect-all-btn')
+  if (selectAllBtn) {
+    selectAllBtn.addEventListener('click', () => {
+      allStyles.forEach((s) => selectedIds.add(s.styleId))
+      renderPage()
+    })
+  }
+  if (deselectAllBtn) {
+    deselectAllBtn.addEventListener('click', () => {
+      selectedIds.clear()
+      renderPage()
+    })
+  }
+
   if (pagePrevBtn) {
     pagePrevBtn.addEventListener('click', () => {
       currentPage -= 1

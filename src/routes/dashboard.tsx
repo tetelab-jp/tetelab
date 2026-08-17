@@ -560,17 +560,17 @@ dashboard.get('/settings/account', async (c) => {
 
       <div class="max-w-2xl space-y-6">
         <div>
-          <div id="email-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
-            <div>
+          <div id="email-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 ${error ? 'hidden' : ''}`}>
+            <div class="min-w-0">
               <p class="font-semibold">
                 <i class="fas fa-envelope mr-2 text-pink-500"></i>メールアドレスの変更
               </p>
-              <p class="text-xs text-gray-500 mt-1">現在のメールアドレス: {user.email}</p>
+              <p class="text-xs text-gray-500 mt-1 break-all">現在のメールアドレス: {user.email}</p>
             </div>
             <button
               type="button"
               id="email-edit-open-btn"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
+              class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
             >
               変更する
             </button>
@@ -619,17 +619,19 @@ dashboard.get('/settings/account', async (c) => {
         </div>
 
         <div>
-          <div id="password-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between gap-4 flex-wrap ${error ? 'hidden' : ''}`}>
-            <div>
+          <div id="password-edit-trigger" class={`bg-white rounded-xl border border-gray-100 p-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 ${error ? 'hidden' : ''}`}>
+            <div class="min-w-0">
               <p class="font-semibold">
                 <i class="fas fa-key mr-2 text-pink-500"></i>パスワードの変更
               </p>
-              <a href="/forgot-password" class="text-xs text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
+              <p class="text-xs mt-1">
+                <a href="/forgot-password" class="text-pink-600 hover:underline">パスワードを忘れた場合はこちら</a>
+              </p>
             </div>
             <button
               type="button"
               id="password-edit-open-btn"
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
+              class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2 rounded-lg text-sm flex-shrink-0"
             >
               変更する
             </button>
