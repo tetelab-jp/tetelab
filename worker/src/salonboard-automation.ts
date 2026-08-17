@@ -1203,10 +1203,6 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   await page.goto(`${SALONBOARD_BASE_URL}/CLP/bt/blog/blog/`, { waitUntil: 'domcontentloaded', timeout: 30000 })
   await page.waitForSelector('#blog', { timeout: 15000 })
 
-  if (input.imageBuffer && input.imageFileName) {
-    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
-  }
-
   if (input.stylistSelectValue) {
     const stylistHandle = await page.$('#stylistId')
     if (stylistHandle) await page.select('#stylistId', input.stylistSelectValue)
@@ -1287,6 +1283,20 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     }
     ;(w.__blogContentsFillMethod as any) = filled ? 'nicedit' : 'textarea-only'
   }, input.body)
+
+  // 2026-08-17追記(ユーザー指摘に基づく重大バグ修正): 画像アップロードは
+  // 本文入力より前ではなく後に行う。「アップロード」ボタンはnicEditの本文
+  // 編集領域そのものに画像を挿入する機能(featured imageのような独立した
+  // 添付枠ではない)である疑いが強く、実際その場合、先に画像を挿入しても
+  // 直後の本文書き込み(editor.setContent()/iframe.innerHTML=等、編集領域を
+  // 丸ごと上書きする方式)で挿入した画像ごと消えてしまう。これは「投稿ログは
+  // 成功と表示されるのに実際には写真が反映されない」という繰り返し報告
+  // (確認画面に記事写真のプレビュー要素自体が存在しないことも実機で確認済み、
+  // 独立添付枠ではなく本文内挿入である傍証)と完全に整合するため、本文を
+  // 先に確定させてから画像を挿入する順序に変更する。
+  if (input.imageBuffer && input.imageFileName) {
+    await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
+  }
 
   // 即時投稿を明示する(SALON BOARD側の予約投稿機能は使わない)
   await page.evaluate(() => {
