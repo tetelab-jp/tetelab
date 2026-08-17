@@ -229,10 +229,19 @@ resource "aws_ecs_service" "atelier_app" {
     assign_public_ip = true
   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.atelier_app.arn
-    container_name   = "app"
-    container_port   = 3000
+  # atelier_domain_name未設定の間はALBリスナールール(atelier-alb.tfの
+  # aws_lb_listener_rule.atelier_app)が存在せず、ターゲットグループがどの
+  # ロードバランサーにも関連付けられていない状態のため、この段階でECSサービスに
+  # load_balancerブロックを渡すとAWS側が
+  # "target group does not have an associated load balancer"で拒否する。
+  # ドメイン確定後、2回目のapplyでリスナールールが作られてから有効化する。
+  dynamic "load_balancer" {
+    for_each = local.atelier_has_domain ? [1] : []
+    content {
+      target_group_arn = aws_lb_target_group.atelier_app.arn
+      container_name   = "app"
+      container_port   = 3000
+    }
   }
 
   deployment_circuit_breaker {
