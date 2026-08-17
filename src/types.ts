@@ -60,6 +60,9 @@ export type AppUser = {
   active_salon_id: number | null
   // 契約に応じて使えるサロンワークスペース数(管理者が/admin/toolで操作)。
   salon_slot_limit: number
+  // 管理者サイトの「なりすましログイン」経由のセッションか(JWTのimpクレーム由来、
+  // DBカラムではない)。手動実行ボタン等、管理者検証専用機能の表示制御に使う。
+  is_impersonated: number
 }
 
 export type AdminUser = {

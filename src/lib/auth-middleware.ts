@@ -58,7 +58,28 @@ export async function requireAuth(
     return redirectOrUnauthorized(c, '現在このアカウントはご利用いただけません。詳しくは運営までお問い合わせください。')
   }
 
+  // なりすましログイン(admin.tsxのimpersonateSalonSession)経由のセッションかを
+  // JWTのimpクレームから判定する(DBには持たない、セッション固有の情報のため)。
+  user.is_impersonated = payload.imp === true ? 1 : 0
+
   c.set('user', user)
+  await next()
+}
+
+/**
+ * 手動実行ボタン等、管理者がなりすましログイン中にのみ使える機能用の
+ * ミドルウェア。requireAuthの後に使う。一般ユーザーのセッションでは
+ * ボタン自体を表示しない(dashboard.tsx側)のに加え、API側でも直接POSTで
+ * 迂回されないようここでも締め出す。
+ */
+export async function requireImpersonated(
+  c: Context<{ Bindings: Bindings; Variables: { user: AppUser } }>,
+  next: Next
+) {
+  const user = c.get('user')
+  if (user.is_impersonated !== 1) {
+    return c.json({ error: 'この操作はなりすましログイン中のみ実行できます' }, 403)
+  }
   await next()
 }
 
