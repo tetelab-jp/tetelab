@@ -54,3 +54,15 @@ function redirectOrUnauthorized(c: Context) {
   }
   return c.redirect('/admin')
 }
+
+// 2026-08-17追記(ユーザー指定): 複数端末で管理者サイトを操作した際、片方の
+// 端末でのサロン一覧・機能設定の変更が、もう片方の端末に反映されないという
+// 報告があった。DB書き込み自体はUPDATE→リダイレクトの同期処理で完結しており
+// 不整合の余地は無いため、原因はブラウザ側のキャッシュ(戻る/進む操作や
+// 再訪問時にサーバーへ再取得せず古い描画結果をそのまま表示してしまうこと)と
+// 見て、/admin配下の全レスポンスに明示的なキャッシュ禁止ヘッダーを付与する。
+export async function noCacheHeaders(c: Context, next: Next) {
+  await next()
+  c.header('Cache-Control', 'no-store, no-cache, must-revalidate')
+  c.header('Pragma', 'no-cache')
+}
