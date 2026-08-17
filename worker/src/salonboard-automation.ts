@@ -1307,8 +1307,8 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   // 残留し、#confirmの上に重なってクリックを奪っていたことだと判明した
   // (警告ログに「DIV.imageUploaderModal.jscImageUploaderModal」が実際に
   // 記録された)。ボタン中心の座標で実際にクリックを受け取る要素を確認し、
-  // #confirm以外であれば、残留モーダルのクローズボタンを再度クリックする
-  // (無ければEscapeキー)ことで退かしてから確認ボタンを押す。
+  // #confirm以外であれば、残留モーダルのクローズボタンを再度クリックして
+  // 退かしてから確認ボタンを押す。
   const clearConfirmObstruction = async (): Promise<string | null> => {
     return page
       .evaluate(() => {
@@ -1326,11 +1326,21 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   let confirmObstruction = await clearConfirmObstruction()
   for (let attempt = 0; confirmObstruction && attempt < 3; attempt++) {
     log(`警告: 「確認する」ボタンの位置に別の要素(${confirmObstruction})が重なっています。退かしてから再試行します...`)
-    const modalCloseBtn = await page.$('.imageUploaderModalTopCloseButton')
+    let modalCloseBtn = await page.$('.imageUploaderModalTopCloseButton')
+    if (!modalCloseBtn) {
+      // 2026-08-17追記(ユーザー指摘に基づく修正): 以前はここでEscapeキーを
+      // フォールバックとして使っていたが、アップロード直後のモーダルの
+      // 実装次第では「閉じる」ではなく「アップロード済み画像の破棄」を
+      // 起動してしまう可能性があり、「投稿ログは成功なのに写真が反映
+      // されない」という実機報告の原因である疑いが強い。安全側に倒し、
+      // Escapeキーは使わずクローズボタンの出現を少し待ってから再試行する。
+      await page.waitForSelector('.imageUploaderModalTopCloseButton', { timeout: 3000 }).catch(() => {})
+      modalCloseBtn = await page.$('.imageUploaderModalTopCloseButton')
+    }
     if (modalCloseBtn) {
       await modalCloseBtn.click().catch(() => {})
     } else {
-      await page.keyboard.press('Escape').catch(() => {})
+      log('警告: 残留モーダルのクローズボタンが見つかりませんでした(Escapeキーによる強制クローズは行いません)')
     }
     await new Promise((resolve) => setTimeout(resolve, 500))
     confirmObstruction = await clearConfirmObstruction()
@@ -1339,7 +1349,29 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
     log(`警告: 「確認する」ボタンの位置に別の要素(${confirmObstruction})が重なっている可能性があります`)
   }
 
-  await confirmHandle.click()
+  // 2026-08-17追記(ユーザー指摘に基づく安全策): 上記の残留モーダル解消処理が
+  // アップロード済みの画像そのものを巻き込んで失ってしまっていないかを、
+  // 確認ボタンを押す直前にもう一度メインフォームの画像カウンタで検証する。
+  // アップロード直後は正しく反映されていたカウンタが0まで後退していたら、
+  // 確認画面へ進む前にアップロードをやり直す。
+  if (input.imageBuffer && input.imageFileName) {
+    const counterBeforeConfirm = await readFormCounters(page)
+    log(
+      `確認ボタン押下直前のフォーム画像カウンタ: ${counterBeforeConfirm ? `${counterBeforeConfirm.images}/4` : '(取得失敗)'}`
+    )
+    if (counterBeforeConfirm && counterBeforeConfirm.images === 0) {
+      log(
+        '警告: 確認ボタン押下直前に画像カウンタが0になっていました。モーダルの後処理で画像が失われた可能性があるため、アップロードをやり直します...'
+      )
+      await uploadBlogImage(page, input.imageBuffer, input.imageFileName, log)
+    }
+  }
+
+  const finalConfirmHandle = await page.$('#confirm')
+  if (!finalConfirmHandle) {
+    throw new Error('「確認する」ボタン(#confirm)が再アップロード後に見つかりませんでした')
+  }
+  await finalConfirmHandle.click()
 
   // 2026-08-15追記(診断強化): クリック直後に一瞬だけ表示され、その後
   // 自動的に消えるトースト等のバリデーション警告を捕捉するため、ページ
@@ -1390,10 +1422,21 @@ export async function postBlogArticle(page: Page, input: BlogPostInput, log: Aut
   // 欠落していた(=このワーカー側の不具合)」のか「確認画面には映って
   // いたのに最終的な公開記事に反映されなかった(=SALON BOARD側の問題の
   // 可能性)」のかを切り分けられるようにする。
-  const confirmScreenImageCount = await page
-    .evaluate(() => document.querySelectorAll('img').length)
+  // 2026-08-17追記(診断強化): 「確認画面のimg要素数」だけではロゴ・アイコン等の
+  // サイト共通画像も一緒に数えてしまい、記事の写真が本当にプレビューへ反映
+  // されているかを判別できなかった(実機報告で「投稿完了と表示されたのに写真が
+  // 反映されていない」が再発したが、件数だけでは原因を切り分けられなかった)。
+  // 次回以降の切り分けのため、各img要素のsrc(先頭80文字)も併せて記録する。
+  const confirmScreenImageInfo = await page
+    .evaluate(() =>
+      Array.from(document.querySelectorAll('img')).map((img) => (img.getAttribute('src') || '(src無し)').slice(0, 80))
+    )
     .catch(() => null)
-  log(`確認画面のimg要素数: ${confirmScreenImageCount ?? '(取得失敗)'}`)
+  log(
+    `確認画面のimg要素数: ${confirmScreenImageInfo ? confirmScreenImageInfo.length : '(取得失敗)'} src一覧: ${
+      confirmScreenImageInfo ? confirmScreenImageInfo.join(' | ') : '(取得失敗)'
+    }`
+  )
 
   log('「登録・反映する」を実行中...')
   await Promise.all([
