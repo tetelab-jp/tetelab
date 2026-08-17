@@ -1654,7 +1654,7 @@ blog.get('/blog/articles', async (c) => {
             <div id="blog-article-list" class="divide-y divide-gray-100">
               {articles.map((a) => (
                 <div
-                  class="flex items-start md:items-center gap-2 md:gap-4 py-1.5 md:py-3"
+                  class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3"
                   data-article-id={a.id}
                   data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
                   data-category-id={a.category_id ?? ''}
