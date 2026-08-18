@@ -32,7 +32,6 @@ function AuthLayout({ children }: { children: any }) {
       <div class="w-full max-w-md">
         <div class="text-center mb-6">
           <img src="/static/logo-combined.png" alt="SalonMotion" class="inline-block h-14 w-auto" />
-          <p class="text-sm text-gray-500 mt-2">ホットペッパービューティー連携SaaS</p>
         </div>
         <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-8">{children}</div>
       </div>
