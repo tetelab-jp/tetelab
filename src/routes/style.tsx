@@ -302,14 +302,14 @@ function StyleListSection({
                 type="button"
                 class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1 whitespace-nowrap"
               >
-                全選択
+                このページを全選択
               </button>
               <button
                 id="template-target-deselect-all-btn"
                 type="button"
                 class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1 whitespace-nowrap"
               >
-                全解除
+                このページを全解除
               </button>
             </>
           )}

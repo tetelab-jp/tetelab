@@ -1511,7 +1511,6 @@ type ArticleListRow = {
   title: string | null
   image_r2_key: string | null
   category_id: number | null
-  category_name: string | null
   stylist_name: string | null
   coupon_name: string | null
   month_tags_json: string
@@ -1541,9 +1540,8 @@ blog.get('/blog/articles', async (c) => {
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
        a.auto_post_enabled_flag, a.category_id, a.last_error,
-       bc.name AS category_name, st.name AS stylist_name, cp.name AS coupon_name
+       st.name AS stylist_name, cp.name AS coupon_name
      FROM blog_articles a
-     LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
      LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
      LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
      WHERE a.user_id = ? AND a.salon_id = ?
@@ -1665,12 +1663,12 @@ blog.get('/blog/articles', async (c) => {
                       type="number"
                       min="1"
                       value={a.no}
-                      class="blog-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      class="blog-order-input w-9 h-9 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       data-article-id={a.id}
                     />
                     <input
                       type="checkbox"
-                      class="blog-auto-post-toggle w-4 h-4 accent-pink-500 cursor-pointer flex-shrink-0"
+                      class="blog-auto-post-toggle w-9 h-9 accent-pink-500 cursor-pointer flex-shrink-0"
                       data-article-id={a.id}
                       checked={a.auto_post_enabled_flag === 1}
                       title="自動投稿の対象"
@@ -1684,11 +1682,13 @@ blog.get('/blog/articles', async (c) => {
                     </div>
                   )}
                   <div class="flex-1 min-w-0">
-                    <a href={`/blog/articles/${a.id}/edit`} class="block truncate text-sm md:text-base font-medium text-gray-700 hover:text-pink-600">
+                    <a
+                      href={`/blog/articles/${a.id}/edit`}
+                      class="block text-xs line-clamp-2 md:line-clamp-none md:truncate md:text-base font-medium text-gray-700 hover:text-pink-600"
+                    >
                       {a.title || '（未生成）'}
                     </a>
                     <p class="text-xs text-gray-400 flex gap-2 flex-wrap mt-0.5">
-                      <span>{a.category_name || '-'}</span>
                       <span>{a.stylist_name || '-'}</span>
                       {a.last_posted_at && <span>最終投稿 {formatJstDateCompact(a.last_posted_at)}(投稿{a.post_count}回)</span>}
                     </p>

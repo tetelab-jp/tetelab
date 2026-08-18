@@ -96,13 +96,20 @@ admin.get('/admin', async (c) => {
     <AdminAuthLayout>
       <h2 class="text-lg font-bold mb-6">管理者ログイン</h2>
       <ErrorBanner message={error} />
+      {/* 2026-08-18追記(ユーザー指定バグ修正): 通常ユーザーログイン(/login)と
+          同じname="email"/"password"を使っていたため、ブラウザの入力履歴
+          オートコンプリート(パスワードマネージャーとは別の、フィールドのname
+          属性単位で保存される簡易な入力候補)がサイトを跨いで両方のメール
+          アドレスを候補表示していた。フィールド名を専用のものにして分離する。 */}
       <form method="post" action="/admin" class="space-y-4">
         <div>
           <label class="block text-sm font-medium text-gray-700 mb-1">メールアドレス</label>
           <input
             required
             type="email"
-            name="email"
+            name="admin_email"
+            id="admin_email"
+            autocomplete="username"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
           />
         </div>
@@ -111,7 +118,9 @@ admin.get('/admin', async (c) => {
           <input
             required
             type="password"
-            name="password"
+            name="admin_password"
+            id="admin_password"
+            autocomplete="current-password"
             placeholder="••••••••"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
           />
@@ -135,8 +144,8 @@ const ADMIN_LOGIN_LOCKOUT_MINUTES = 15
 
 admin.post('/admin', async (c) => {
   const body = await c.req.parseBody()
-  const email = String(body.email || '').trim().toLowerCase()
-  const password = String(body.password || '')
+  const email = String(body.admin_email || '').trim().toLowerCase()
+  const password = String(body.admin_password || '')
   const wrongCredsError = () =>
     c.redirect('/admin?error=' + encodeURIComponent('メールアドレスまたはパスワードが正しくありません'))
 

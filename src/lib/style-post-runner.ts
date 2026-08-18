@@ -236,7 +236,7 @@ async function dispatchStylePostJob(
   // 再トライ由来のジョブが失敗しても、automation.tsx側の結果コールバックが
   // is_retryを見てさらに新たな再トライを予約しないようにする(そうしないと
   // 再トライの失敗がまた再トライを生み、無限ループになる)。
-  // is_auto_cycleは、このジョブが60分おきの自動巡回(runNextStyleForUser)
+  // is_auto_cycleは、このジョブが120分おきの自動巡回(runNextStyleForUser)
   // 由来かを記録する。手動投稿(テスト実行・個別再実行ボタン)の失敗からは
   // 再トライを予約しないため(ユーザー指定ルール)、automation.tsx側の結果
   // コールバックはこのフラグを見て再トライ予約の可否を判定する。
@@ -458,7 +458,7 @@ export async function runStyleAutomationForUser(
 //   先頭3件を間隔を空けず連続投稿する(「初回バースト」)。ON→OFF→ONで
 //   再度ONにした場合も先頭3件から再度バーストする(style.tsxの
 //   POST /style/scheduleでburst_remaining=3にリセットする)。
-// ・初回バーストが終わったら、60分おきに1件、登録順に巡回して投稿する
+// ・初回バーストが終わったら、120分おきに1件、登録順に巡回して投稿する
 //   (最後まで行ったら先頭に戻って繰り返す。日付をまたいでも継続。
 //   最大100件を登録していても1日で一巡せず数日かけて回る想定)
 // ・5件連続で投稿が失敗した場合、5時間は投稿を停止する
@@ -469,7 +469,7 @@ export async function runStyleAutomationForUser(
 export const INITIAL_BURST_COUNT = 3
 const BLACKOUT_START_MINUTES = 2 * 60 // 02:00
 const BLACKOUT_END_MINUTES = 7 * 60 // 07:00
-const POST_INTERVAL_MINUTES = 60
+const POST_INTERVAL_MINUTES = 120
 
 function jstMinutesOfDay(nowLabel: string): number {
   const [hh, mm] = nowLabel.split(':').map(Number)
@@ -490,7 +490,7 @@ type ScheduleState = {
  * チェックが無く、1分おきの外部Cronが前のジョブの完了を待たずに次々と
  * 投入してしまい、同一アカウントへ複数IPが同時ログインする状態や、
  * 候補一覧から進行中スタイルが除外されることによる巡回スキップを招いていた)。
- * それ以外(通常運転)は前回のジョブ投入から60分以上経過していること。
+ * それ以外(通常運転)は前回のジョブ投入から120分以上経過していること。
  */
 async function shouldPostNow(
   env: Bindings,
@@ -597,7 +597,7 @@ async function selectNextStyleId(
 }
 
 /**
- * 深夜2:00〜7:00を除く時間帯に、60分おきに1件を登録順で巡回投稿する方式
+ * 深夜2:00〜7:00を除く時間帯に、120分おきに1件を登録順で巡回投稿する方式
  * (OFF→ON直後は先頭3件を連続投稿する初回バースト)。
  * 外部Cronから1分間隔で呼ばれる想定。
  */
@@ -620,9 +620,9 @@ export async function runNextStyleForUser(
   await requireCredentialsConfigured(env, userId)
 
   // 2026-08-14追記(ユーザー指定ルール): エラーが出たスタイルは、次の自動投稿
-  // タイミング(60分後)に1回だけ再トライする(通常のバースト/巡回選定より
+  // タイミング(120分後)に1回だけ再トライする(通常のバースト/巡回選定より
   // 優先する)。3回目の再トライは行わない。手動投稿(テスト実行・個別再実行)
-  // には適用しない(この関数は60分おきの自動巡回からのみ呼ばれるため)。
+  // には適用しない(この関数は120分おきの自動巡回からのみ呼ばれるため)。
   let isRetrySlot = false
   let styleId: number | null = null
   if (schedule.retry_pending_style_id) {
