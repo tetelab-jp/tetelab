@@ -13,6 +13,7 @@ import type { Bindings } from '../types'
 import { runBlogPostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
 import { getFooterTextForSalon } from './blog-footer'
+import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
 
@@ -158,6 +159,9 @@ async function dispatchBlogPostJob(
   }
   if (!env.ECS_SUBNET_IDS || !env.ECS_SECURITY_GROUP_IDS) {
     throw new Error('ECSのサブネット/セキュリティグループが未設定です')
+  }
+  if (await hasAnyInFlightSalonAutomationJob(env, salonId)) {
+    throw new Error('このサロンは他の自動化ジョブ(スタイル投稿/口コミ同期/口コミ返信)が進行中のため、投入を見送りました')
   }
 
   const jobToken = randomJobToken()

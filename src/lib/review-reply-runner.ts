@@ -18,6 +18,7 @@ import type { Bindings } from '../types'
 import { runReviewReplyTask, stopStylePostTask } from './aws-ecs'
 import { generateReviewReply, type ReviewForReplyGeneration, type SalonProfileForGeneration } from './ai-generate'
 import { publishAlert } from './sns-alert'
+import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
 
@@ -193,6 +194,9 @@ async function dispatchReviewReplyJob(
   }
   if (!env.ECS_SUBNET_IDS || !env.ECS_SECURITY_GROUP_IDS) {
     throw new Error('ECSのサブネット/セキュリティグループが未設定です')
+  }
+  if (await hasAnyInFlightSalonAutomationJob(env, salonId)) {
+    throw new Error('このサロンは他の自動化ジョブ(スタイル投稿/ブログ投稿/口コミ同期)が進行中のため、投入を見送りました')
   }
 
   const jobToken = randomJobToken()

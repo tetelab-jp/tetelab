@@ -17,6 +17,7 @@
 import type { Bindings } from '../types'
 import { runStylePostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
+import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 // SalonMotion側の運用上の1日あたり自動投稿上限（SALON BOARD自体の上限ではない）
 const DAILY_POST_LIMIT = 100
@@ -229,6 +230,9 @@ async function dispatchStylePostJob(
   }
   if (!env.ECS_SUBNET_IDS || !env.ECS_SECURITY_GROUP_IDS) {
     throw new Error('ECSのサブネット/セキュリティグループが未設定です')
+  }
+  if (await hasAnyInFlightSalonAutomationJob(env, salonId)) {
+    throw new Error('このサロンは他の自動化ジョブ(ブログ投稿/口コミ同期/口コミ返信)が進行中のため、投入を見送りました')
   }
 
   const jobToken = randomJobToken()

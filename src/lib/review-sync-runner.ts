@@ -14,6 +14,7 @@ import { runReviewSyncTask, stopStylePostTask } from './aws-ecs'
 import { fetchHpbReviewList } from './ranking-scraper'
 import { matchReviews, parseSbPostedAtTimestamp, parseSbDateOnly, type SalonBoardReviewRow } from './review-match'
 import { matchStylistName } from './review-stylist-match'
+import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 function randomJobToken(): string {
   const bytes = new Uint8Array(32)
@@ -56,6 +57,9 @@ export async function enqueueReviewSyncJob(env: Bindings, userId: number, salonI
 
   if (await hasInFlightReviewSyncJob(env, salonId)) {
     throw new Error('既に口コミ同期ジョブが実行中です')
+  }
+  if (await hasAnyInFlightSalonAutomationJob(env, salonId)) {
+    throw new Error('このサロンは他の自動化ジョブ(スタイル投稿/ブログ投稿/口コミ返信)が進行中のため、投入を見送りました')
   }
 
   const state = await env.DB.prepare(
