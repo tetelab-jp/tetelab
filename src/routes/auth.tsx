@@ -191,6 +191,7 @@ auth.get('/login', (c) => {
             required
             type="email"
             name="email"
+            autocomplete="username"
             placeholder="owner@example.com"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
           />
@@ -201,6 +202,7 @@ auth.get('/login', (c) => {
             required
             type="password"
             name="password"
+            autocomplete="current-password"
             placeholder="••••••••"
             class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-pink-400"
           />

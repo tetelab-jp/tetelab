@@ -83,6 +83,15 @@ resource "aws_lb" "app" {
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = data.aws_subnets.default_public.ids
+
+  # 2026-08-18追記(重大バグ修正): 既存スタイル取り込み(POST /api/style/import/execute)は
+  # Puppeteerでの1件ずつのスクレイピング・DB書き込みを1本のHTTPリクエスト内で
+  # 同期的に行うため、100件選択した場合ALBのデフォルトidle_timeout(60秒)を
+  # 大幅に超える(実測1件あたり数秒前後)。ALBが接続を強制終了し、そこまでに
+  # DB書き込み済みの分(概ね30件前後)しか反映されない不具合が発生していた。
+  # 非同期ジョブ化(style-post-runner.tsと同じ方式)への作り直しが本来の解では
+  # あるが、まずは大きめのタイムアウトへ引き上げて実害を止める。
+  idle_timeout = 600
 }
 
 resource "aws_lb_target_group" "app" {
