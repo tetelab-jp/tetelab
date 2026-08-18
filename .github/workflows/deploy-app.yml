@@ -44,7 +44,7 @@ env:
   # container_definitionsの差分を無視する設定になっており、ドメイン設定後に
   # terraform applyしてもAPP_BASE_URL(Fargateワーカーへのコールバック先)が
   # 更新されない。デプロイの度にここで正しい値に上書きする。
-  APP_BASE_URL: https://salonmotion.com
+  APP_BASE_URL: https://salonmotion.jp
   # /admin/status の連続失敗検知アラート用SNSトピックARN(infra/monitoring.tf、
   # 非機密情報)。同じくlifecycle.ignore_changesの都合で、既存タスク定義には
   # 含まれていないため、下のステップで無ければ追加する。
@@ -52,11 +52,11 @@ env:
   # パスワード再設定メール送信(src/lib/ses-email.ts)用の送信元アドレス
   # (infra/ses.tf、非機密情報)。SNS_ALERT_TOPIC_ARNと同じ理由で、
   # 既存タスク定義には含まれていないため、下のステップで無ければ追加する。
-  SES_FROM_EMAIL: noreply@salonmotion.com
+  SES_FROM_EMAIL: noreply@salonmotion.jp
   # 管理者サイト(/admin)を公開する別ドメイン(infra/variables.tfのadmin_domain_name、
   # 非機密情報)。SNS_ALERT_TOPIC_ARNと同じ理由で、既存タスク定義には
   # 含まれていないため、下のステップで無ければ追加する。
-  ADMIN_HOST: www.salonmotion.com
+  ADMIN_HOST: www.salonmotion.jp
   # 2026-08-14追記(重大バグ修正): NATゲートウェイ導入時、worker用の専用
   # プライベートサブネット(subnet-06aeffd3665aec13a)にECS_SUBNET_IDSを
   # 一時的に上書きしていたが、NATゲートウェイ撤去に伴いこのサブネット自体を
