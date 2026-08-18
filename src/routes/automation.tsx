@@ -627,7 +627,7 @@ automation.post('/api/automation/jobs/:id/result', async (c) => {
       .catch(() => {})
   }
 
-  await updateConsecutiveFailureAndNotify(c.env, userId, jobStatus === 'success')
+  await updateConsecutiveFailureAndNotify(c.env, userId, job.salon_id, jobStatus === 'success')
 
   // 2026-08-14追記(ユーザー指定ルール): 60分おきの自動巡回で投稿に失敗した
   // スタイルは、次の自動投稿タイミングに1回だけ再トライする

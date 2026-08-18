@@ -29,7 +29,12 @@ const DAILY_POST_LIMIT = 100
 // あるため、こちらへ移設した(automation.tsx側はここからimportする)。
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 5
 
-export async function updateConsecutiveFailureAndNotify(env: Bindings, userId: number, success: boolean): Promise<void> {
+export async function updateConsecutiveFailureAndNotify(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  success: boolean
+): Promise<void> {
   // 2026-08-13追記(重大バグ修正): SELECT→計算→UPDATEの非アトミックな
   // read-modify-writeだと、同一ユーザーの複数ジョブ結果コールバックが
   // 並行到達した場合にlost updateが起き、連続失敗カウントがずれて
@@ -60,9 +65,17 @@ export async function updateConsecutiveFailureAndNotify(env: Bindings, userId: n
   // 自動投稿を5時間停止する(shouldPostNow参照)。
   // アラート通知と同じしきい値・同じ「状態遷移の瞬間」で発動する。
   if (!wasFailing && isFailing) {
+    // 2026-08-18追記(重大バグ修正): consecutive_failure_countはusers単位で
+    // 共有されているが、自動投稿の停止は「今回失敗が起きたサロン」だけに
+    // 適用すべき。salon_idの絞り込みが無いと、あるサロンの連続失敗で
+    // 同じユーザーの他の全サロンの自動投稿まで巻き添えで停止してしまう
+    // (blog-post-runner.ts/review-reply-runner.tsの同種処理は元々salon_id
+    // 込みで絞られており、ここだけ漏れていた)。
     await env.DB
-      .prepare(`UPDATE style_post_schedules SET paused_until = now() + interval '5 hours', updated_at = CURRENT_TIMESTAMP WHERE user_id = ?`)
-      .bind(userId)
+      .prepare(
+        `UPDATE style_post_schedules SET paused_until = now() + interval '5 hours', updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`
+      )
+      .bind(userId, salonId)
       .run()
       .catch(() => {})
   }
@@ -683,7 +696,7 @@ export async function runNextStyleForUser(
     // ECS RunTask呼び出し自体の失敗)も、投稿できなかったという事実は同じ
     // なので、5連続失敗による一時停止・SNSアラートの対象に含める
     // (含めないと、この種の失敗だけ安全弁が機能しないまま延々と繰り返される)。
-    await updateConsecutiveFailureAndNotify(env, userId, false)
+    await updateConsecutiveFailureAndNotify(env, userId, salonId, false)
     await env.DB.prepare(
       `UPDATE style_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )
@@ -796,7 +809,7 @@ async function clearStaleJob(env: Bindings, j: StaleJobRow): Promise<void> {
     .bind(j.user_id, j.salon_id, j.style_id, styleNo)
     .run()
 
-  await updateConsecutiveFailureAndNotify(env, j.user_id, false)
+  await updateConsecutiveFailureAndNotify(env, j.user_id, j.salon_id, false)
   if (j.run_id) {
     await finalizeRunIfComplete(env, j.run_id)
   }
