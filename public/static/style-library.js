@@ -44,6 +44,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // 登録済みスタイルの全選択/全解除
   async function toggleAllStyles(selected) {
+    const confirmMessage = selected
+      ? '全てのスタイルを自動投稿対象(ON)にします。よろしいですか？'
+      : '全てのスタイルの自動投稿対象を解除(OFF)します。よろしいですか？'
+    if (!confirm(confirmMessage)) return
     try {
       const res = await fetch('/api/style/toggle-all', {
         method: 'POST',
