@@ -979,7 +979,7 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
                 <span class="text-sm font-medium text-gray-700">
-                  自動投稿を有効にする（SALON BOARDへ、月タグに合う記事を1日1本の目安で自動投稿。深夜2:00〜7:00は停止）
+                  自動投稿を有効にする（SALON BOARDへ、月タグに合う記事を毎朝8:00に1本自動投稿）
                 </span>
               </label>
             </form>
