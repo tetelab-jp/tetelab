@@ -1663,12 +1663,12 @@ blog.get('/blog/articles', async (c) => {
                       type="number"
                       min="1"
                       value={a.no}
-                      class="blog-order-input w-9 h-9 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      class="blog-order-input w-6 h-6 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                       data-article-id={a.id}
                     />
                     <input
                       type="checkbox"
-                      class="blog-auto-post-toggle w-9 h-9 accent-pink-500 cursor-pointer flex-shrink-0"
+                      class="blog-auto-post-toggle w-6 h-6 accent-pink-500 cursor-pointer flex-shrink-0"
                       data-article-id={a.id}
                       checked={a.auto_post_enabled_flag === 1}
                       title="自動投稿の対象"
