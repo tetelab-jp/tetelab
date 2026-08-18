@@ -6,6 +6,19 @@ document.addEventListener('DOMContentLoaded', () => {
     if (selectedCountEl) selectedCountEl.textContent = count
   }
 
+  function applyAutoPostRowState(row, selected) {
+    if (!row) return
+    row.setAttribute('data-auto-post', selected ? '1' : '0')
+    const badge = row.querySelector('.auto-post-badge')
+    if (badge) {
+      badge.textContent = selected ? '自動投稿ON' : '自動投稿OFF'
+      badge.classList.toggle('bg-blue-50', selected)
+      badge.classList.toggle('text-blue-600', selected)
+      badge.classList.toggle('bg-gray-100', !selected)
+      badge.classList.toggle('text-gray-400', !selected)
+    }
+  }
+
   // チェックボックスの切り替え
   document.querySelectorAll('.style-checkbox').forEach((checkbox) => {
     checkbox.addEventListener('change', async (e) => {
@@ -21,24 +34,44 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         const data = await res.json()
         updateSelectedCount(data.selectedCount)
-        const row = target.closest('[data-image-id][data-auto-post]')
-        if (row) {
-          row.setAttribute('data-auto-post', selected ? '1' : '0')
-          const badge = row.querySelector('.auto-post-badge')
-          if (badge) {
-            badge.textContent = selected ? '自動投稿ON' : '自動投稿OFF'
-            badge.classList.toggle('bg-blue-50', selected)
-            badge.classList.toggle('text-blue-600', selected)
-            badge.classList.toggle('bg-gray-100', !selected)
-            badge.classList.toggle('text-gray-400', !selected)
-          }
-        }
+        applyAutoPostRowState(target.closest('[data-image-id][data-auto-post]'), selected)
       } catch (err) {
         alert('更新に失敗しました。再度お試しください。')
         target.checked = !selected
       }
     })
   })
+
+  // 登録済みスタイルの全選択/全解除
+  async function toggleAllStyles(selected) {
+    try {
+      const res = await fetch('/api/style/toggle-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ selected })
+      })
+      const data = await res.json()
+      if (!data.success) {
+        alert('更新に失敗しました。再度お試しください。')
+        return
+      }
+      updateSelectedCount(data.selectedCount)
+      document.querySelectorAll('.style-checkbox').forEach((checkbox) => {
+        checkbox.checked = selected
+        applyAutoPostRowState(checkbox.closest('[data-image-id][data-auto-post]'), selected)
+      })
+    } catch (err) {
+      alert('通信エラーが発生しました')
+    }
+  }
+  const styleSelectAllBtn = document.getElementById('style-select-all-btn')
+  if (styleSelectAllBtn) {
+    styleSelectAllBtn.addEventListener('click', () => toggleAllStyles(true))
+  }
+  const styleDeselectAllBtn = document.getElementById('style-deselect-all-btn')
+  if (styleDeselectAllBtn) {
+    styleDeselectAllBtn.addEventListener('click', () => toggleAllStyles(false))
+  }
 
   // ON/OFF表示切り替え
   const styleFilterSelect = document.getElementById('style-filter-select')

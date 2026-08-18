@@ -338,6 +338,24 @@ function StyleListSection({
           </p>
         ) : (
           <>
+            {!isTemplateMode && (
+              <div class="flex items-center gap-2 mb-3">
+                <button
+                  type="button"
+                  id="style-select-all-btn"
+                  class="bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg"
+                >
+                  <i class="fas fa-check-double mr-1.5"></i>全選択
+                </button>
+                <button
+                  type="button"
+                  id="style-deselect-all-btn"
+                  class="bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg"
+                >
+                  <i class="fas fa-xmark mr-1.5"></i>全解除
+                </button>
+              </div>
+            )}
             <div class="hidden md:flex items-center gap-4 pb-2 border-b border-gray-100 text-xs font-semibold text-gray-400">
               <span class="w-10 flex-shrink-0 text-center">No</span>
               <span class="w-5 flex-shrink-0"></span>
@@ -1329,6 +1347,26 @@ style.post('/api/style/toggle', async (c) => {
     'UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(selected ? 1 : 0, imageId, user.id, user.active_salon_id)
+    .run()
+
+  const row = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ cnt: number }>()
+
+  return c.json({ success: true, selectedCount: row?.cnt ?? 0 })
+})
+
+// 登録済みスタイル一覧の全選択/全解除。
+style.post('/api/style/toggle-all', async (c) => {
+  const user = c.get('user')
+  const { selected } = await c.req.json<{ selected: boolean }>()
+
+  await c.env.DB.prepare(
+    'UPDATE styles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(selected ? 1 : 0, user.id, user.active_salon_id)
     .run()
 
   const row = await c.env.DB.prepare(
