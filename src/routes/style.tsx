@@ -370,22 +370,24 @@ function StyleListSection({
                 data-image-id={s.id}
                 data-auto-post={s.auto_post_enabled_flag === 1 ? '1' : '0'}
               >
-                <input
-                  type="number"
-                  min="1"
-                  value={idx + 1}
-                  class="style-order-input w-10 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded px-1 py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                  data-image-id={s.id}
-                />
-                <input
-                  type="checkbox"
-                  class={
-                    (isTemplateMode ? 'template-target-checkbox' : 'style-checkbox') +
-                    ' w-4 h-4 md:w-5 md:h-5 accent-pink-500 cursor-pointer flex-shrink-0'
-                  }
-                  checked={!isTemplateMode && s.auto_post_enabled_flag === 1}
-                  data-image-id={s.id}
-                />
+                <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
+                  <input
+                    type="number"
+                    min="1"
+                    value={idx + 1}
+                    class="style-order-input w-6 h-6 flex-shrink-0 text-center text-xs text-gray-600 border border-gray-300 rounded [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    data-image-id={s.id}
+                  />
+                  <input
+                    type="checkbox"
+                    class={
+                      (isTemplateMode ? 'template-target-checkbox' : 'style-checkbox') +
+                      ' w-6 h-6 accent-pink-500 cursor-pointer flex-shrink-0'
+                    }
+                    checked={!isTemplateMode && s.auto_post_enabled_flag === 1}
+                    data-image-id={s.id}
+                  />
+                </div>
                 <a href={`/style/${s.id}/edit`} class="flex-shrink-0">
                   {s.front_style_image_id ? (
                     <img
