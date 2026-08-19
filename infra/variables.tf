@@ -92,9 +92,16 @@ variable "app_task_memory" {
   default     = "3072"
 }
 
+# 2026-08-19追記(至急調査): appサービスがdesiredCount=1(冗長化なし)で
+# 稼働していたため、単一タスクが一時的に応答不能になる瞬間(デプロイ時の
+# 切り替わり・CPU負荷等)にALBへの新規接続が一過性に確立できなくなり、
+# Fargateワーカーからの結果コールバックがConnectTimeoutErrorで失敗する
+# 事象が疑われた(失敗タスク・成功タスクが同一AZ・同一サブネットだったため、
+# ワーカー側ではなくアプリ側が原因である可能性が高いと判断)。単一障害点の
+# 解消も兼ねて2タスクへ冗長化する。
 variable "app_desired_count" {
   type    = number
-  default = 1
+  default = 2
 }
 
 # 初回のアプリタスク定義登録に使うイメージ(initial_imageと同様、ダミーでよい)
