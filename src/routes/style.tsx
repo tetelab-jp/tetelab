@@ -1575,17 +1575,25 @@ style.post('/style/schedule', async (c) => {
   // 2026-08-13追記(ユーザー指定ルール): OFF→ONに切り替えた瞬間(既存レコードが
   // 無い=初回ONの場合も含む)、動作確認のため登録順の先頭3件を連続投稿する
   // 「初回バースト」をリセットする。ON→OFF→ONで再度ONにした場合も同様。
+  //
+  // 2026-08-19追記(ユーザー指定): OFF→ONの切り替えは「原因を解消したので
+  // 再開したい」という意思表示でもあるため、5件連続失敗による一時停止
+  // (paused_until)と連続失敗カウント(users.consecutive_failure_count)も
+  // 併せてリセットする(/style/schedule/clear-pauseと同じ処理)。これが無いと、
+  // 一時停止中にOFF→ONで再開したつもりでも一時停止が残ったままになり、
+  // バーストが動かず「なぜ投稿されないのか」分かりにくい状態になっていた。
   const turningOn = enabled && existing?.enabled !== 1
 
   if (existing) {
     if (turningOn) {
       await c.env.DB.prepare(
         `UPDATE style_post_schedules
-         SET enabled = 1, burst_remaining = ?, next_cursor_style_id = NULL, updated_at = CURRENT_TIMESTAMP
+         SET enabled = 1, burst_remaining = ?, next_cursor_style_id = NULL, paused_until = NULL, updated_at = CURRENT_TIMESTAMP
          WHERE user_id = ? AND salon_id = ?`
       )
         .bind(INITIAL_BURST_COUNT, user.id, user.active_salon_id)
         .run()
+      await c.env.DB.prepare(`UPDATE users SET consecutive_failure_count = 0 WHERE id = ?`).bind(user.id).run()
     } else {
       await c.env.DB.prepare(
         `UPDATE style_post_schedules SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`

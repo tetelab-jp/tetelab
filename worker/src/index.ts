@@ -172,18 +172,34 @@ async function fetchJob(apiBase: string, jobId: string, jobToken: string): Promi
   return (await res.json()) as JobPayload
 }
 
-async function postResult(apiBase: string, jobId: string, jobToken: string, result: JobResult): Promise<void> {
-  try {
-    await fetch(`${apiBase}/api/automation/jobs/${jobId}/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(result)
-    })
-  } catch (err) {
-    // コールバック自体が失敗した場合、アプリ側はジョブを「stale」として
-    // 一定時間後にタイムアウト扱いにする(automation.tsx側のクリーンアップ処理)。
-    console.error('結果の送信に失敗しました:', err)
+// 2026-08-19追記: salonmotion.jpへのアウトバウンド接続がまれに
+// UND_ERR_CONNECT_TIMEOUT(TCP接続確立自体のタイムアウト)で失敗する事象を
+// 確認した。ジョブ自体は成功していても、この結果送信コールバックが1回でも
+// 失敗すると「Fargateタスクからの応答なし」扱いのタイムアウト失敗として
+// カウントされ、5連続失敗による自動投稿の一時停止を誤って引き起こしてしまう。
+// 一過性のネットワーク瞬断を吸収するため、指数バックオフで数回リトライする。
+async function postWithRetry(url: string, jobToken: string, body: unknown): Promise<void> {
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      return
+    } catch (err) {
+      console.error(`結果の送信に失敗しました(試行${attempt}/${maxAttempts}):`, err)
+      if (attempt === maxAttempts) return
+      await new Promise(resolve => setTimeout(resolve, attempt * 3000))
+    }
   }
+}
+
+async function postResult(apiBase: string, jobId: string, jobToken: string, result: JobResult): Promise<void> {
+  // コールバックが最終的に失敗した場合、アプリ側はジョブを「stale」として
+  // 一定時間後にタイムアウト扱いにする(automation.tsx側のクリーンアップ処理)。
+  await postWithRetry(`${apiBase}/api/automation/jobs/${jobId}/result`, jobToken, result)
 }
 
 // ---------- ブログ投稿ジョブ(2026-08-15追記) ----------
@@ -216,15 +232,7 @@ async function fetchBlogJob(apiBase: string, jobId: string, jobToken: string): P
 }
 
 async function postBlogResult(apiBase: string, jobId: string, jobToken: string, result: BlogJobResult): Promise<void> {
-  try {
-    await fetch(`${apiBase}/api/blog-automation/jobs/${jobId}/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(result)
-    })
-  } catch (err) {
-    console.error('結果の送信に失敗しました:', err)
-  }
+  await postWithRetry(`${apiBase}/api/blog-automation/jobs/${jobId}/result`, jobToken, result)
 }
 
 /**
@@ -334,15 +342,7 @@ async function postReviewSyncResult(
   jobToken: string,
   result: ReviewSyncJobResult
 ): Promise<void> {
-  try {
-    await fetch(`${apiBase}/api/review-automation/jobs/${jobId}/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(result)
-    })
-  } catch (err) {
-    console.error('結果の送信に失敗しました:', err)
-  }
+  await postWithRetry(`${apiBase}/api/review-automation/jobs/${jobId}/result`, jobToken, result)
 }
 
 /**
@@ -440,15 +440,7 @@ async function postReviewReplyResult(
   jobToken: string,
   result: ReviewReplyJobResult
 ): Promise<void> {
-  try {
-    await fetch(`${apiBase}/api/review-reply-automation/jobs/${jobId}/result`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${jobToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(result)
-    })
-  } catch (err) {
-    console.error('結果の送信に失敗しました:', err)
-  }
+  await postWithRetry(`${apiBase}/api/review-reply-automation/jobs/${jobId}/result`, jobToken, result)
 }
 
 /**
