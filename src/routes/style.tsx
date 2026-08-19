@@ -1558,7 +1558,7 @@ style.post('/style/library/delete/:id', async (c) => {
 export const BLACKOUT_START_LABEL = '2:00'
 export const BLACKOUT_END_LABEL = '7:00'
 // 通常運転時の投稿間隔(分)。src/lib/style-post-runner.tsのPOST_INTERVAL_MINUTESと一致させること。
-export const POST_INTERVAL_MINUTES_LABEL = 60
+export const POST_INTERVAL_MINUTES_LABEL = 120
 
 style.get('/style/schedule', (c) => c.redirect('/settings/auto-update'))
 
