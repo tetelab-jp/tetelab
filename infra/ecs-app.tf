@@ -98,6 +98,24 @@ data "aws_iam_policy_document" "app_task" {
     actions   = ["ses:SendEmail", "ses:SendRawEmail"]
     resources = ["*"]
   }
+  # 2026-08-19追記(至急・重大バグの是正): stopStylePostTask(src/lib/aws-ecs.ts、
+  # 2026-08-13追記のコメント参照)がsweepStaleJobs()のタイムアウト判定と同時に
+  # 実Fargateタスクを止めるためのStopTaskを呼ぶ設計になっていたが、このタスク
+  # ロールにecs:StopTask権限が付与されておらず、6日間ずっとAccessDeniedExceptionで
+  # 静かに失敗し続けていた(CloudWatch Logsで実機確認)。この結果、アプリ側が
+  # 「タイムアウト」と判定した後もFargateタスクは実際には止まらず動き続け、
+  # アプリが諦めた後に登録・反映申請が完了してしまうケースがあった
+  # (「取り込んだスタイルが勝手に一括投稿された」報告の一因である可能性が高い)。
+  statement {
+    sid       = "StopStaleWorkerTask"
+    actions   = ["ecs:StopTask"]
+    resources = ["arn:aws:ecs:${var.aws_region}:${data.aws_caller_identity.current.account_id}:task/${var.project_name}/*"]
+    condition {
+      test     = "ArnEquals"
+      variable = "ecs:cluster"
+      values   = [aws_ecs_cluster.worker.arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "app_task" {
