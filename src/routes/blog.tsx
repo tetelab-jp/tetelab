@@ -1395,6 +1395,12 @@ blog.get('/blog/generate', async (c) => {
             </label>
             <input type="file" id="blog-generate-image-input" name="image" accept="image/*" required class="hidden" />
           </div>
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <label class="flex items-center gap-2 text-sm">
+              <input type="checkbox" name="footer_enabled" checked class="accent-pink-500" />
+              フッターを追加する
+            </label>
+          </div>
           <button
             id="blog-generate-btn"
             type="submit"
@@ -1415,6 +1421,7 @@ blog.get('/blog/generate', async (c) => {
 blog.post('/blog/generate', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
+  const footerEnabled = body.footer_enabled === 'on' || body.footer_enabled === 'true'
 
   const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
@@ -1469,11 +1476,11 @@ blog.post('/blog/generate', async (c) => {
       `INSERT INTO blog_articles (
          user_id, salon_id, category_id, stylist_id, image_r2_key, image_file_name, image_description,
          title, body, month_tags_json, footer_enabled_flag, auto_post_enabled_flag, status, sort_order
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 'unapproved', ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'unapproved', ?)`
     )
       .bind(
         user.id, user.active_salon_id, categoryId, category.default_stylist_id || null, key, fileName, imageDescription,
-        result.title, result.body, JSON.stringify(seasonMonths), nextOrderRow?.n ?? 0
+        result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0, nextOrderRow?.n ?? 0
       )
       .run()
 
