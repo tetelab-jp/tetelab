@@ -140,9 +140,11 @@ resource "aws_iam_role_policy" "github_actions_deploy" {
   policy = data.aws_iam_policy_document.github_actions_deploy.json
 }
 
-# ---------- CloudWatch Logs閲覧専用ユーザー(調査・デバッグ用) ----------
-# app/workerのログを読むためだけの最小権限。他のAWSリソースへの権限は一切与えない。
-# デバッグ目的の一時的な認証情報のため、不要になったらaws_iam_access_key.log_readerを
+# ---------- 読み取り専用調査ユーザー(調査・デバッグ用) ----------
+# app/workerのログを読む用途に加え、2026-08-19追記: 「100サロン規模に増えても
+# Fargateタスクの同時実行が問題ないか」等の容量調査のため、ECS/EC2/Service Quotasの
+# Describe/List系(すべて読み取り専用)を追加した。書き込み・変更系のAPIは一切
+# 付与しない。デバッグ目的の認証情報のため、不要になったらaws_iam_access_key.log_readerを
 # ローテーション(terraform taint等)するか、このリソース自体を削除すること。
 
 resource "aws_iam_user" "log_reader" {
@@ -168,6 +170,31 @@ data "aws_iam_policy_document" "log_reader" {
       "${aws_cloudwatch_log_group.app.arn}:*",
       "${aws_cloudwatch_log_group.worker.arn}:*"
     ]
+  }
+  statement {
+    # ECSのDescribe/List系APIはリソースレベル制御に対応していないものが多いため
+    # Resource="*"が必須。稼働中タスク数・タスク定義の内容(vCPU/メモリ)の確認用。
+    sid = "DescribeEcsForCapacityCheck"
+    actions = [
+      "ecs:DescribeClusters",
+      "ecs:DescribeServices",
+      "ecs:DescribeTasks",
+      "ecs:ListTasks",
+      "ecs:DescribeTaskDefinition"
+    ]
+    resources = ["*"]
+  }
+  statement {
+    # サブネットの空きIP数(ENI容量)確認用。EC2のDescribe系もResource="*"が必須。
+    sid       = "DescribeNetworkForCapacityCheck"
+    actions   = ["ec2:DescribeSubnets", "ec2:DescribeNetworkInterfaces"]
+    resources = ["*"]
+  }
+  statement {
+    # Fargateの同時実行vCPU数等、アカウントのService Quotas確認用。
+    sid       = "ReadServiceQuotas"
+    actions   = ["servicequotas:GetServiceQuota", "servicequotas:ListServiceQuotas"]
+    resources = ["*"]
   }
 }
 
