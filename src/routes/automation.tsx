@@ -1103,10 +1103,12 @@ automation.post('/api/review-automation/jobs/:id/result', async (c) => {
   return c.json({ ok: true })
 })
 
-// 定期実行(月次差分同期・タイムアウトジョブの掃除)は外部Cronトリガーを
-// 使わず、アプリ内setInterval(src/index.tsx、既存のrunDeletionSweepと
-// 同じパターン)から直接sweepStaleReviewSyncJobs/runMonthlyReviewSyncSweepを
-// 呼ぶ(EventBridgeへの新規スケジュール追加を避けるため)。
+// 定期実行(毎朝09:00の口コミ同期→自動返信パイプライン・タイムアウトジョブの
+// 掃除)は外部Cronトリガーを使わず、アプリ内setInterval(src/index.tsx、
+// 既存のrunDeletionSweepと同じパターン)から直接
+// sweepStaleReviewSyncJobs/sweepStaleReviewReplyJobs/runDailyReviewPipeline
+// (src/lib/review-pipeline-runner.ts)を呼ぶ(EventBridgeへの新規スケジュール
+// 追加を避けるため)。
 
 // ---------- 口コミ自動返信(2026-08-17追記) ----------
 // review_sync(口コミ一覧の取得・突合)とは別のジョブ種別。返信投稿自体は

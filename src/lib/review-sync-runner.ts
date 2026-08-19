@@ -6,7 +6,9 @@
 //   2. processReviewSyncResult: ワーカーが返したサロンボード側の行を受け取り、
 //      HPB公開口コミ一覧をfetch()で取得(ログイン不要・ここはワーカーを
 //      使わずアプリ側で直接行う)→投稿日+本文で突合→reviewsテーブルへ反映する。
-//   3. sweepStaleReviewSyncJobs / runMonthlyReviewSyncSweep: cronから呼ぶ。
+//   3. sweepStaleReviewSyncJobs: cronから呼ぶ。runSyncStepForSalonは
+//      review-pipeline-runner.tsの日次パイプライン(09:00〜)から1サロン分の
+//      同期ステップとして呼ばれる。
 // ============================================
 
 import type { Bindings } from '../types'
@@ -278,40 +280,54 @@ export async function sweepStaleReviewSyncJobs(env: Bindings): Promise<number> {
   return staleJobs.length
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const SYNC_WAIT_POLL_INTERVAL_MS = 5000
+const SYNC_WAIT_MAX_MS = 9 * 60 * 1000 // sweepStaleReviewSyncJobsの10分タイムアウトより少し短く設定
+
+/** 指定ジョブが完了(pending/running以外の状態)になるまで待つ。口コミ同期→口コミ返信を順に行う日次パイプラインで使う。 */
+async function waitForSyncJobTerminal(env: Bindings, jobId: number): Promise<void> {
+  const deadline = Date.now() + SYNC_WAIT_MAX_MS
+  while (Date.now() < deadline) {
+    const row = await env.DB.prepare(`SELECT status FROM review_sync_jobs WHERE id = ?`).bind(jobId).first<{ status: string }>()
+    if (!row || (row.status !== 'pending' && row.status !== 'running')) return
+    await sleep(SYNC_WAIT_POLL_INTERVAL_MS)
+  }
+}
+
 /**
- * 月1回、既に初回バックフィルが完了している(review_enabled=1かつ
- * backfill_completed_at設定済みの)サロンについて差分同期ジョブを投入する。
- * 初回バックフィルはユーザー自身が/reviews画面から手動で開始する(スコープ外)。
+ * 2026-08-19追記(ユーザー指定): review-pipeline-runner.tsの日次パイプライン
+ * (毎朝09:00に口コミ同期→完了次第口コミ返信)から、1サロン分の同期ステップ
+ * として呼ばれる。月1回、既に初回バックフィルが完了しているサロンについて
+ * のみ差分同期ジョブを投入し、完了を待ってから返す(初回バックフィルは
+ * ユーザー自身が/reviews画面から手動で開始する、スコープ外)。今月分は
+ * 同期済みなら何もせず即座に返る。
  */
-export async function runMonthlyReviewSyncSweep(env: Bindings): Promise<number> {
+export async function runSyncStepForSalon(env: Bindings, userId: number, salonId: number): Promise<{ attempted: boolean }> {
+  const state = await env.DB.prepare(
+    `SELECT backfill_completed_at, last_incremental_sync_month FROM review_sync_state WHERE salon_id = ?`
+  )
+    .bind(salonId)
+    .first<{ backfill_completed_at: string | null; last_incremental_sync_month: string | null }>()
+  if (!state?.backfill_completed_at) return { attempted: false }
+
   const nowJstMonth = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' })
     .format(new Date())
     .slice(0, 7) // "YYYY-MM"
+  if (state.last_incremental_sync_month === nowJstMonth) return { attempted: false }
 
-  const { results: targets } = await env.DB.prepare(
-    `SELECT s.user_id, s.salon_id FROM review_sync_state s
-     JOIN users u ON u.id = s.user_id
-     JOIN salonboard_salons sb ON sb.id = s.salon_id
-     WHERE s.backfill_completed_at IS NOT NULL
-       AND u.is_active = 1 AND sb.review_enabled = 1 AND sb.is_active_workspace = 1
-       AND (s.last_incremental_sync_month IS NULL OR s.last_incremental_sync_month <> ?)`
-  )
-    .bind(nowJstMonth)
-    .all<{ user_id: number; salon_id: number }>()
-
-  let dispatchedCount = 0
-  for (const t of targets || []) {
-    try {
-      await enqueueReviewSyncJob(env, t.user_id, t.salon_id)
-      await env.DB.prepare(
-        `UPDATE review_sync_state SET last_incremental_sync_month = ?, updated_at = CURRENT_TIMESTAMP WHERE salon_id = ?`
-      )
-        .bind(nowJstMonth, t.salon_id)
-        .run()
-      dispatchedCount += 1
-    } catch (err) {
-      console.error(`口コミ月次同期の投入に失敗しました(salon_id=${t.salon_id}):`, err)
-    }
+  try {
+    const { jobId } = await enqueueReviewSyncJob(env, userId, salonId)
+    await env.DB.prepare(
+      `UPDATE review_sync_state SET last_incremental_sync_month = ?, updated_at = CURRENT_TIMESTAMP WHERE salon_id = ?`
+    )
+      .bind(nowJstMonth, salonId)
+      .run()
+    await waitForSyncJobTerminal(env, jobId)
+  } catch (err) {
+    console.error(`口コミ月次同期の投入に失敗しました(salon_id=${salonId}):`, err)
   }
-  return dispatchedCount
+  return { attempted: true }
 }
