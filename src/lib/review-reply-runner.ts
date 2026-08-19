@@ -162,6 +162,31 @@ export async function updateReviewReplyConsecutiveFailureAndNotify(
   })
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+const JOB_WAIT_POLL_INTERVAL_MS = 8000
+const JOB_WAIT_MAX_MS = 13 * 60 * 1000 // sweepStaleReviewReplyJobsの15分タイムアウトより少し短く設定
+
+/** 指定ジョブが完了(pending/running以外の状態)になるまで待つ。1日分の未返信口コミを1件ずつ順に処理するために使う。 */
+async function waitForReplyJobTerminal(env: Bindings, jobId: number): Promise<void> {
+  const deadline = Date.now() + JOB_WAIT_MAX_MS
+  while (Date.now() < deadline) {
+    const row = await env.DB.prepare(`SELECT status FROM review_reply_jobs WHERE id = ?`).bind(jobId).first<{ status: string }>()
+    if (!row || (row.status !== 'pending' && row.status !== 'running')) return
+    await sleep(JOB_WAIT_POLL_INTERVAL_MS)
+  }
+}
+
+// 2026-08-19追記(ユーザー指定): 従来は「10分毎のsetIntervalが叩かれる度に
+// 未返信の口コミを1件だけ投入する」方式で、1日を通してだらだらとFargate
+// タスクが起動し続けていた。「毎朝09:00に口コミ同期→完了次第口コミ返信」の
+// 日次パイプライン(review-pipeline-runner.ts)から1日1回だけ呼ばれ、その回で
+// 未返信を(1件ずつ前のジョブの完了を待ってから)全件処理し終える方式に変更
+// する。何時に・1日1回だけ実行するかの判定はreview-pipeline-runner.ts側の
+// 責務とし、ここでは「有効・一時停止中でない・進行中ジョブが無い」ことだけを見る。
+
 async function hasInFlightReplyJob(env: Bindings, salonId: number | null): Promise<boolean> {
   const row = await env.DB.prepare(
     `SELECT 1 as x FROM review_reply_jobs WHERE salon_id = ? AND status IN ('pending', 'running') LIMIT 1`
@@ -237,7 +262,7 @@ async function dispatchReviewReplyJob(
 
 type ScheduleState = { enabled: number; paused_until: string | null }
 
-async function shouldReplyNow(env: Bindings, userId: number, salonId: number | null, schedule: ScheduleState): Promise<boolean> {
+async function canReplyNow(env: Bindings, salonId: number | null, schedule: ScheduleState): Promise<boolean> {
   if (schedule.enabled !== 1) return false
   if (schedule.paused_until) {
     const pausedUntilMs = new Date(schedule.paused_until.replace(' ', 'T') + 'Z').getTime()
@@ -274,19 +299,8 @@ async function selectNextEligibleReview(env: Bindings, userId: number, salonId: 
 
 export type ReviewReplyDispatchResult = { dispatched: boolean; jobId?: number; reviewId?: number }
 
-/**
- * 1サロン分、次に返信すべき口コミを1件だけ処理する(cronから毎回呼ばれる想定。
- * 一度に大量送信してSALON BOARD側に不自然な負荷をかけないよう、必ず1件ずつ)。
- */
-export async function runNextReviewReplyForUser(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyDispatchResult> {
-  const schedule = await env.DB.prepare(`SELECT enabled, paused_until FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
-    .bind(userId, salonId)
-    .first<ScheduleState>()
-  if (!schedule) return { dispatched: false }
-  if (!(await shouldReplyNow(env, userId, salonId, schedule))) return { dispatched: false }
-
-  await requireCredentialsConfigured(env, userId)
-
+/** 1件だけ、次に返信すべき口コミを生成・投入する(バッチループの1ステップ)。 */
+async function dispatchNextReviewReply(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyDispatchResult> {
   const review = await selectNextEligibleReview(env, userId, salonId)
   if (!review) return { dispatched: false }
 
@@ -310,6 +324,42 @@ export async function runNextReviewReplyForUser(env: Bindings, userId: number, s
     console.error(`口コミ自動返信の投入に失敗しました(review_id=${review.id}):`, err)
     return { dispatched: false }
   }
+}
+
+export type ReviewReplyBatchResult = { totalDispatched: number }
+
+/**
+ * 口コミ同期の直後(review-pipeline-runner.ts)に呼ばれ、その時点で未返信の
+ * 対象口コミ(星4以上・HPB掲載済み)を全件、1件ずつ前のジョブの完了を待って
+ * から順に処理する。いつ・1日1回だけ呼ぶかはreview-pipeline-runner.ts側の
+ * 責務(ここでは呼ばれたら即座に処理する)。失敗した口コミがあっても
+ * (style-post-runner.tsのdispatchRemainingStylesSequentially と同じ方針で)
+ * 残りの対象はスキップせず続行するが、5時間の一時停止に入った場合は
+ * その時点で打ち切る。
+ */
+export async function runReviewReplyBatchForUser(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyBatchResult> {
+  const schedule = await env.DB.prepare(`SELECT enabled, paused_until FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
+    .bind(userId, salonId)
+    .first<ScheduleState>()
+  if (!schedule) return { totalDispatched: 0 }
+  if (!(await canReplyNow(env, salonId, schedule))) return { totalDispatched: 0 }
+
+  await requireCredentialsConfigured(env, userId)
+
+  let totalDispatched = 0
+  for (;;) {
+    const result = await dispatchNextReviewReply(env, userId, salonId)
+    // dispatched=falseは「対象の口コミが無くなった(正常終了)」と「直近の
+    // 口コミへの投入に失敗した」の両方で返る。後者の場合、同じ口コミを
+    // 選び直して即再試行すると同じ理由で失敗し続ける恐れがあるため、
+    // どちらの場合も今日のバッチはここで打ち切る(失敗分は明日09:00の
+    // バッチで再試行される。2回連続失敗すればupdateReviewReplyConsecutiveFailureAndNotify
+    // が5時間の一時停止とアラート通知を行う)。
+    if (!result.dispatched) break
+    totalDispatched += 1
+    if (result.jobId) await waitForReplyJobTerminal(env, result.jobId)
+  }
+  return { totalDispatched }
 }
 
 /**
@@ -337,31 +387,6 @@ export async function dispatchManualReviewReply(
   if (!trimmed) throw new Error('返信文が空です')
 
   return dispatchReviewReplyJob(env, userId, salonId, reviewId, trimmed, 'manual')
-}
-
-/**
- * review_reply_schedules.enabled=1かつsalonboard_salons.review_enabled=1の
- * 全サロンについて、1サロンあたり1件ずつ返信ジョブを投入する
- * (アプリ内setIntervalから定期的に呼ばれる想定)。
- */
-export async function runReviewReplySweep(env: Bindings): Promise<number> {
-  const { results: targets } = await env.DB.prepare(
-    `SELECT s.user_id, s.salon_id FROM review_reply_schedules s
-     JOIN users u ON u.id = s.user_id
-     JOIN salonboard_salons sb ON sb.id = s.salon_id
-     WHERE s.enabled = 1 AND u.is_active = 1 AND sb.review_enabled = 1 AND sb.is_active_workspace = 1`
-  ).all<{ user_id: number; salon_id: number }>()
-
-  let dispatchedCount = 0
-  for (const t of targets || []) {
-    try {
-      const result = await runNextReviewReplyForUser(env, t.user_id, t.salon_id)
-      if (result.dispatched) dispatchedCount += 1
-    } catch (err) {
-      console.error(`口コミ自動返信の巡回に失敗しました(salon_id=${t.salon_id}):`, err)
-    }
-  }
-  return dispatchedCount
 }
 
 type StaleReviewReplyJobRow = { id: number; review_id: number; user_id: number; salon_id: number | null; ecs_task_arn: string | null }

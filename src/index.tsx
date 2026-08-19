@@ -16,8 +16,10 @@ import { createDb } from './lib/db'
 import { createStorage } from './lib/storage'
 import { backfillCompressStyleImages } from './lib/style-image-backfill'
 import { sweepPendingAccountDeletions } from './lib/account-deletion'
-import { sweepStaleReviewSyncJobs, runMonthlyReviewSyncSweep } from './lib/review-sync-runner'
-import { sweepStaleReviewReplyJobs, runReviewReplySweep } from './lib/review-reply-runner'
+import { sweepStaleReviewSyncJobs } from './lib/review-sync-runner'
+import { sweepStaleReviewReplyJobs } from './lib/review-reply-runner'
+import { runDailyReviewPipeline } from './lib/review-pipeline-runner'
+import { currentJstTimeLabel } from './lib/style-post-runner'
 import type { Bindings } from './types'
 
 const app = new Hono<{ Bindings: Bindings }>()
@@ -1004,39 +1006,33 @@ const bindings: Bindings = {
   runDeletionSweep()
   setInterval(runDeletionSweep, 60 * 60 * 1000)
 
-  // 2026-08-16追記: 口コミ管理ツールの月次差分同期・タイムアウトジョブの
-  // 掃除。上のrunDeletionSweepと同じ理由(EventBridgeへの新規スケジュール
-  // 追加を避ける)でアプリ内タイマーにする。1時間毎に自己ゲート判定
-  // (review_sync_state.last_incremental_sync_monthが今月と異なるサロンのみ
-  // 実行)するので、この間隔で十分。
-  const runReviewSync = () => {
+  // 2026-08-16追記: 口コミ管理ツールのタイムアウトジョブの掃除
+  // (EventBridgeへの新規スケジュール追加を避けるためアプリ内タイマーにする)。
+  // 停滞ジョブがautomation-lockを長時間ブロックしないよう(2026-08-19の教訓)、
+  // 短い間隔でこまめに掃除する。
+  const runReviewJobSweeps = () => {
     void sweepStaleReviewSyncJobs(bindings).catch((err) => {
       console.error('口コミ同期ジョブのタイムアウト掃除に失敗しました:', err)
     })
-    void runMonthlyReviewSyncSweep(bindings).catch((err) => {
-      console.error('口コミ月次同期の実行に失敗しました:', err)
-    })
-  }
-  runReviewSync()
-  setInterval(runReviewSync, 60 * 60 * 1000)
-
-  // 2026-08-17追記(ユーザー指定): 口コミ自動返信。review_syncと同じ理由
-  // (EventBridgeへの新規スケジュール追加を避ける)でアプリ内タイマーにする。
-  // 一度に大量送信してSALON BOARD側に不自然な負荷をかけないよう、1回の
-  // 巡回で対象サロンにつき返信ジョブを1件だけ投入する(runReviewReplySweep内)。
-  // 星4以上・HPB掲載済みの口コミへの返信なので、レビュー投稿から掲載まで
-  // 数営業日のラグがあることを踏まえ、review_sync(1時間毎)より短い10分毎で
-  // 十分(取りこぼしても次回巡回で拾われる)。
-  const runReviewReply = () => {
     void sweepStaleReviewReplyJobs(bindings).catch((err) => {
       console.error('口コミ返信ジョブのタイムアウト掃除に失敗しました:', err)
     })
-    void runReviewReplySweep(bindings).catch((err) => {
-      console.error('口コミ自動返信の巡回に失敗しました:', err)
+  }
+  runReviewJobSweeps()
+  setInterval(runReviewJobSweeps, 10 * 60 * 1000)
+
+  // 2026-08-19追記(ユーザー指定): 口コミ同期→口コミ自動返信を、毎朝JST 09:00
+  // から「サロンごとに同期→完了を待って返信」という1本のパイプラインで行う
+  // (review-pipeline-runner.ts参照。以前は別々のsetIntervalでバラバラの
+  // タイミングに起動していた)。両ステップとも自己ゲート判定を持つため、
+  // 09:00以降であればこの関数は1日に何度呼ばれても安全。
+  const runReviewPipeline = () => {
+    void runDailyReviewPipeline(bindings, currentJstTimeLabel()).catch((err) => {
+      console.error('口コミ日次パイプラインの実行に失敗しました:', err)
     })
   }
-  runReviewReply()
-  setInterval(runReviewReply, 10 * 60 * 1000)
+  runReviewPipeline()
+  setInterval(runReviewPipeline, 10 * 60 * 1000)
 })
 
 app.use('*', async (c, next) => {
