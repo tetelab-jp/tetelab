@@ -55,9 +55,13 @@ jobs:
             artifact: hpb-coupon-report-windows
             path: tools/hpb-coupon-report/dist/hpb-coupon-report.exe
           - os: macos-latest
-            label: macos
-            artifact: hpb-coupon-report-macos
-            path: tools/hpb-coupon-report/dist/hpb-coupon-report.app
+            label: macos-applesilicon
+            artifact: hpb-coupon-report-macos-applesilicon
+            path: tools/hpb-coupon-report/dist/hpb-coupon-report-macos.tar.gz
+          - os: macos-13
+            label: macos-intel
+            artifact: hpb-coupon-report-macos-intel
+            path: tools/hpb-coupon-report/dist/hpb-coupon-report-macos.tar.gz
           - os: ubuntu-latest
             label: linux
             artifact: hpb-coupon-report-linux
@@ -81,6 +85,12 @@ jobs:
           pip install reportlab
           python -c "import sys; sys.path.insert(0, 'tests'); from fixtures import write_report_pdf; write_report_pdf('smoke.pdf')"
           python -c "import subprocess, sys, glob; exe = (glob.glob('dist/*.app/Contents/MacOS/hpb-coupon-report') + glob.glob('dist/hpb-coupon-report.exe') + glob.glob('dist/hpb-coupon-report'))[0]; sys.exit(subprocess.run([exe, '--report', 'smoke.pdf', '--out', 'smoke.xlsx']).returncode)"
+      - name: macOS向けにtarでまとめる
+        # Artifactのzip化では実行権限が落ちるため、.appをtarで固めてから渡す。
+        # 権限が落ちた.appはFinderでダブルクリックしても起動しない。
+        if: runner.os == 'macOS'
+        run: tar -czf dist/hpb-coupon-report-macos.tar.gz -C dist hpb-coupon-report.app
+
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}

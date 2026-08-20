@@ -24,18 +24,35 @@
 GitHubの Actions → `Build HPB coupon report app` → 最新の実行 → Artifacts から
 自分のOS向けをダウンロードする。中身は実行ファイル1つだけ。
 
-| OS | ファイル | 使い方 |
+| OS | Artifact | 使い方 |
 | --- | --- | --- |
-| Windows | `hpb-coupon-report.exe` | ダブルクリック |
-| macOS | `hpb-coupon-report.app` | ダブルクリック |
-| Linux | `hpb-coupon-report` | `chmod +x` して実行 |
+| Windows | `hpb-coupon-report-windows` | `hpb-coupon-report.exe` をダブルクリック |
+| macOS (Apple Silicon / M1以降) | `hpb-coupon-report-macos-applesilicon` | 下記参照 |
+| macOS (Intel) | `hpb-coupon-report-macos-intel` | 下記参照 |
+| Linux | `hpb-coupon-report-linux` | `chmod +x` して実行 |
 
-ファイル名は自由に変えてよい（例: `クーポン照合.exe`）。中身は1ファイルで完結している。
+自分のMacがどちらかは、左上のリンゴマーク →「このMacについて」で確認できる
+（チップが **Apple M1/M2/M3…** なら Apple Silicon、**Intel Core…** なら Intel）。
+
+**macOSでの手順**
+
+```bash
+# Artifactのzipを展開すると tar.gz が出てくるので、それを展開する
+tar -xzf hpb-coupon-report-macos.tar.gz
+# ダウンロード時に付く隔離属性を外す(これをしないと「壊れている」と言われる)
+xattr -dr com.apple.quarantine hpb-coupon-report.app
+open hpb-coupon-report.app
+```
+
+Artifactのzipでは実行権限が落ちてしまうため、macOS版は`.app`をtarで固めて配っている。
 
 > **初回起動時に警告が出ます。** コード署名をしていないため、
 > Windowsでは「WindowsによってPCが保護されました」→ **詳細情報** → **実行**、
-> macOSでは右クリック → **開く** → **開く** で起動できる。
-> （署名するには有料の証明書が必要なので、社内利用の範囲では未署名のままにしている）
+> macOSでは上記の `xattr` を実行するか、右クリック → **開く** → **開く**。
+> （署名するには有料のApple Developer Program登録が必要なので、
+> 社内利用の範囲では未署名のままにしている）
+
+ファイル名は自由に変えてよい（例: `クーポン照合.exe`）。中身は1ファイルで完結している。
 
 **方法B: ソースから起動する**
 
@@ -236,8 +253,10 @@ python -m pytest tests/ -q
 
 - Python 3.10 以上
 - 依存ライブラリは `requirements.txt`（`run.sh` / `run.bat` が自動で入れる）
-- Linux でGUIを使う場合のみ `sudo apt install python3-tk` が別途必要
-  （Windows / macOS の python.org 版には標準で入っている）
+- GUIに使うTkinterは、Windows / macOS の **python.org版Python** には標準で入っている
+  - macOSの**システム標準のPython**はTkが古く、表示が崩れることがある。
+    python.org版を入れるか `brew install python-tk` を使う
+  - Linuxは `sudo apt install python3-tk` が別途必要
 
 ## 困ったとき
 
