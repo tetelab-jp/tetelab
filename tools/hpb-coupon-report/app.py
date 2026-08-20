@@ -1,10 +1,17 @@
 """HPBクーポン予約数 照合ツール(デスクトップGUI)。
 
-サーバーは立てない。Python標準の Tkinter でウィンドウを開き、処理も保存も
-すべて実行端末の中で完結する。外部通信はHPBのクーポンページを取りにいくときだけで、
-それも「レポート内の掲載一覧を使う」を選べば発生しない。
+サーバーは立てない。CustomTkinter(Tkinterの上に描画する見た目のライブラリ)で
+ウィンドウを開き、処理も保存もすべて実行端末の中で完結する。外部通信はHPBの
+クーポンページを取りにいくときだけで、それも「レポート内の一覧を使う」を選べば
+発生しない。
 
-起動:  python app.py   (または run.sh / run.bat)
+見た目にCustomTkinterを使っているのは、macOSのTkが標準の 'aqua' テーマだと
+配色をほとんど変更できないため。CustomTkinterは自前でウィジェットを描くので、
+Windows/macOS/Linuxで同じ見た目になる。
+
+画面まわりだけを持ち、照合の中身は hpb_coupon/pipeline.py にある。
+
+起動:  python main.py   (または run.sh / run.bat)
 """
 
 from __future__ import annotations
@@ -19,7 +26,7 @@ from datetime import datetime
 
 try:
     import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
+    from tkinter import filedialog, font as tkfont, messagebox
 except ImportError:  # pragma: no cover - Linuxで python3-tk が無い場合
     sys.stderr.write(
         'Tkinter が見つかりません。\n'
@@ -28,6 +35,8 @@ except ImportError:  # pragma: no cover - Linuxで python3-tk が無い場合
         'GUIを使わずに処理したい場合は cli.py を使ってください。\n'
     )
     raise SystemExit(1)
+
+import customtkinter as ctk
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -38,13 +47,47 @@ SOURCE_REPORT = 'report'
 SOURCE_SCRAPE = 'scrape'
 SOURCE_HTML = 'html'
 
+# 配色。出力xlsxのヘッダ(#1F3864)を基準にしている。
+NAVY = '#1F3864'
+NAVY_HOVER = '#2C4B7C'
+ACCENT = '#2C5FA8'
+DANGER = '#C0392B'
+SUCCESS = '#1F7A45'
+PAGE_BG = '#F4F6FA'
+CARD_BG = '#FFFFFF'
+LINE = '#E3E7EF'
+SUBTLE_BG = '#EDF0F6'
+SUBTLE_HOVER = '#DFE4EE'
+TEXT = '#1B1F27'
+MUTED = '#6B7484'
 
-class App(tk.Tk):
+# OSごとの日本語が出せるUIフォント候補。CustomTkinterの既定(Roboto)は
+# 日本語の字形を持たないので、明示的に選ぶ。
+FONT_CANDIDATES = {
+    'darwin': ['Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Arial Unicode MS'],
+    'win32': ['Yu Gothic UI', 'Meiryo UI', 'Meiryo', 'MS UI Gothic'],
+}
+FONT_FALLBACK = ['Noto Sans CJK JP', 'Noto Sans JP', 'IPAexGothic', 'TakaoPGothic', 'DejaVu Sans']
+
+
+def _pick_font_family() -> str:
+    """実行環境に入っている日本語UIフォントを選ぶ。無ければ空文字(既定に任せる)。"""
+    available = {name.lower() for name in tkfont.families()}
+    for name in FONT_CANDIDATES.get(sys.platform, []) + FONT_FALLBACK:
+        if name.lower() in available:
+            return name
+    return ''
+
+
+class App(ctk.CTk):
     def __init__(self) -> None:
-        super().__init__()
+        ctk.set_appearance_mode('light')
+        super().__init__(fg_color=PAGE_BG)
         self.title('HPBクーポン予約数 照合ツール')
-        self.geometry('820x620')
-        self.minsize(720, 560)
+        self.geometry('920x900')
+        self.minsize(860, 760)
+
+        self._family = _pick_font_family()
 
         self.report_path = tk.StringVar()
         self.salon_url = tk.StringVar()
@@ -57,94 +100,243 @@ class App(tk.Tk):
         self._queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._running = False
         self._last_output = ''
+        self._stat_values: dict[str, ctk.CTkLabel] = {}
 
         self._build_widgets()
         self.after(100, self._drain_queue)
 
+    def _font(self, size: int = 13, weight: str = 'normal') -> ctk.CTkFont:
+        if self._family:
+            return ctk.CTkFont(family=self._family, size=size, weight=weight)
+        return ctk.CTkFont(size=size, weight=weight)
+
     # ------------------------------------------------------------------ UI
 
     def _build_widgets(self) -> None:
-        padding = {'padx': 10, 'pady': 6}
+        self._build_header()
 
-        frame_report = ttk.LabelFrame(self, text='1. サロンレポート (PDF または Acrobat変換済みxlsx)')
-        frame_report.pack(fill='x', **padding)
-        ttk.Entry(frame_report, textvariable=self.report_path).pack(
-            side='left', fill='x', expand=True, padx=8, pady=8
-        )
-        ttk.Button(frame_report, text='選択...', command=self._pick_report).pack(
-            side='left', padx=8, pady=8
-        )
+        body = ctk.CTkFrame(self, fg_color='transparent')
+        body.pack(fill='both', expand=True, padx=22, pady=(14, 16))
 
-        frame_source = ttk.LabelFrame(self, text='2. 掲載クーポンの取得元')
-        frame_source.pack(fill='x', **padding)
-
-        ttk.Radiobutton(
-            frame_source,
-            text='レポート内の「■貴店クーポン情報(Net)」を使う（通信なし・最も確実）',
-            value=SOURCE_REPORT,
-            variable=self.coupon_source,
-            command=self._sync_source_state,
-        ).pack(anchor='w', padx=8, pady=(8, 2))
-
-        ttk.Radiobutton(
-            frame_source,
-            text='HPBのサロンページから取得する（価格・掲載順も取れる）',
-            value=SOURCE_SCRAPE,
-            variable=self.coupon_source,
-            command=self._sync_source_state,
-        ).pack(anchor='w', padx=8, pady=2)
-        row_url = ttk.Frame(frame_source)
-        row_url.pack(fill='x', padx=28, pady=(0, 4))
-        ttk.Label(row_url, text='サロンURL:').pack(side='left')
-        self.entry_url = ttk.Entry(row_url, textvariable=self.salon_url)
-        self.entry_url.pack(side='left', fill='x', expand=True, padx=6)
-
-        ttk.Radiobutton(
-            frame_source,
-            text='保存したクーポンページのHTMLを使う（通信が塞がれている場合）',
-            value=SOURCE_HTML,
-            variable=self.coupon_source,
-            command=self._sync_source_state,
-        ).pack(anchor='w', padx=8, pady=2)
-        row_html = ttk.Frame(frame_source)
-        row_html.pack(fill='x', padx=28, pady=(0, 8))
-        self.button_html = ttk.Button(row_html, text='HTMLを選択...', command=self._pick_html)
-        self.button_html.pack(side='left')
-        ttk.Label(row_html, textvariable=self.html_label).pack(side='left', padx=8)
-
-        frame_output = ttk.LabelFrame(self, text='3. 出力先')
-        frame_output.pack(fill='x', **padding)
-        ttk.Entry(frame_output, textvariable=self.output_path).pack(
-            side='left', fill='x', expand=True, padx=8, pady=8
-        )
-        ttk.Button(frame_output, text='選択...', command=self._pick_output).pack(
-            side='left', padx=8, pady=8
-        )
-
-        frame_actions = ttk.Frame(self)
-        frame_actions.pack(fill='x', **padding)
-        self.button_run = ttk.Button(frame_actions, text='実行', command=self._run)
-        self.button_run.pack(side='left')
-        self.button_open = ttk.Button(
-            frame_actions, text='出力フォルダを開く', command=self._open_output, state='disabled'
-        )
-        self.button_open.pack(side='left', padx=8)
-        self.progress = ttk.Progressbar(frame_actions, mode='determinate', value=0)
-        self.progress.pack(side='left', fill='x', expand=True, padx=8)
-
-        ttk.Label(self, textvariable=self.status, anchor='w').pack(
-            side='bottom', fill='x', padx=12, pady=(0, 8)
-        )
-
-        frame_log = ttk.LabelFrame(self, text='ログ')
-        frame_log.pack(fill='both', expand=True, **padding)
-        self.log = tk.Text(frame_log, height=14, wrap='word', state='disabled')
-        scrollbar = ttk.Scrollbar(frame_log, command=self.log.yview)
-        self.log.configure(yscrollcommand=scrollbar.set)
-        self.log.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=8)
-        scrollbar.pack(side='right', fill='y', padx=(0, 8), pady=8)
+        self._build_report_card(body)
+        self._build_source_card(body)
+        self._build_output_card(body)
+        self._build_actions(body)
+        self._build_stats(body)
+        self._build_log(body)
 
         self._sync_source_state()
+
+    def _build_header(self) -> None:
+        header = ctk.CTkFrame(self, fg_color=NAVY, corner_radius=0, height=76)
+        header.pack(fill='x')
+        header.pack_propagate(False)
+        ctk.CTkLabel(
+            header,
+            text='HPBクーポン予約数 照合ツール',
+            font=self._font(19, 'bold'),
+            text_color='#FFFFFF',
+        ).pack(anchor='w', padx=26, pady=(16, 0))
+        ctk.CTkLabel(
+            header,
+            text='サロンレポートから、掲載中クーポンの予約数を突き合わせます',
+            font=self._font(12),
+            text_color='#B9C6DE',
+        ).pack(anchor='w', padx=26)
+
+    def _card(self, parent, step: str, title: str):
+        """番号付きの見出しを持つカードを作り、中身を入れる枠を返す。"""
+        outer = ctk.CTkFrame(
+            parent, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=LINE
+        )
+        outer.pack(fill='x', pady=(0, 12))
+
+        heading = ctk.CTkFrame(outer, fg_color='transparent')
+        heading.pack(fill='x', padx=18, pady=(14, 0))
+        ctk.CTkLabel(
+            heading,
+            text=step,
+            width=24,
+            height=24,
+            corner_radius=12,
+            fg_color=NAVY,
+            text_color='#FFFFFF',
+            font=self._font(12, 'bold'),
+        ).pack(side='left')
+        ctk.CTkLabel(
+            heading, text=title, font=self._font(14, 'bold'), text_color=TEXT
+        ).pack(side='left', padx=10)
+
+        inner = ctk.CTkFrame(outer, fg_color='transparent')
+        inner.pack(fill='x', padx=18, pady=(8, 14))
+        return inner
+
+    def _entry(self, parent, variable: tk.StringVar) -> ctk.CTkEntry:
+        entry = ctk.CTkEntry(
+            parent,
+            textvariable=variable,
+            font=self._font(12),
+            height=36,
+            corner_radius=8,
+            border_color=LINE,
+            fg_color='#FFFFFF',
+            text_color=TEXT,
+        )
+        entry.pack(side='left', fill='x', expand=True)
+        return entry
+
+    def _subtle_button(self, parent, text: str, command, width: int = 88) -> ctk.CTkButton:
+        return ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            width=width,
+            height=36,
+            corner_radius=8,
+            font=self._font(12),
+            fg_color=SUBTLE_BG,
+            hover_color=SUBTLE_HOVER,
+            text_color=NAVY,
+        )
+
+    def _build_report_card(self, body) -> None:
+        card = self._card(body, '1', 'サロンレポート  (PDF または Acrobat変換済みxlsx)')
+        self._entry(card, self.report_path)
+        self._subtle_button(card, '選択...', self._pick_report).pack(side='left', padx=(10, 0))
+
+    def _build_source_card(self, body) -> None:
+        card = self._card(body, '2', '掲載クーポンの取得元')
+
+        def radio(value: str, label: str, note: str):
+            row = ctk.CTkFrame(card, fg_color='transparent')
+            row.pack(fill='x', pady=3)
+            ctk.CTkRadioButton(
+                row,
+                text=label,
+                variable=self.coupon_source,
+                value=value,
+                command=self._sync_source_state,
+                font=self._font(12),
+                text_color=TEXT,
+                radiobutton_width=18,
+                radiobutton_height=18,
+                border_width_unchecked=2,
+                fg_color=ACCENT,
+                hover_color=ACCENT,
+            ).pack(side='left')
+            ctk.CTkLabel(row, text=note, font=self._font(11), text_color=MUTED).pack(
+                side='left', padx=10
+            )
+            return row
+
+        radio(SOURCE_REPORT, 'レポート内の「■貴店クーポン情報(Net)」を使う', '通信なし・最も確実')
+
+        radio(SOURCE_SCRAPE, 'HPBのサロンページから取得する', '価格・掲載順も取れる')
+        row_url = ctk.CTkFrame(card, fg_color='transparent')
+        row_url.pack(fill='x', padx=28, pady=(2, 6))
+        ctk.CTkLabel(row_url, text='サロンURL', font=self._font(11), text_color=MUTED).pack(
+            side='left', padx=(0, 8)
+        )
+        self.entry_url = self._entry(row_url, self.salon_url)
+
+        radio(SOURCE_HTML, '保存したクーポンページのHTMLを使う', '通信が塞がれている場合')
+        row_html = ctk.CTkFrame(card, fg_color='transparent')
+        row_html.pack(fill='x', padx=28, pady=(2, 0))
+        self.button_html = self._subtle_button(row_html, 'HTMLを選択...', self._pick_html, width=130)
+        self.button_html.pack(side='left')
+        ctk.CTkLabel(
+            row_html, textvariable=self.html_label, font=self._font(11), text_color=MUTED
+        ).pack(side='left', padx=10)
+
+    def _build_output_card(self, body) -> None:
+        card = self._card(body, '3', '出力先')
+        self._entry(card, self.output_path)
+        self._subtle_button(card, '選択...', self._pick_output).pack(side='left', padx=(10, 0))
+
+    def _build_actions(self, body) -> None:
+        actions = ctk.CTkFrame(body, fg_color='transparent')
+        actions.pack(fill='x', pady=(2, 14))
+
+        self.button_run = ctk.CTkButton(
+            actions,
+            text='実行',
+            command=self._run,
+            width=150,
+            height=42,
+            corner_radius=10,
+            font=self._font(15, 'bold'),
+            fg_color=NAVY,
+            hover_color=NAVY_HOVER,
+        )
+        self.button_run.pack(side='left')
+
+        self.button_open = ctk.CTkButton(
+            actions,
+            text='出力フォルダを開く',
+            command=self._open_output,
+            width=170,
+            height=42,
+            corner_radius=10,
+            font=self._font(12),
+            fg_color=SUBTLE_BG,
+            hover_color=SUBTLE_HOVER,
+            text_color=NAVY,
+            state='disabled',
+        )
+        self.button_open.pack(side='left', padx=10)
+
+        self.label_status = ctk.CTkLabel(
+            actions, textvariable=self.status, font=self._font(12), text_color=MUTED, anchor='w'
+        )
+        self.label_status.pack(side='left', padx=8, fill='x', expand=True)
+
+        self.progress = ctk.CTkProgressBar(
+            actions, width=170, height=8, corner_radius=4, progress_color=NAVY
+        )
+        self.progress.set(0)  # pack は実行中だけ行う(待機中に出しっぱなしだと紛らわしい)
+
+    def _build_stats(self, body) -> None:
+        """結果を数字で見せる。ログを読まなくても判断できるようにするため。"""
+        stats = ctk.CTkFrame(body, fg_color='transparent')
+        stats.pack(fill='x', pady=(0, 12))
+
+        tiles = [
+            ('listed', '掲載クーポン', TEXT),
+            ('exact', '完全一致', ACCENT),
+            ('zero', '予約ゼロ', DANGER),
+            ('orphan', '未照合の予約', MUTED),
+        ]
+        for index, (key, label, color) in enumerate(tiles):
+            stats.grid_columnconfigure(index, weight=1)
+            tile = ctk.CTkFrame(
+                stats, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=LINE
+            )
+            tile.grid(row=0, column=index, sticky='ew', padx=(0 if index == 0 else 10, 0))
+            value = ctk.CTkLabel(tile, text='—', font=self._font(30, 'bold'), text_color=color)
+            value.pack(pady=(12, 0))
+            ctk.CTkLabel(tile, text=label, font=self._font(11), text_color=MUTED).pack(pady=(0, 12))
+            self._stat_values[key] = value
+
+    def _build_log(self, body) -> None:
+        frame = ctk.CTkFrame(
+            body, fg_color=CARD_BG, corner_radius=12, border_width=1, border_color=LINE
+        )
+        frame.pack(fill='both', expand=True)
+        ctk.CTkLabel(frame, text='ログ', font=self._font(12, 'bold'), text_color=MUTED).pack(
+            anchor='w', padx=18, pady=(12, 4)
+        )
+        self.log = ctk.CTkTextbox(
+            frame,
+            font=self._font(11),
+            fg_color='#FBFCFE',
+            border_width=1,
+            border_color=LINE,
+            corner_radius=8,
+            text_color='#2A2F3A',
+            wrap='word',
+        )
+        self.log.pack(fill='both', expand=True, padx=18, pady=(0, 14))
+        self.log.configure(state='disabled')
 
     def _sync_source_state(self) -> None:
         source = self.coupon_source.get()
@@ -247,10 +439,14 @@ class App(tk.Tk):
         self._running = True
         self.button_run.configure(state='disabled')
         self.button_open.configure(state='disabled')
+        self.progress.pack(side='right')
         self.progress.configure(mode='indeterminate')
-        self.progress.start(12)
+        self.progress.start()
         self.status.set('処理中...')
-        self._log('=' * 60)
+        self.label_status.configure(text_color=MUTED)
+        for value in self._stat_values.values():
+            value.configure(text='—')
+        self._log('=' * 52)
         self._log(f'開始: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}')
         threading.Thread(target=self._worker, args=(params,), daemon=True).start()
 
@@ -283,7 +479,9 @@ class App(tk.Tk):
 
     def _stop_progress(self) -> None:
         self.progress.stop()
-        self.progress.configure(mode='determinate', value=0)
+        self.progress.configure(mode='determinate')
+        self.progress.set(0)
+        self.progress.pack_forget()
 
     def _finish(self, result, output: str) -> None:
         self._running = False
@@ -292,18 +490,27 @@ class App(tk.Tk):
         self.button_open.configure(state='normal')
         self._last_output = output
 
+        self._stat_values['listed'].configure(text=str(len(result.rows)))
+        self._stat_values['exact'].configure(text=str(result.exact_count))
+        self._stat_values['zero'].configure(text=str(len(result.zero_reservation_rows)))
+        self._stat_values['orphan'].configure(text=str(len(result.orphans)))
+
         self._log('')
         self._log(f'掲載クーポンの取得元: {result.coupon_source}')
         self._log(f'集計対象の月号      : {" / ".join(result.issue_labels) or "(不明)"}')
         self._log(f'掲載クーポン        : {len(result.rows)}件')
         self._log(f'  うち完全一致      : {result.exact_count}件')
-        self._log(f'  うちあいまい一致  : {result.fuzzy_count}件  ← 「要確認」シートで確認')
+        self._log(f'  うちあいまい一致  : {result.fuzzy_count}件  ← 「要確認」シート')
         self._log(f'  うち予約ゼロ      : {len(result.zero_reservation_rows)}件  ← 「予約ゼロ」シート')
+        renamed = sum(1 for row in result.rows if row.listing_status == '改名')
+        self._log(f'  うち改名を検出    : {renamed}件')
         self._log(f'未照合の予約データ  : {len(result.orphans)}件  ← 掲載を止めた/改名したクーポン')
         for warning in result.warnings:
             self._log(f'[警告] {warning}')
         self._log(f'保存しました: {output}')
-        self.status.set(f'完了: {output}')
+
+        self.status.set('完了しました。')
+        self.label_status.configure(text_color=SUCCESS)
 
     def _fail(self, detail: str) -> None:
         self._running = False
@@ -311,6 +518,7 @@ class App(tk.Tk):
         self.button_run.configure(state='normal')
         self._log(detail)
         self.status.set('エラーが発生しました。ログを確認してください。')
+        self.label_status.configure(text_color=DANGER)
         messagebox.showerror('エラー', detail.strip().splitlines()[-1])
 
 

@@ -8,7 +8,9 @@ name: Build HPB coupon report app
 
 on:
   push:
-    branches: [main]
+    # mainのほか、作業ブランチでもビルドする。PRを作らずに実行ファイルを
+    # 受け取れるようにするため(Artifactは各実行の画面からダウンロードできる)。
+    branches: [main, 'claude/**']
     paths:
       - 'tools/hpb-coupon-report/**'
       - '.github/workflows/build-hpb-coupon-report.yml'

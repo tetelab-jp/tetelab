@@ -7,3 +7,6 @@ requests>=2.31
 beautifulsoup4>=4.12
 # レーベンシュタイン距離の高速実装。無くても純Python実装で動作する
 rapidfuzz>=3.0
+# GUIの見た目。macOSのTkは標準の'aqua'テーマだと配色を変えられないため、
+# 自前でウィジェットを描くこのライブラリを使って3OSで同じ見た目にする
+customtkinter>=5.2

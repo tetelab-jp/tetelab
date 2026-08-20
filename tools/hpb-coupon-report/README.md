@@ -206,6 +206,18 @@ NFKC正規化＋円記号の統一＋接頭タグ除去＋空白除去を通し�
 | 0.708 | `メンズカット+カラー\12100` → `メンズカット+ハイライトカラー\15500` | **別クーポン** |
 | 0.53以下 | — | **別クーポン** |
 
+### 画面（`app.py`）
+
+見た目は CustomTkinter（Tkinterの上に自前でウィジェットを描くライブラリ）で作っている。
+macOSのTkは標準の `aqua` テーマだと配色をほとんど変更できないため、素のttkでは
+Windows/macOS/Linuxで見た目が揃わない。CustomTkinterなら3OSで同じになる。
+
+日本語のUIフォントはOSごとに選んでいる（macOS: Hiragino Sans、Windows: Yu Gothic UI、
+Linux: Noto Sans CJK JP）。CustomTkinterの既定フォント（Roboto）は日本語の字形を
+持たないため、明示的に指定しないと表示が崩れる。
+
+`app.py` は画面まわりだけを持ち、照合の中身は `pipeline.py` にある。
+
 ### クーポンの取得（`scrape.py`）
 
 セレクタは既存の `Scrape_coupon_TOP_menu_rsv_ver2.1.py` と同じ。

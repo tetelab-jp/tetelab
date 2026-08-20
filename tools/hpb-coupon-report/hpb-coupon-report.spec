@@ -7,7 +7,8 @@ onefile(単一の実行ファイル)にしている。月に一度使う道具�
 遅くなるより「1つのファイルを置くだけ」のほうが扱いやすい。
 
 pdfplumber は pdfminer.six と pypdfium2(ネイティブライブラリ)に依存していて、
-PyInstallerの自動検出だけではデータファイルを取りこぼす。collect_all で
+PyInstallerの自動検出だけではデータファイルを取りこぼす。customtkinter も
+テーマのjsonとフォントをデータとして持っている。どちらも collect_all で
 明示的に全部入れる。
 """
 
@@ -20,7 +21,7 @@ APP_NAME = 'hpb-coupon-report'
 HERE = os.path.abspath(os.getcwd())
 
 datas, binaries, hiddenimports = [], [], []
-for package in ('pdfplumber', 'pdfminer', 'pypdfium2', 'rapidfuzz'):
+for package in ('pdfplumber', 'pdfminer', 'pypdfium2', 'rapidfuzz', 'customtkinter'):
     package_datas, package_binaries, package_hiddenimports = collect_all(package)
     datas += package_datas
     binaries += package_binaries
