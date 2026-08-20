@@ -11,6 +11,6 @@ if not exist ".venv" (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 )
 
-".venv\Scripts\pythonw.exe" app.py %*
+".venv\Scripts\pythonw.exe" main.py %*
 if errorlevel 1 pause
 endlocal

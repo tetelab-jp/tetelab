@@ -129,8 +129,12 @@ class App(tk.Tk):
             frame_actions, text='出力フォルダを開く', command=self._open_output, state='disabled'
         )
         self.button_open.pack(side='left', padx=8)
-        self.progress = ttk.Progressbar(frame_actions, mode='indeterminate')
+        self.progress = ttk.Progressbar(frame_actions, mode='determinate', value=0)
         self.progress.pack(side='left', fill='x', expand=True, padx=8)
+
+        ttk.Label(self, textvariable=self.status, anchor='w').pack(
+            side='bottom', fill='x', padx=12, pady=(0, 8)
+        )
 
         frame_log = ttk.LabelFrame(self, text='ログ')
         frame_log.pack(fill='both', expand=True, **padding)
@@ -140,7 +144,6 @@ class App(tk.Tk):
         self.log.pack(side='left', fill='both', expand=True, padx=(8, 0), pady=8)
         scrollbar.pack(side='right', fill='y', padx=(0, 8), pady=8)
 
-        ttk.Label(self, textvariable=self.status, anchor='w').pack(fill='x', padx=12, pady=(0, 8))
         self._sync_source_state()
 
     def _sync_source_state(self) -> None:
@@ -244,6 +247,7 @@ class App(tk.Tk):
         self._running = True
         self.button_run.configure(state='disabled')
         self.button_open.configure(state='disabled')
+        self.progress.configure(mode='indeterminate')
         self.progress.start(12)
         self.status.set('処理中...')
         self._log('=' * 60)
@@ -277,9 +281,13 @@ class App(tk.Tk):
             pass
         self.after(100, self._drain_queue)
 
+    def _stop_progress(self) -> None:
+        self.progress.stop()
+        self.progress.configure(mode='determinate', value=0)
+
     def _finish(self, result, output: str) -> None:
         self._running = False
-        self.progress.stop()
+        self._stop_progress()
         self.button_run.configure(state='normal')
         self.button_open.configure(state='normal')
         self._last_output = output
@@ -299,7 +307,7 @@ class App(tk.Tk):
 
     def _fail(self, detail: str) -> None:
         self._running = False
-        self.progress.stop()
+        self._stop_progress()
         self.button_run.configure(state='normal')
         self._log(detail)
         self.status.set('エラーが発生しました。ログを確認してください。')

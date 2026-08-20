@@ -13,4 +13,4 @@ if [ ! -d .venv ]; then
   ./.venv/bin/python -m pip install -r requirements.txt
 fi
 
-exec ./.venv/bin/python app.py "$@"
+exec ./.venv/bin/python main.py "$@"

@@ -1,0 +1,89 @@
+name: Build HPB coupon report app
+
+# tools/hpb-coupon-report/ の単体アプリ(Windows/macOS/Linux)をビルドして、
+# 実行ファイルをArtifactとして残す。手元にPythonを入れなくても、Actionsの
+# 実行結果からダウンロードして使えるようにするのが目的。
+#
+# デプロイは行わない(このツールは各自の端末で動かすもので、サーバーには載せない)。
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/hpb-coupon-report/**'
+      - '.github/workflows/build-hpb-coupon-report.yml'
+  pull_request:
+    paths:
+      - 'tools/hpb-coupon-report/**'
+      - '.github/workflows/build-hpb-coupon-report.yml'
+  workflow_dispatch: {}
+
+concurrency:
+  group: build-hpb-coupon-report-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: tools/hpb-coupon-report
+
+jobs:
+  test:
+    name: テスト
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 依存関係のインストール
+        # reportlabはテスト用のPDFを生成するためだけに使う(実行時には不要)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest reportlab
+      - name: pytest
+        run: python -m pytest tests/ -q
+
+  build:
+    name: ビルド (${{ matrix.label }})
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+            artifact: hpb-coupon-report-windows
+            path: tools/hpb-coupon-report/dist/hpb-coupon-report.exe
+          - os: macos-latest
+            label: macos
+            artifact: hpb-coupon-report-macos
+            path: tools/hpb-coupon-report/dist/hpb-coupon-report.app
+          - os: ubuntu-latest
+            label: linux
+            artifact: hpb-coupon-report-linux
+            path: tools/hpb-coupon-report/dist/hpb-coupon-report
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 依存関係のインストール
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+      - name: PyInstallerでビルド
+        run: pyinstaller --noconfirm --clean hpb-coupon-report.spec
+      - name: 動作確認(テスト用レポートを処理できるか)
+        # GUIはCIで開けないので、コマンドライン経路で通しの動作を確認する。
+        # PDF直読みが通るかどうか = pdfplumber/pypdfium2 を正しく同梱できたか の確認でもある。
+        run: |
+          pip install reportlab
+          python -c "import sys; sys.path.insert(0, 'tests'); from fixtures import write_report_pdf; write_report_pdf('smoke.pdf')"
+          python -c "import subprocess, sys, glob; exe = (glob.glob('dist/*.app/Contents/MacOS/hpb-coupon-report') + glob.glob('dist/hpb-coupon-report.exe') + glob.glob('dist/hpb-coupon-report'))[0]; sys.exit(subprocess.run([exe, '--report', 'smoke.pdf', '--out', 'smoke.xlsx']).returncode)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.path }}
+          retention-days: 30
+          if-no-files-found: error

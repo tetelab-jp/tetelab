@@ -1,7 +1,13 @@
 .venv/
+.venv-build/
 __pycache__/
 *.pyc
 .pytest_cache/
+# PyInstallerの出力
+build/
+dist/
+*.manifest
+hpb-coupon-report-error.log
 # 実行結果や取引先データを誤ってコミットしないようにする
 *.xlsx
 *.pdf
