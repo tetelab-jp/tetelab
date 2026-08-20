@@ -35,6 +35,19 @@ REPORTED_NAMES = {
 }
 
 ISSUE_LABELS = ['05月号', '06月号', '07月号']
+
+# 「■貴店クーポン情報(Net)」は月号ごとの列を持つ。ここでは06月号と07月号の2列。
+LISTED_MONTHS = ['06月号', '07月号']
+
+# 06月号時点の表記 → 07月号で修正された表記(価格の誤植を直した想定)。
+# 掲載履歴から「改名」として検出できるはず。
+RENAMED_IN_JULY = {
+    'カット+縮毛矯正\\21000［髪質改善/縮毛矯正/西中島/淀川］':
+        'カット+縮毛矯正\\210000［髪質改善/縮毛矯正/西中島/淀川］',
+}
+
+# 07月号から載り始めたクーポン(06月号の列には出さない)。
+NEWLY_LISTED = 'ヘッドスパ15分￥5000［髪質改善/インナーカラー/西中島］'
 SALON_NAME = 'テストサロン西中島店【テスト】'
 ISSUE = '2607月号'
 UPDATED_AT = '2026-08-07'
@@ -61,11 +74,16 @@ def build_grid() -> list[list[object]]:
 
     # --- ■貴店クーポン情報(Net): 右端が最新月号 ---
     put(4, 0, '■貴店クーポン情報（Net）')
-    put(5, 0, '06月号')
-    put(5, 27, '07月号')
+    put(5, 0, LISTED_MONTHS[0])
+    put(5, 27, LISTED_MONTHS[1])
+    june_row = 6
     for i, (customer_type, name, _) in enumerate(SAMPLE_COUPONS):
-        put(6 + i, 0, f'{customer_type}/{REPORTED_NAMES.get(name, name)}')
-        put(6 + i, 27, f'{customer_type}/{REPORTED_NAMES.get(name, name)}')
+        reported = REPORTED_NAMES.get(name, name)
+        put(6 + i, 27, f'{customer_type}/{reported}')
+        if name == NEWLY_LISTED:
+            continue  # 07月号から掲載
+        put(june_row, 0, f'{customer_type}/{RENAMED_IN_JULY.get(reported, reported)}')
+        june_row += 1
 
     # --- ■クーポン別ネット予約数: 同じ行の '■' が横方向の区切り ---
     marker_row = 20

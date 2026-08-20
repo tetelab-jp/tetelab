@@ -52,7 +52,9 @@ class SalonReport:
     updated_at: str = ''
     issue_labels: list[str] = field(default_factory=list)
     reservations: list[ReservationRow] = field(default_factory=list)
-    listed_in_report: list[tuple[str, str]] = field(default_factory=list)  # (客区分, クーポン名)
+    listed_in_report: list[tuple[str, str]] = field(default_factory=list)  # 最新月号の(客区分, クーポン名)
+    listed_history: list[tuple[str, list[tuple[str, str]]]] = field(default_factory=list)
+    """月号ごとの掲載クーポン一覧。古い月号から順に (月号, [(客区分, クーポン名)])。"""
     source: str = ''
     warnings: list[str] = field(default_factory=list)
 
@@ -199,13 +201,19 @@ def parse_reservation_section(
     # 同じクーポンが複数ブロック/複数ページに現れることがあるので、名前で束ねる
     seen = {row.name: row for row in report.reservations}
     blank_run = 0
+    reached_end = False
     for r in range(header_row + 1, len(grid)):
+        if reached_end:
+            break
         row = grid[r]
         picked_any = False
         for name_col, months in blocks:
             stop_col = months[0][0]
             name = _read_name(row, name_col, stop_col)
-            if not name or name.startswith('※') or name.startswith('■'):
+            if name.startswith('※') or name.startswith('■'):
+                reached_end = True  # 注記や次のセクションの見出し = 表の終わり
+                break
+            if not name:
                 continue
             picked_any = True
             monthly = {
@@ -229,10 +237,15 @@ def parse_reservation_section(
 
 
 def parse_listed_section(grid: list[list[object]], report: SalonReport) -> None:
-    """'■貴店クーポン情報(Net)' の最新月号列を読み取る(スクレイピング結果の照合用)。
+    """'■貴店クーポン情報(Net)' を月号ごとに読み取る。
 
-    このセクションは登録数順の上位60件しか載らず、価格も掲載順も無いので、
-    掲載クーポン一覧の代わりにはならない。スクレイピングの取りこぼし検知に使う。
+    このセクションは月号ぶんの列が横に並んでいて、各列がその月の掲載クーポン一覧に
+    なっている(実物では02月号〜07月号の6ヶ月分)。最新月号は掲載クーポン一覧そのもの
+    として使い、過去の月号は「いつから載っているか」「名前が変わっていないか」を
+    見るために使う。
+
+    ただし登録数順の上位60件までという制限があるので、掲載が60件を超えるサロンでは
+    取りこぼしうる。価格と掲載順は載っていない。
     """
     from .normalize import split_customer_type
 
@@ -257,18 +270,25 @@ def parse_listed_section(grid: list[list[object]], report: SalonReport) -> None:
     if header_row is None or not issue_cols:
         return
 
-    latest_col = issue_cols[-1][0]  # 一番右が最新月号
-    blank_run = 0
-    for r in range(header_row + 1, len(grid)):
-        row = grid[r]
-        text = _cell_text(row[latest_col]) if latest_col < len(row) else ''
-        if not text or text.startswith('※') or text.startswith('■'):
-            blank_run += 1
-            if blank_run >= _MAX_BLANK_RUN:
-                break
-            continue
+    for col, label in issue_cols:  # 左が古い月号、右が最新月号
+        coupons: list[tuple[str, str]] = []
         blank_run = 0
-        report.listed_in_report.append(split_customer_type(text))
+        for r in range(header_row + 1, len(grid)):
+            row = grid[r]
+            text = _cell_text(row[col]) if col < len(row) else ''
+            if text.startswith('※') or text.startswith('■'):
+                break  # 注記や次のセクションの見出し = 表の終わり
+            if not text:
+                blank_run += 1
+                if blank_run >= _MAX_BLANK_RUN:
+                    break
+                continue
+            blank_run = 0
+            coupons.append(split_customer_type(text))
+        report.listed_history.append((label, coupons))
+
+    if report.listed_history:
+        report.listed_in_report = list(report.listed_history[-1][1])
 
 
 def parse_metadata(grid: list[list[object]], report: SalonReport) -> None:

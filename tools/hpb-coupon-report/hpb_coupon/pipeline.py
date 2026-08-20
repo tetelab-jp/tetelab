@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from .matching import match_coupons
+from .matching import hungarian, match_coupons, similarity
 from .normalize import normalize_coupon_name
 from .report_grid import ReservationRow, SalonReport
 from .report_pdf import parse_report_pdf
@@ -30,6 +30,11 @@ class ReconcileRow:
     total: int = 0
     score: float | None = None
     method: str = 'unmatched'  # 'exact' | 'fuzzy' | 'unmatched'
+    listing_status: str = ''    # '継続' | '新規掲載' | '改名'
+    first_listed_month: str = ''
+    previous_name: str = ''     # 改名前の名前
+    previous_month: str = ''    # その名前で載っていた最後の月号
+    rename_score: float | None = None
 
     @property
     def has_reservation(self) -> bool:
@@ -43,6 +48,9 @@ class OrphanReservation:
     name: str
     monthly: dict[str, int] = field(default_factory=dict)
     total: int = 0
+    last_listed_month: str = ''   # 掲載履歴の中で最後に載っていた月号
+    rename_candidate: str = ''    # 改名先と思われる現在の掲載クーポン
+    rename_score: float | None = None
 
 
 @dataclass
@@ -96,6 +104,120 @@ def coupons_from_report(report: SalonReport) -> list[ListedCoupon]:
         ListedCoupon(order=i, customer_type=customer_type, name=name)
         for i, (customer_type, name) in enumerate(report.listed_in_report, 1)
     ]
+
+
+# 改名とみなす一致率の下限。予約データの照合(0.55)より高くしてある。
+# 実データの02月号→03月号の一斉リニューアル(22件入れ替え)で測ったところ、
+# 本物の改名は0.767以上(誤植修正0.971、「ブリーチ+カラー」→「ブリーチオンカラー」0.947、
+# 割引表記の削除0.800 など)、0.708以下は中身の違う別クーポンだった。
+RENAME_THRESHOLD = 0.75
+
+
+def _detect_renames(
+    history: list[tuple[str, dict[str, str]]], threshold: float
+) -> dict[tuple[int, str], tuple[str, float]]:
+    """隣り合う月号の間で「消えた名前」と「現れた名前」を1対1に対応づける。
+
+    戻り値は (月号のindex, 新しいキー) → (古いキー, 一致率)。
+
+    ここでもハンガリー法を使う。「現れた名前ごとに最も似た消えた名前を選ぶ」
+    貪欲法だと、1つの古い名前が複数の新クーポンの旧名として使い回されてしまう
+    (実データでは「【平日限定】カット+艶カラー」が3件に割り当てられた)。
+    """
+    links: dict[tuple[int, str], tuple[str, float]] = {}
+    for i in range(len(history) - 1):
+        old_names, new_names = history[i][1], history[i + 1][1]
+        gone = [k for k in old_names if k not in new_names]
+        appeared = [k for k in new_names if k not in old_names]
+        if not gone or not appeared:
+            continue
+        scores = [[similarity(g, n) for n in appeared] for g in gone]
+        assignment = hungarian([[-s for s in row] for row in scores])
+        for g_idx, a_idx in enumerate(assignment):
+            if a_idx < 0:
+                continue
+            score = scores[g_idx][a_idx]
+            if score >= threshold:
+                links[(i + 1, appeared[a_idx])] = (gone[g_idx], score)
+    return links
+
+
+def _annotate_listing_history(
+    result: ReconcileResult, rename_threshold: float = RENAME_THRESHOLD
+) -> None:
+    """レポートの月号別の掲載一覧を使って、各行に掲載履歴の情報を足す。
+
+    「■貴店クーポン情報(Net)」は月号ごとの列を持っていて(実物では6ヶ月分)、
+    各列がその月の掲載クーポン一覧になっている。ここから
+      ・いつから載っているクーポンか
+      ・途中で名前が変わっていないか
+      ・予約はあるのに今は載っていないクーポンが、いつまで載っていたか
+    が分かる。
+
+    予約数そのものの照合には使わない。レポートの予約数表は「クーポン名1列＋
+    月号3列」という作りで月号ごとの名前を持たず、HPB側が既にクーポンの同一性を
+    解決したうえで1つの名前に3ヶ月分をまとめているため、現在の掲載名と
+    突き合わせれば足りる(実データで各月とも不一致0件を確認済み)。
+    """
+    report = result.report
+    if report is None or not report.listed_history:
+        return
+
+    history = [  # 古い月号から順に、正規化キー → 表示名
+        (label, {normalize_coupon_name(name): name for _, name in coupons})
+        for label, coupons in report.listed_history
+    ]
+    links = _detect_renames(history, rename_threshold)
+    last_index = len(history) - 1
+
+    for row in result.rows:
+        key = normalize_coupon_name(row.listed_name)
+        if not any(key in names for _, names in history):
+            continue  # スクレイピングで取れたがレポートには無い(60件制限など)
+
+        index = last_index
+        while index >= 0 and key not in history[index][1]:
+            index -= 1  # 掲載を止めた直後などで最新月号に無い場合
+        if index < 0:
+            continue
+
+        # 改名の連鎖を遡って、最初に載った月号までたどる
+        while True:
+            while index > 0 and key in history[index - 1][1]:
+                index -= 1
+            link = links.get((index, key))
+            if link is None:
+                break
+            old_key, score = link
+            if not row.previous_name:  # 直前の1回ぶんだけ記録する
+                row.previous_name = history[index - 1][1][old_key]
+                row.previous_month = history[index - 1][0]
+                row.rename_score = round(score, 4)
+            key = old_key
+            index -= 1
+
+        row.first_listed_month = history[index][0]
+        if row.previous_name:
+            row.listing_status = '改名'
+        elif index == 0:
+            row.listing_status = '継続'
+        else:
+            row.listing_status = '新規掲載'
+
+    for orphan in result.orphans:
+        key = normalize_coupon_name(orphan.name)
+        for label, names in reversed(history):
+            if key in names:
+                orphan.last_listed_month = label
+                break
+        candidates = [
+            (similarity(key, normalize_coupon_name(row.listed_name)), row.listed_name)
+            for row in result.rows
+        ]
+        best = max(candidates, default=(0.0, ''))
+        if best[0] >= rename_threshold:
+            orphan.rename_candidate = best[1]
+            orphan.rename_score = round(best[0], 4)
 
 
 def reconcile(
@@ -211,6 +333,8 @@ def reconcile(
                 f'{len(missing)}件あります。掲載を止めた直後か、ページ送りが'
                 f'途中で終わった可能性があります。'
             )
+
+    _annotate_listing_history(result)
 
     result.rows.sort(key=lambda r: (-r.total, r.order))
     result.orphans.sort(key=lambda o: -o.total)

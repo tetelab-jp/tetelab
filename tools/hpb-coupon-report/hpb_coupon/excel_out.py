@@ -1,7 +1,7 @@
 """照合結果をxlsxに書き出す。
 
 シート構成は「そのまま眺めて判断できること」を優先している。
-    照合結果        掲載クーポン全件 × 予約数。予約が多い順。
+    照合結果        掲載クーポン全件 × 予約数。予約が多い順。掲載履歴の列付き。
     予約ゼロ        掲載中なのに予約実績が無いもの。差し替え候補。
     未照合の予約    予約はあるが現在の掲載に無いもの。停止/改名したクーポン。
     要確認          完全一致しなかった対応。人の目で確かめる行だけを集めたもの。
@@ -57,7 +57,17 @@ def _build_match_sheet(workbook: Workbook, result: ReconcileResult) -> None:
     headers = (
         ['掲載順', '客区分', 'クーポン名(掲載)', '価格']
         + labels
-        + ['予約数合計', '照合方法', '一致率', 'クーポン名(レポート側)']
+        + [
+            '予約数合計',
+            '照合方法',
+            '一致率',
+            'クーポン名(レポート側)',
+            '掲載状況',
+            '初掲載月号',
+            '旧クーポン名',
+            '旧名の月号',
+            '改名の一致率',
+        ]
     )
     worksheet = _sheet(workbook, '照合結果', headers, first=True)
 
@@ -70,6 +80,11 @@ def _build_match_sheet(workbook: Workbook, result: ReconcileResult) -> None:
                 _METHOD_LABEL.get(row.method, row.method),
                 round(row.score, 4) if row.score is not None else None,
                 row.reserved_name,
+                row.listing_status,
+                row.first_listed_month,
+                row.previous_name,
+                row.previous_month,
+                row.rename_score,
             ]
         )
 
@@ -100,11 +115,22 @@ def _build_zero_sheet(workbook: Workbook, result: ReconcileResult) -> None:
 
 def _build_orphan_sheet(workbook: Workbook, result: ReconcileResult) -> None:
     labels = result.issue_labels
-    headers = ['クーポン名(レポート側)'] + labels + ['予約数合計']
+    headers = (
+        ['クーポン名(レポート側)']
+        + labels
+        + ['予約数合計', '最終掲載月号', '改名候補(現在の掲載)', '改名の一致率']
+    )
     worksheet = _sheet(workbook, '未照合の予約', headers)
     for orphan in result.orphans:
         worksheet.append(
-            [orphan.name] + [orphan.monthly.get(label, 0) for label in labels] + [orphan.total]
+            [orphan.name]
+            + [orphan.monthly.get(label, 0) for label in labels]
+            + [
+                orphan.total,
+                orphan.last_listed_month,
+                orphan.rename_candidate,
+                orphan.rename_score,
+            ]
         )
     _fit_columns(worksheet, headers)
 
@@ -143,6 +169,8 @@ def _build_info_sheet(workbook: Workbook, result: ReconcileResult) -> None:
         ('あいまい一致(要確認)', result.fuzzy_count),
         ('予約ゼロの掲載クーポン', len(result.zero_reservation_rows)),
         ('未照合の予約データ', len(result.orphans)),
+        ('掲載履歴が取れた月号', ' / '.join(label for label, _ in (report.listed_history if report else []))),
+        ('改名を検出したクーポン', sum(1 for r in result.rows if r.listing_status == '改名')),
         ('予約数の総計', sum(r.total for r in result.rows)),
     ]
     for item, value in rows:
