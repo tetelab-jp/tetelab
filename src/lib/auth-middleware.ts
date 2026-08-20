@@ -78,7 +78,7 @@ export async function requireImpersonated(
 ) {
   const user = c.get('user')
   if (user.is_impersonated !== 1) {
-    return c.json({ error: 'この操作はなりすましログイン中のみ実行できます' }, 403)
+    return redirectOrUnauthorized(c, 'この操作はなりすましログイン中のみ実行できます', '/dashboard')
   }
   await next()
 }

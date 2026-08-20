@@ -79,7 +79,7 @@ reviews.get('/reviews/trend', async (c) => {
   const trendByNewest = [...trend].reverse()
 
   return c.render(
-    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true}>
+    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <SyncStatusPanel backfillDone={backfillDone} />
 
       {backfillDone && (
@@ -166,7 +166,7 @@ reviews.get('/reviews/by-stylist', async (c) => {
     : { stylists: [], unmatchedStylistCount: 0 }
 
   return c.render(
-    <PageLayout active="review-by-stylist" salonName={user.salon_name} title="スタイリスト別評価" reviewEnabled={true}>
+    <PageLayout active="review-by-stylist" salonName={user.salon_name} title="スタイリスト別評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <SyncStatusPanel backfillDone={backfillDone} />
 
       {backfillDone && (
@@ -320,7 +320,7 @@ reviews.get('/reviews/list', async (c) => {
     : { results: [] as ReviewListRowForUi[] }
 
   return c.render(
-    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ返信" reviewEnabled={true}>
+    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ返信" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <SyncStatusPanel backfillDone={backfillDone} />
 
       {backfillDone && (

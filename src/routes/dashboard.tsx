@@ -93,6 +93,8 @@ dashboard.get('/dashboard', async (c) => {
       seoEnabled={user.seo_enabled !== 0}
 
       reviewEnabled={user.review_enabled !== 0}
+
+      isImpersonated={user.is_impersonated === 1}
       active="dashboard"
       salonName={user.salon_name}
       title="ダッシュボード"
@@ -321,6 +323,8 @@ dashboard.get('/settings/salonboard', async (c) => {
       seoEnabled={user.seo_enabled !== 0}
 
       reviewEnabled={user.review_enabled !== 0}
+
+      isImpersonated={user.is_impersonated === 1}
       active="settings"
       salonName={user.salon_name}
       title="サロンボード連携設定"
@@ -541,6 +545,8 @@ dashboard.get('/settings/account', async (c) => {
       seoEnabled={user.seo_enabled !== 0}
 
       reviewEnabled={user.review_enabled !== 0}
+
+      isImpersonated={user.is_impersonated === 1}
       active="settings-account"
       salonName={user.salon_name}
       title="アカウント設定"
@@ -859,6 +865,7 @@ dashboard.get('/settings/auto-update', async (c) => {
     <PageLayout
       seoEnabled={seoEnabled}
       reviewEnabled={user.review_enabled !== 0}
+      isImpersonated={user.is_impersonated === 1}
       active="auto-update"
       salonName={user.salon_name}
       title="自動更新設定"
