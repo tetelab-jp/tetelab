@@ -1,0 +1,9 @@
+# サロンレポートPDFの直読み
+pdfplumber>=0.11
+# xlsxの読み書き
+openpyxl>=3.1
+# HPBクーポンページの取得と解析(Selenium/ChromeDriverは不要)
+requests>=2.31
+beautifulsoup4>=4.12
+# レーベンシュタイン距離の高速実装。無くても純Python実装で動作する
+rapidfuzz>=3.0
