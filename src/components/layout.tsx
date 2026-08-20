@@ -60,12 +60,18 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' |
 // requireBlogEnabled/requireSeoEnabled/requireReviewEnabledでどのみちブロック
 // されるが、押せるリンクを残さないため)。
 function isNavItemVisible(
-  item: { group: string },
+  item: { key: NavKey; group: string },
   styleEnabled: boolean,
   blogEnabled: boolean,
   seoEnabled: boolean,
-  reviewEnabled: boolean
+  reviewEnabled: boolean,
+  isImpersonated: boolean
 ) {
+  // 2026-08-19追記(ユーザー指定): 個別実行ログ(実行履歴ページ)はサロン間の
+  // 投稿内容・エラーメッセージが具体的に見えてしまうため、通常のサロン
+  // ログインでは一切表示せず、管理者サイトからの「なりすましログイン」
+  // (検証用)経由でのみ表示・利用できるようにする。
+  if (item.key === 'style-test-run') return isImpersonated
   if (item.group === 'style') return styleEnabled
   if (item.group === 'blog') return blogEnabled
   if (item.group === 'ranking') return seoEnabled
@@ -79,7 +85,8 @@ export function Sidebar({
   styleEnabled = true,
   blogEnabled = true,
   seoEnabled = true,
-  reviewEnabled = true
+  reviewEnabled = true,
+  isImpersonated = false
 }: {
   active: NavKey
   salonName: string | null
@@ -87,6 +94,7 @@ export function Sidebar({
   blogEnabled?: boolean
   seoEnabled?: boolean
   reviewEnabled?: boolean
+  isImpersonated?: boolean
 }) {
   const groups = NAV_GROUPS
   return (
@@ -103,7 +111,7 @@ export function Sidebar({
 
       {groups.map((group) => {
         const items = NAV_ITEMS.filter(
-          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled)
+          (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled, isImpersonated)
         )
         if (items.length === 0) return null
         return (
@@ -143,13 +151,15 @@ function MobileNavPanel({
   styleEnabled,
   blogEnabled,
   seoEnabled,
-  reviewEnabled
+  reviewEnabled,
+  isImpersonated
 }: {
   active: NavKey
   styleEnabled: boolean
   blogEnabled: boolean
   seoEnabled: boolean
   reviewEnabled: boolean
+  isImpersonated: boolean
 }) {
   return (
     <div class="fixed inset-0 z-50 bg-white overflow-y-auto">
@@ -170,7 +180,7 @@ function MobileNavPanel({
         <div class="space-y-4">
           {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
             const items = NAV_ITEMS.filter(
-              (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled)
+              (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled, isImpersonated)
             )
             if (items.length === 0 && group.key !== 'settings') return null
             return (
@@ -216,7 +226,8 @@ export function TopBar({
   styleEnabled = true,
   blogEnabled = true,
   seoEnabled = true,
-  reviewEnabled = true
+  reviewEnabled = true,
+  isImpersonated = false
 }: {
   title: string
   active: NavKey
@@ -224,6 +235,7 @@ export function TopBar({
   blogEnabled?: boolean
   seoEnabled?: boolean
   reviewEnabled?: boolean
+  isImpersonated?: boolean
 }) {
   return (
     <header class="sticky top-0 z-20 border-b border-gray-100 bg-white">
@@ -245,6 +257,7 @@ export function TopBar({
             blogEnabled={blogEnabled}
             seoEnabled={seoEnabled}
             reviewEnabled={reviewEnabled}
+            isImpersonated={isImpersonated}
           />
         </details>
       </div>
@@ -283,6 +296,7 @@ export function PageLayout({
   blogEnabled = true,
   seoEnabled = true,
   reviewEnabled = true,
+  isImpersonated = false,
   children
 }: {
   active: NavKey
@@ -292,6 +306,7 @@ export function PageLayout({
   blogEnabled?: boolean
   seoEnabled?: boolean
   reviewEnabled?: boolean
+  isImpersonated?: boolean
   children: any
 }) {
   return (
@@ -303,6 +318,7 @@ export function PageLayout({
         blogEnabled={blogEnabled}
         seoEnabled={seoEnabled}
         reviewEnabled={reviewEnabled}
+        isImpersonated={isImpersonated}
       />
       <div class="flex-1 min-w-0">
         <TopBar
@@ -312,6 +328,7 @@ export function PageLayout({
           blogEnabled={blogEnabled}
           seoEnabled={seoEnabled}
           reviewEnabled={reviewEnabled}
+          isImpersonated={isImpersonated}
         />
         <MobileGroupNav active={active} />
         <main class="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto">{children}</main>

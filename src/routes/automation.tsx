@@ -231,7 +231,10 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
   )
 }
 
-automation.get('/style/test-run', requireAuth, async (c) => {
+// 2026-08-19追記(ユーザー指定): 個別実行ログ(投稿内容・エラーメッセージ等)は
+// サロン間で見えてはいけない情報を含むため、通常のサロンログインでは
+// 一切表示せず、管理者サイトの「なりすましログイン」経由(検証用)のみに限定する。
+automation.get('/style/test-run', requireAuth, requireImpersonated, async (c) => {
   const user = c.get('user')
 
   const { results: logs } = await c.env.DB.prepare(
@@ -307,6 +310,8 @@ automation.get('/style/test-run', requireAuth, async (c) => {
       seoEnabled={user.seo_enabled !== 0}
 
       reviewEnabled={user.review_enabled !== 0}
+
+      isImpersonated={user.is_impersonated === 1}
       active="style-test-run"
       salonName={user.salon_name}
       title="実行履歴"

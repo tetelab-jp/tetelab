@@ -161,7 +161,7 @@ blog.get('/blog/salon', async (c) => {
   const [profile, referenceArticleCount] = await Promise.all([getSalonProfile(c, user), getBlogReferenceArticleCount(c, user)])
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-salon" salonName={user.salon_name} title="ブログスタイル設定" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="ブログスタイル設定" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -428,7 +428,7 @@ blog.get('/blog/template', async (c) => {
   const hasReferenceMaterial = Boolean(profile?.salonboard_synced_at) && referenceArticleCount > 0
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1205,6 +1205,7 @@ blog.get('/blog/articles/new', async (c) => {
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
       reviewEnabled={user.review_enabled !== 0}
+      isImpersonated={user.is_impersonated === 1}
       active="blog-articles"
       salonName={user.salon_name}
       title="記事の新規作成"
@@ -1273,6 +1274,7 @@ blog.get('/blog/articles/:id/edit', async (c) => {
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
       reviewEnabled={user.review_enabled !== 0}
+      isImpersonated={user.is_impersonated === 1}
       active="blog-articles"
       salonName={user.salon_name}
       title="記事の編集"
@@ -1346,6 +1348,7 @@ blog.get('/blog/generate', async (c) => {
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
       reviewEnabled={user.review_enabled !== 0}
+      isImpersonated={user.is_impersonated === 1}
       active="blog-generate"
       salonName={user.salon_name}
       title="AI記事生成"
@@ -1605,7 +1608,7 @@ blog.get('/blog/articles', async (c) => {
     .sort((a, b) => (a.last_posted_at! < b.last_posted_at! ? 1 : a.last_posted_at! > b.last_posted_at! ? -1 : 0))
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
       <div class="flex gap-2 border-b border-gray-100">
         <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-pink-500 text-pink-600" data-tab="list">一覧</button>
         <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400" data-tab="calendar">投稿予定</button>
