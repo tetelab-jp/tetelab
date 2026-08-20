@@ -338,23 +338,31 @@ function WorkspaceToggle({
 // =指名単位)に一本化した。押すと3日間の猶予期間(deletion_requested_at)を
 // 置き、期限までは「取り消す」ボタンで撤回できる(src/lib/account-deletion.ts
 // のsweepPendingAccountDeletionsが猶予経過後に実削除する)。
+//
+// 2026-08-20追記(モバイル向けカードUI対応): mobile=trueの場合のみボタンを
+// フルwidth・44px近い高さのタップしやすいサイズに変更する。mobile未指定時は
+// 既存デスクトップ表(/admin/salons)の見た目・クラスと完全に同一のまま。
 function AccountDeleteControl({
   accountId,
   deletionRequestedAt,
   page,
-  q
+  q,
+  mobile
 }: {
   accountId: number
   deletionRequestedAt: string | null
   page: number
   q: string
+  mobile?: boolean
 }) {
   if (deletionRequestedAt) {
     return (
-      <div class="space-y-1.5">
-        <p class="text-xs text-red-600 font-semibold">
-          あと{daysUntilDeletion(deletionRequestedAt)}日で削除されます
-        </p>
+      <div class={mobile ? 'flex flex-col gap-1.5' : 'space-y-1.5'}>
+        {!mobile && (
+          <p class="text-xs text-red-600 font-semibold">
+            あと{daysUntilDeletion(deletionRequestedAt)}日で削除されます
+          </p>
+        )}
         <form
           method="post"
           action={`/admin/salons/${accountId}/cancel-delete`}
@@ -364,7 +372,11 @@ function AccountDeleteControl({
           <input type="hidden" name="q" value={q} />
           <button
             type="submit"
-            class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
+            class={
+              mobile
+                ? 'w-full h-10 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition'
+                : 'px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap'
+            }
           >
             削除を取り消す
           </button>
@@ -382,10 +394,56 @@ function AccountDeleteControl({
       <input type="hidden" name="q" value={q} />
       <button
         type="submit"
-        class="px-2.5 py-1 rounded-lg border border-red-200 text-xs font-medium text-red-600 hover:bg-red-50 transition whitespace-nowrap"
+        class={
+          mobile
+            ? 'w-full h-10 rounded-lg border border-red-200 text-xs font-semibold text-red-600 hover:bg-red-50 transition flex items-center justify-center gap-1.5'
+            : 'px-2.5 py-1 rounded-lg border border-red-200 text-xs font-medium text-red-600 hover:bg-red-50 transition whitespace-nowrap'
+        }
       >
         <i class="fas fa-trash mr-1"></i>削除
       </button>
+    </form>
+  )
+}
+
+// なりすましログインボタン。デスクトップ表と新設のモバイルカードの両方から
+// 同じフォーム・確認ダイアログを使い回すための共通化(元は表側にインライン
+// で書かれていたものを抽出しただけで、挙動は変更していない)。
+function ImpersonateButton({ accountId, mobile }: { accountId: number; mobile?: boolean }) {
+  return (
+    <form
+      method="post"
+      action={`/admin/salons/${accountId}/impersonate`}
+      target="_blank"
+      onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
+    >
+      <button
+        type="submit"
+        class={
+          mobile
+            ? 'w-full h-10 rounded-lg border border-gray-200 text-xs font-semibold text-gray-600 hover:bg-gray-50 transition flex items-center justify-center gap-1.5'
+            : 'px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap'
+        }
+      >
+        <i class="fas fa-right-to-bracket mr-1"></i>ログイン
+      </button>
+    </form>
+  )
+}
+
+// モバイル向けの機能トグルスイッチ(見た目のみ、既存FeatureToggleFormの
+// サイズ違い版)。カード内で機能名をラベルとして左に置き、スイッチのみ右に
+// 表示するUIのため、ラベル込みのFeatureToggleFormとは別に用意する。
+function ToggleSwitch({ action, page, q, enabled }: { action: string; page: number; q: string; enabled: boolean }) {
+  return (
+    <form method="post" action={action}>
+      <input type="hidden" name="page" value={page} />
+      <input type="hidden" name="q" value={q} />
+      <label class="relative inline-flex items-center cursor-pointer flex-shrink-0">
+        <input type="checkbox" checked={enabled} onchange="this.form.submit()" class="sr-only peer" />
+        <span class="w-9 h-5 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+        <span class="absolute left-1 top-1 w-3.5 h-3.5 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></span>
+      </label>
     </form>
   )
 }
@@ -478,7 +536,7 @@ admin.get('/admin/salons', async (c) => {
         )}
       </form>
 
-      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div class="hidden md:block bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div class="overflow-x-auto">
           <table class="w-full text-sm table-fixed">
             <colgroup>
@@ -542,19 +600,7 @@ admin.get('/admin/salons', async (c) => {
                         <td class="px-4 py-2.5 text-gray-600 break-words">{sub?.salon_name || '(未取得)'}</td>
                         {i === 0 && (
                           <td class="px-4 py-2.5" rowspan={rowspan}>
-                            <form
-                              method="post"
-                              action={`/admin/salons/${group.accountId}/impersonate`}
-                              target="_blank"
-                              onsubmit="return confirm('このサロンとして新しいタブでログインします。よろしいですか？')"
-                            >
-                              <button
-                                type="submit"
-                                class="px-2.5 py-1 rounded-lg border border-gray-200 text-xs font-medium text-gray-600 hover:bg-gray-50 transition whitespace-nowrap"
-                              >
-                                <i class="fas fa-right-to-bracket mr-1"></i>ログイン
-                              </button>
-                            </form>
+                            <ImpersonateButton accountId={group.accountId} />
                           </td>
                         )}
                         <td class="px-4 py-2.5">
@@ -617,9 +663,89 @@ admin.get('/admin/salons', async (c) => {
         </div>
       </div>
 
+      {/* 2026-08-20追記(モバイル向けカードUI): 上のtable(hidden md:block)と
+          データは同じgroupsをそのまま使い回し、モバイルではアカウント単位の
+          カード表示に組み替える。無効化中サロンの折りたたみは既存の
+          admin-salons.js(.admin-toggle-inactive-btn / data-inactive-for)を
+          そのまま再利用するため、スクリプト側の変更は不要。 */}
+      <div class="md:hidden flex flex-col gap-3">
+        {groups.map((group) => (
+          <div
+            class={
+              'border rounded-xl p-3.5 flex flex-col gap-2.5 ' +
+              (group.accountDeletionRequestedAt ? 'border-red-200 bg-red-50/40' : 'border-gray-100')
+            }
+          >
+            <div class="flex items-center gap-1.5">
+              {group.inactiveSalons.length > 0 ? (
+                <button
+                  type="button"
+                  class="admin-toggle-inactive-btn w-4 h-4 flex-shrink-0 flex items-center justify-center text-gray-400 hover:text-pink-600"
+                  data-account-id={group.accountId}
+                  title={`無効化中のサロン(${group.inactiveSalons.length}件)を表示`}
+                >
+                  <i class="fas fa-caret-right transition-transform"></i>
+                </button>
+              ) : (
+                <span class="w-4 h-4 flex-shrink-0"></span>
+              )}
+              <span class="text-[11px] text-gray-400">No.{group.seq}</span>
+              {group.accountDeletionRequestedAt && (
+                <span class="ml-auto text-[11px] font-bold text-red-700 bg-red-100 px-2 py-0.5 rounded-full whitespace-nowrap">
+                  あと{daysUntilDeletion(group.accountDeletionRequestedAt)}日で削除
+                </span>
+              )}
+            </div>
+            <div>
+              <p class="font-bold text-gray-900 text-[15px] break-words">{group.accountSalonName || '(未設定)'}</p>
+              <p class="text-xs text-gray-500 break-words">{group.email}</p>
+            </div>
+            <div class="border-t border-gray-50 pt-2.5 flex flex-col gap-2">
+              {group.activeSalons.length > 0 ? (
+                group.activeSalons.map((sub) => (
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="min-w-0">
+                      <p class="text-[11px] text-gray-500 font-mono">{sub.salon_key || '(未確定)'}</p>
+                      <p class="text-[13px] text-gray-700 break-words">{sub.salon_name || '(未取得)'}</p>
+                    </div>
+                    <WorkspaceToggle accountId={group.accountId} salonId={sub.id} isActiveWorkspace={true} page={page} q={q} />
+                  </div>
+                ))
+              ) : (
+                <p class="text-xs text-gray-300">有効なサロンがありません</p>
+              )}
+            </div>
+            {group.inactiveSalons.length > 0 && (
+              <div class="hidden flex flex-col gap-2" data-inactive-for={group.accountId}>
+                {group.inactiveSalons.map((sub) => (
+                  <div class="flex items-center justify-between gap-2 bg-gray-50 rounded-lg p-2">
+                    <div class="min-w-0">
+                      <p class="text-[11px] text-gray-400 font-mono">{sub.salon_key || '(未確定)'}</p>
+                      <p class="text-[13px] text-gray-500 break-words">{sub.salon_name || '(未取得)'}</p>
+                    </div>
+                    <WorkspaceToggle accountId={group.accountId} salonId={sub.id} isActiveWorkspace={false} page={page} q={q} />
+                  </div>
+                ))}
+              </div>
+            )}
+            <div class="grid grid-cols-2 gap-2 pt-0.5">
+              <ImpersonateButton accountId={group.accountId} mobile />
+              <AccountDeleteControl
+                accountId={group.accountId}
+                deletionRequestedAt={group.accountDeletionRequestedAt}
+                page={page}
+                q={q}
+                mobile
+              />
+            </div>
+          </div>
+        ))}
+        {groups.length === 0 && <p class="text-center text-gray-400 py-8 text-sm">該当するサロンがありません</p>}
+      </div>
+
       <script src="/static/admin-salons.js"></script>
 
-      <div class="flex items-center justify-between text-sm text-gray-500">
+      <div class="hidden md:flex items-center justify-between text-sm text-gray-500">
         <span>
           {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + SALONS_PAGE_SIZE, totalCount)}
           件を表示
@@ -637,6 +763,41 @@ admin.get('/admin/salons', async (c) => {
             <a href={buildSalonsListUrl(page + 1, q)} class="hover:text-pink-600">
               次へ →
             </a>
+          )}
+        </div>
+      </div>
+      <div class="md:hidden flex items-center justify-between">
+        <span class="text-xs text-gray-500">
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + SALONS_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex items-center gap-1">
+          {page > 1 ? (
+            <a
+              href={buildSalonsListUrl(page - 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-left text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-left text-xs"></i>
+            </span>
+          )}
+          <span class="text-xs text-gray-400 px-1">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages ? (
+            <a
+              href={buildSalonsListUrl(page + 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-right text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-right text-xs"></i>
+            </span>
           )}
         </div>
       </div>
@@ -960,7 +1121,7 @@ admin.get('/admin/tool', async (c) => {
         )}
       </form>
 
-      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div class="hidden md:block bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div class="overflow-x-auto">
           <table class="w-full text-sm table-fixed">
             <colgroup>
@@ -1068,7 +1229,102 @@ admin.get('/admin/tool', async (c) => {
         </div>
       </div>
 
-      <div class="flex items-center justify-between text-sm text-gray-500">
+      {/* 2026-08-20追記(モバイル向けカードUI): 上のtable(hidden md:block)と
+          同じaccounts/activeSalonsByAccountをそのまま使い回す。 */}
+      <div class="md:hidden flex flex-col gap-3">
+        {accounts.map((account) => {
+          const salons = activeSalonsByAccount.get(account.id) || []
+          return (
+            <div class="border border-gray-100 rounded-xl p-3.5 flex flex-col gap-3">
+              <div class="flex items-baseline gap-1.5">
+                <span class="text-[11px] text-gray-400">No.{account.seq}</span>
+                <span class="text-[15px] font-bold text-gray-900 break-words">{account.salon_name || '(未設定)'}</span>
+              </div>
+              {salons.length === 0 ? (
+                <p class="text-xs text-gray-400">有効なサロンがありません</p>
+              ) : (
+                salons.map((salon, i) => (
+                  <div class={'flex flex-col gap-2 ' + (i > 0 ? 'pt-2.5 border-t border-gray-50' : '')}>
+                    <div>
+                      <p class="text-[11px] text-gray-400 font-mono">{salon.salon_key || '(未確定)'}</p>
+                      <p class="text-[13px] text-gray-700 break-words">{salon.salon_name || '(未取得)'}</p>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div
+                        class={
+                          'rounded-lg border p-2.5 flex items-center justify-between ' +
+                          (salon.style_enabled === 1 ? 'bg-pink-50 border-pink-200' : 'bg-gray-50 border-gray-100')
+                        }
+                      >
+                        <span class={'text-xs font-bold ' + (salon.style_enabled === 1 ? 'text-pink-600' : 'text-gray-400')}>
+                          スタイル
+                        </span>
+                        <ToggleSwitch
+                          action={`/admin/tool/${salon.id}/toggle-style`}
+                          page={page}
+                          q={q}
+                          enabled={salon.style_enabled === 1}
+                        />
+                      </div>
+                      <div
+                        class={
+                          'rounded-lg border p-2.5 flex items-center justify-between ' +
+                          (salon.blog_enabled === 1 ? 'bg-pink-50 border-pink-200' : 'bg-gray-50 border-gray-100')
+                        }
+                      >
+                        <span class={'text-xs font-bold ' + (salon.blog_enabled === 1 ? 'text-pink-600' : 'text-gray-400')}>
+                          ブログ
+                        </span>
+                        <ToggleSwitch
+                          action={`/admin/tool/${salon.id}/toggle-blog`}
+                          page={page}
+                          q={q}
+                          enabled={salon.blog_enabled === 1}
+                        />
+                      </div>
+                      <div
+                        class={
+                          'rounded-lg border p-2.5 flex items-center justify-between ' +
+                          (salon.seo_enabled === 1 ? 'bg-pink-50 border-pink-200' : 'bg-gray-50 border-gray-100')
+                        }
+                      >
+                        <span class={'text-xs font-bold ' + (salon.seo_enabled === 1 ? 'text-pink-600' : 'text-gray-400')}>
+                          SEO
+                        </span>
+                        <ToggleSwitch
+                          action={`/admin/tool/${salon.id}/toggle-seo`}
+                          page={page}
+                          q={q}
+                          enabled={salon.seo_enabled === 1}
+                        />
+                      </div>
+                      <div
+                        class={
+                          'rounded-lg border p-2.5 flex items-center justify-between ' +
+                          (salon.review_enabled === 1 ? 'bg-pink-50 border-pink-200' : 'bg-gray-50 border-gray-100')
+                        }
+                      >
+                        <span class={'text-xs font-bold ' + (salon.review_enabled === 1 ? 'text-pink-600' : 'text-gray-400')}>
+                          口コミ
+                        </span>
+                        <ToggleSwitch
+                          action={`/admin/tool/${salon.id}/toggle-review`}
+                          page={page}
+                          q={q}
+                          enabled={salon.review_enabled === 1}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )
+        })}
+        {accounts.length === 0 && <p class="text-center text-gray-400 py-8 text-sm">該当するサロンがありません</p>}
+      </div>
+
+      <div class="hidden md:flex items-center justify-between text-sm text-gray-500">
         <span>
           {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + TOOL_PAGE_SIZE, totalCount)}
           件を表示
@@ -1086,6 +1342,41 @@ admin.get('/admin/tool', async (c) => {
             <a href={buildToolListUrl(page + 1, q)} class="hover:text-pink-600">
               次へ →
             </a>
+          )}
+        </div>
+      </div>
+      <div class="md:hidden flex items-center justify-between">
+        <span class="text-xs text-gray-500">
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + TOOL_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex items-center gap-1">
+          {page > 1 ? (
+            <a
+              href={buildToolListUrl(page - 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-left text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-left text-xs"></i>
+            </span>
+          )}
+          <span class="text-xs text-gray-400 px-1">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages ? (
+            <a
+              href={buildToolListUrl(page + 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-right text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-right text-xs"></i>
+            </span>
           )}
         </div>
       </div>
@@ -1256,7 +1547,7 @@ admin.get('/admin/status', async (c) => {
         )}
       </form>
 
-      <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <div class="hidden md:block bg-white rounded-xl border border-gray-100 overflow-hidden">
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="bg-gray-50 text-gray-500 text-xs">
@@ -1323,7 +1614,58 @@ admin.get('/admin/status', async (c) => {
         </div>
       </div>
 
-      <div class="flex items-center justify-between text-sm text-gray-500">
+      {/* 2026-08-20追記(モバイル向けカードUI): 上のtable(hidden md:block)と
+          同じsalonsをそのまま使い回す。連続失敗があるサロンはカードの枠を
+          赤くして目立たせる。 */}
+      <div class="md:hidden flex flex-col gap-3">
+        {salons.map((salon) => {
+          const isAlerting = salon.consecutive_failure_count >= CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+          const isBlogAlerting = salon.consecutive_blog_failure_count >= BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD
+          const isInactive = salon.is_active === 0 || salon.style_enabled === 0
+          const isBlogInactive = salon.is_active === 0 || salon.blog_enabled === 0
+          const highlight = (!isInactive && isAlerting) || (!isBlogInactive && isBlogAlerting)
+          return (
+            <div class={'rounded-xl p-3.5 flex flex-col gap-2 border ' + (highlight ? 'border-red-200 bg-red-50/40' : 'border-gray-100')}>
+              <div class="flex items-baseline gap-1.5">
+                <span class="text-[11px] text-gray-400">No.{salon.seq}</span>
+                <span class="text-[15px] font-bold text-gray-900 break-words">{salon.salon_name || '(未設定)'}</span>
+              </div>
+              <p class="text-xs text-gray-500 break-words -mt-1">{salon.email}</p>
+              <div class="flex items-center justify-between pt-2 border-t border-gray-50">
+                <span class="text-[12.5px] text-gray-700">
+                  スタイル連続失敗 <b class="text-gray-900">{salon.consecutive_failure_count}回</b>
+                </span>
+                {isInactive ? (
+                  <span class="text-[11px] font-bold text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full whitespace-nowrap">対象外</span>
+                ) : isAlerting ? (
+                  <span class="text-[11px] font-bold text-red-600 bg-red-50 px-2.5 py-0.5 rounded-full whitespace-nowrap">
+                    異常({CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上)
+                  </span>
+                ) : (
+                  <span class="text-[11px] font-bold text-green-600 bg-green-50 px-2.5 py-0.5 rounded-full whitespace-nowrap">正常</span>
+                )}
+              </div>
+              <div class="flex items-center justify-between pt-2 border-t border-gray-50">
+                <span class="text-[12.5px] text-gray-700">
+                  ブログ連続失敗 <b class="text-gray-900">{salon.consecutive_blog_failure_count}回</b>
+                </span>
+                {isBlogInactive ? (
+                  <span class="text-[11px] font-bold text-gray-400 bg-gray-100 px-2.5 py-0.5 rounded-full whitespace-nowrap">対象外</span>
+                ) : isBlogAlerting ? (
+                  <span class="text-[11px] font-bold text-red-600 bg-red-50 px-2.5 py-0.5 rounded-full whitespace-nowrap">
+                    異常({BLOG_CONSECUTIVE_FAILURE_ALERT_THRESHOLD}回以上)
+                  </span>
+                ) : (
+                  <span class="text-[11px] font-bold text-green-600 bg-green-50 px-2.5 py-0.5 rounded-full whitespace-nowrap">正常</span>
+                )}
+              </div>
+            </div>
+          )
+        })}
+        {salons.length === 0 && <p class="text-center text-gray-400 py-8 text-sm">該当するサロンがありません</p>}
+      </div>
+
+      <div class="hidden md:flex items-center justify-between text-sm text-gray-500">
         <span>
           {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + STATUS_PAGE_SIZE, totalCount)}
           件を表示
@@ -1341,6 +1683,41 @@ admin.get('/admin/status', async (c) => {
             <a href={buildStatusListUrl(page + 1, q)} class="hover:text-pink-600">
               次へ →
             </a>
+          )}
+        </div>
+      </div>
+      <div class="md:hidden flex items-center justify-between">
+        <span class="text-xs text-gray-500">
+          {totalCount}件中 {totalCount === 0 ? 0 : offset + 1}〜{Math.min(offset + STATUS_PAGE_SIZE, totalCount)}
+          件を表示
+        </span>
+        <div class="flex items-center gap-1">
+          {page > 1 ? (
+            <a
+              href={buildStatusListUrl(page - 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-left text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-left text-xs"></i>
+            </span>
+          )}
+          <span class="text-xs text-gray-400 px-1">
+            {page} / {totalPages}
+          </span>
+          {page < totalPages ? (
+            <a
+              href={buildStatusListUrl(page + 1, q)}
+              class="w-9 h-9 rounded-lg border border-gray-200 flex items-center justify-center text-gray-600"
+            >
+              <i class="fas fa-chevron-right text-xs"></i>
+            </a>
+          ) : (
+            <span class="w-9 h-9 rounded-lg border border-gray-100 flex items-center justify-center text-gray-300">
+              <i class="fas fa-chevron-right text-xs"></i>
+            </span>
           )}
         </div>
       </div>
