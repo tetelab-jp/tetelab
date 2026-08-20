@@ -1251,7 +1251,12 @@ blog.post('/blog/articles/new', async (c) => {
   const articleId = Number(insert.meta.last_row_id)
   await saveArticleImageIfProvided(c, user, articleId, body)
 
-  return c.redirect('/blog/articles?saved=1')
+  // 2026-08-20追記(ユーザー指定バグ修正): 一覧ページへ直接戻していたため、
+  // 新規作成時にアップロードした画像がその場では一切表示されなかった
+  // (画像プレビューはArticleFormのdetail?.image_r2_keyに依存するため、
+  // 作成直後の記事を編集画面で開き直さないと確認できない)。AI記事生成後の
+  // 遷移(/blog/generate)と同じく、作成した記事の編集画面へ遷移する。
+  return c.redirect(`/blog/articles/${articleId}/edit`)
 })
 
 blog.get('/blog/articles/:id/edit', async (c) => {
