@@ -307,11 +307,13 @@ reviews.get('/reviews/list', async (c) => {
   const state = await getBackfillState(c, salonId)
   const backfillDone = !!state?.backfill_completed_at
 
+  // 2026-08-20追記(ユーザー指定): この一覧は「返信する」ための画面のため、
+  // 既に返信済みの口コミは表示対象から外し、未返信の口コミのみを表示する。
   const { results: rows } = backfillDone
     ? await c.env.DB.prepare(
         `SELECT id, posted_at, score_overall, content, hpb_nickname, stylist_name_raw, matched_at,
                 replied_at, reply_content, reply_method, ai_reply_draft
-         FROM reviews WHERE salon_id = ?
+         FROM reviews WHERE salon_id = ? AND replied_at IS NULL
          ORDER BY posted_at DESC NULLS LAST, id DESC
          LIMIT ${REVIEW_LIST_PAGE_SIZE}`
       )
@@ -327,14 +329,14 @@ reviews.get('/reviews/list', async (c) => {
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
           <div class="px-6 py-4 border-b border-gray-100">
             <p class="font-semibold">
-              <i class="fas fa-comments mr-2 text-pink-500"></i>口コミ一覧(直近{REVIEW_LIST_PAGE_SIZE}件)
+              <i class="fas fa-comments mr-2 text-pink-500"></i>未返信の口コミ(最大{REVIEW_LIST_PAGE_SIZE}件)
             </p>
             <p class="text-xs text-gray-400 mt-1">
-              星4以上・HPB掲載済みの口コミは自動返信の対象です(自動返信を有効にしている場合)。それ以外はAI下書き→内容を確認・修正のうえ手動で返信投稿してください。
+              星4以上・HPB掲載済みの口コミは自動返信の対象です(自動返信を有効にしている場合)。それ以外はAI下書き→内容を確認・修正のうえ手動で返信投稿してください。返信済みの口コミはこの一覧から外れます。
             </p>
           </div>
           {rows.length === 0 ? (
-            <p class="text-sm text-gray-400 text-center py-10">口コミがありません</p>
+            <p class="text-sm text-gray-400 text-center py-10">未返信の口コミはありません</p>
           ) : (
             <div class="divide-y divide-gray-50" id="review-list-container">
               {rows.map((r) => (
@@ -356,75 +358,62 @@ reviews.get('/reviews/list', async (c) => {
                             担当: {r.stylist_name_raw}
                           </span>
                         )}
-                        {r.replied_at ? (
-                          <span class="text-xs font-semibold text-green-700 bg-green-50 rounded-full px-2 py-0.5">
-                            返信済み{r.reply_method === 'auto' ? '(自動)' : r.reply_method === 'manual' ? '(手動)' : ''}
-                          </span>
-                        ) : (
-                          <span class="text-xs font-semibold text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">未返信</span>
-                        )}
+                        <span class="text-xs font-semibold text-gray-500 bg-gray-100 rounded-full px-2 py-0.5">未返信</span>
                       </div>
                       <p class="text-xs text-gray-400 mt-1">{r.posted_at || ''}</p>
                     </div>
                   </div>
                   <p class="text-sm text-gray-700 mt-3 whitespace-pre-wrap">{r.content || '(本文なし)'}</p>
 
-                  {r.replied_at ? (
-                    <div class="mt-3 bg-gray-50 rounded-lg p-4">
-                      <p class="text-xs font-semibold text-gray-400 mb-1">サロンからの返信</p>
-                      <p class="text-sm text-gray-700 whitespace-pre-wrap">{r.reply_content}</p>
-                    </div>
-                  ) : (
-                    <div class="mt-3">
-                      <button
-                        type="button"
-                        class="review-reply-open-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-sm font-semibold px-4 py-2 rounded-lg"
-                        data-review-id={r.id}
-                      >
-                        <i class="fas fa-reply mr-1"></i>口コミを返信する
-                      </button>
-                      <div class="review-reply-form hidden mt-3 bg-gray-50 rounded-lg p-4 space-y-3" data-review-id={r.id}>
-                        <div class="flex items-center justify-between gap-2 flex-wrap">
-                          <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
-                          <div class="flex items-center gap-2">
-                            <button
-                              type="button"
-                              class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
-                              data-review-id={r.id}
-                            >
-                              <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
-                            </button>
-                            <button
-                              type="button"
-                              class="review-reply-close-btn bg-white border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
-                              data-review-id={r.id}
-                            >
-                              <i class="fas fa-xmark mr-1"></i>閉じる
-                            </button>
-                          </div>
-                        </div>
-                        <textarea
-                          class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
-                          rows={4}
-                          maxlength={500}
-                          placeholder="「AI下書きを生成」を押すか、直接入力してください(全角500文字以内)"
-                          data-review-id={r.id}
-                        >
-                          {r.ai_reply_draft || ''}
-                        </textarea>
-                        <div class="flex items-center justify-between gap-2">
-                          <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
+                  <div class="mt-3">
+                    <button
+                      type="button"
+                      class="review-reply-open-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-sm font-semibold px-4 py-2 rounded-lg"
+                      data-review-id={r.id}
+                    >
+                      <i class="fas fa-reply mr-1"></i>口コミを返信する
+                    </button>
+                    <div class="review-reply-form hidden mt-3 bg-gray-50 rounded-lg p-4 space-y-3" data-review-id={r.id}>
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <p class="text-xs font-semibold text-gray-400">返信文(AI下書き→修正のうえ投稿してください)</p>
+                        <div class="flex items-center gap-2">
                           <button
                             type="button"
-                            class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                            class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
                             data-review-id={r.id}
                           >
-                            この内容で返信する
+                            <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
+                          </button>
+                          <button
+                            type="button"
+                            class="review-reply-close-btn bg-white border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                            data-review-id={r.id}
+                          >
+                            <i class="fas fa-xmark mr-1"></i>閉じる
                           </button>
                         </div>
                       </div>
+                      <textarea
+                        class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
+                        rows={4}
+                        maxlength={500}
+                        placeholder="「AI下書きを生成」を押すか、直接入力してください(全角500文字以内)"
+                        data-review-id={r.id}
+                      >
+                        {r.ai_reply_draft || ''}
+                      </textarea>
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
+                        <button
+                          type="button"
+                          class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                          data-review-id={r.id}
+                        >
+                          この内容で返信する
+                        </button>
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </div>
               ))}
             </div>
