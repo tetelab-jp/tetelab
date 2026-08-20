@@ -196,6 +196,28 @@ data "aws_iam_policy_document" "log_reader" {
     actions   = ["servicequotas:GetServiceQuota", "servicequotas:ListServiceQuotas"]
     resources = ["*"]
   }
+  # 2026-08-20追記(ユーザー指定): SES本番アクセス(サンドボックス解除)申請が
+  # 却下されたため、審査に必要な設定(ドメイン検証・DKIM・MAIL FROM・
+  # バウンス/苦情通知)が揃っているかを実機で確認する用途。すべて読み取り専用。
+  statement {
+    sid = "ReadSesForProductionAccessAudit"
+    actions = [
+      "ses:GetAccount",
+      "ses:GetAccountSendingEnabled",
+      "ses:GetSendQuota",
+      "ses:GetSendStatistics",
+      "ses:ListIdentities",
+      "ses:GetIdentityVerificationAttributes",
+      "ses:GetIdentityDkimAttributes",
+      "ses:GetIdentityMailFromDomainAttributes",
+      "ses:GetIdentityNotificationAttributes",
+      "sesv2:GetAccount",
+      "sesv2:GetDedicatedIpPool",
+      "sesv2:ListEmailIdentities",
+      "sesv2:GetEmailIdentity"
+    ]
+    resources = ["*"]
+  }
 }
 
 resource "aws_iam_user_policy" "log_reader" {
