@@ -5,6 +5,7 @@ GUI(app.py)もCLI(cli.py)もここを呼ぶだけにして、画面まわりと�
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -81,6 +82,19 @@ class ReconcileResult:
     def needs_review_rows(self) -> list[ReconcileRow]:
         """完全一致しなかった対応。人が見て正しいか確かめる価値がある行。"""
         return [r for r in self.rows if r.method == 'fuzzy']
+
+
+def suggest_output_path(report_path: str, now: datetime | None = None) -> str:
+    """レポートのファイル名から、出力先の既定値を組み立てる。
+
+    レポートと同じフォルダに「<レポート名>_クーポン照合_<日時>.xlsx」を置く。
+    日時を入れるのは、同じレポートを繰り返し処理したときに前回の出力を
+    黙って上書きしないため。
+    """
+    stem = os.path.splitext(os.path.basename(report_path))[0]
+    stamp = (now or datetime.now()).strftime('%Y%m%d_%H%M')
+    folder = os.path.dirname(os.path.abspath(report_path))
+    return os.path.join(folder, f'{stem}_クーポン照合_{stamp}.xlsx')
 
 
 def load_report(path: str) -> SalonReport:

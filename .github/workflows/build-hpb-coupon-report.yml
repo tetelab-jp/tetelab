@@ -11,18 +11,20 @@ on:
     # mainのほか、作業ブランチでもビルドする。PRを作らずに実行ファイルを
     # 受け取れるようにするため(Artifactは各実行の画面からダウンロードできる)。
     branches: [main, 'claude/**']
-    paths:
+    paths: &build_paths
       - 'tools/hpb-coupon-report/**'
       - '.github/workflows/build-hpb-coupon-report.yml'
+      # 実行ファイルの中身が変わらない変更ではビルドしない
+      - '!tools/hpb-coupon-report/README.md'
+      - '!tools/hpb-coupon-report/assets/screenshot.png'
   pull_request:
-    paths:
-      - 'tools/hpb-coupon-report/**'
-      - '.github/workflows/build-hpb-coupon-report.yml'
+    paths: *build_paths
   workflow_dispatch: {}
 
 concurrency:
   group: build-hpb-coupon-report-${{ github.ref }}
-  cancel-in-progress: true
+  # 途中で止めない。止めると、完成を待っている実行ファイルが手に入らなくなる。
+  cancel-in-progress: false
 
 defaults:
   run:
@@ -87,6 +89,12 @@ jobs:
           pip install reportlab
           python -c "import sys; sys.path.insert(0, 'tests'); from fixtures import write_report_pdf; write_report_pdf('smoke.pdf')"
           python -c "import subprocess, sys, glob; exe = (glob.glob('dist/*.app/Contents/MacOS/hpb-coupon-report') + glob.glob('dist/hpb-coupon-report.exe') + glob.glob('dist/hpb-coupon-report'))[0]; sys.exit(subprocess.run([exe, '--report', 'smoke.pdf', '--out', 'smoke.xlsx']).returncode)"
+      - name: Info.plistの確認(標準ダイアログの言語に効く)
+        # 日本語の宣言(CFBundleLocalizations)が入っていないと、ファイル選択などの
+        # macOS標準ダイアログが英語になる。入ったかどうかをログに残す。
+        if: runner.os == 'macOS'
+        run: plutil -p dist/hpb-coupon-report.app/Contents/Info.plist | grep -i -E 'localization|region|BundleName'
+
       - name: macOS向けにtarでまとめる
         # Artifactのzip化では実行権限が落ちるため、.appをtarで固めてから渡す。
         # 権限が落ちた.appはFinderでダブルクリックしても起動しない。

@@ -12,20 +12,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from datetime import datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hpb_coupon.excel_out import write_workbook  # noqa: E402
-from hpb_coupon.pipeline import reconcile  # noqa: E402
-
-
-def default_output(report_path: str) -> str:
-    stem = os.path.splitext(os.path.basename(report_path))[0]
-    stamp = datetime.now().strftime('%Y%m%d_%H%M')
-    return os.path.join(
-        os.path.dirname(os.path.abspath(report_path)), f'{stem}_クーポン照合_{stamp}.xlsx'
-    )
+from hpb_coupon.pipeline import reconcile, suggest_output_path  # noqa: E402
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,7 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         threshold=args.threshold,
         progress=lambda message: print(f'  {message}'),
     )
-    output = write_workbook(result, args.out or default_output(args.report))
+    output = write_workbook(result, args.out or suggest_output_path(args.report))
 
     print()
     print(f'掲載クーポンの取得元: {result.coupon_source}')

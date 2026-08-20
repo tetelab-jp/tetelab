@@ -41,7 +41,7 @@ import customtkinter as ctk
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from hpb_coupon.excel_out import write_workbook  # noqa: E402
-from hpb_coupon.pipeline import reconcile  # noqa: E402
+from hpb_coupon.pipeline import reconcile, suggest_output_path  # noqa: E402
 
 SOURCE_REPORT = 'report'
 SOURCE_SCRAPE = 'scrape'
@@ -100,6 +100,9 @@ class App(ctk.CTk):
         self._queue: queue.Queue[tuple[str, object]] = queue.Queue()
         self._running = False
         self._last_output = ''
+        # 自動で入れた出力先を覚えておく。レポートを選び直したときに追随させたいが、
+        # 手で書き換えられていたら勝手に上書きしたくないため、両者を見分ける。
+        self._auto_output = ''
         self._stat_values: dict[str, ctk.CTkLabel] = {}
 
         self._build_widgets()
@@ -358,12 +361,11 @@ class App(ctk.CTk):
         if not path:
             return
         self.report_path.set(path)
-        if not self.output_path.get():
-            stem = os.path.splitext(os.path.basename(path))[0]
-            stamp = datetime.now().strftime('%Y%m%d_%H%M')
-            self.output_path.set(
-                os.path.join(os.path.dirname(path), f'{stem}_クーポン照合_{stamp}.xlsx')
-            )
+        # 出力先が空か、前回こちらが自動で入れた値のままなら、選び直したレポートに合わせる
+        if self.output_path.get() in ('', self._auto_output):
+            suggested = suggest_output_path(path)
+            self.output_path.set(suggested)
+            self._auto_output = suggested
 
     def _pick_html(self) -> None:
         paths = filedialog.askopenfilenames(
@@ -383,6 +385,7 @@ class App(ctk.CTk):
         )
         if path:
             self.output_path.set(path)
+            self._auto_output = ''  # 明示的に指定されたので、以後は自動で書き換えない
 
     def _open_output(self) -> None:
         if not self._last_output or not os.path.exists(self._last_output):

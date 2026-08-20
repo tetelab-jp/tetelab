@@ -72,5 +72,11 @@ if sys.platform == 'darwin':
             'CFBundleName': 'HPBクーポン照合',
             'CFBundleDisplayName': 'HPBクーポン予約数 照合ツール',
             'NSHighResolutionCapable': True,
+            # ファイル選択などのmacOS標準ダイアログは、アプリが対応を宣言している
+            # 言語の中からOSが選ぶ。宣言が無いと英語のままになるため、日本語を
+            # 開発言語として明示し、対応言語にも入れておく。
+            'CFBundleDevelopmentRegion': 'ja',
+            'CFBundleLocalizations': ['ja', 'en'],
+            'CFBundleAllowMixedLocalizations': True,
         },
     )

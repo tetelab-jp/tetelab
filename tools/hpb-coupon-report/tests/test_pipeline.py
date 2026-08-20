@@ -1,5 +1,7 @@
 """レポート読み取り〜照合〜出力までの通しの検証。"""
 
+import os
+
 from openpyxl import load_workbook
 
 from fixtures import (
@@ -178,3 +180,26 @@ def test_出力に掲載履歴の列が入る(tmp_path):
     info = {row[0]: row[1] for row in workbook['実行情報'].iter_rows(min_row=2, values_only=True)}
     assert info['改名を検出したクーポン'] == 1
     assert info['掲載履歴が取れた月号'] == ' / '.join(LISTED_MONTHS)
+
+
+def test_出力先の既定値はレポート名と日時から作る():
+    from datetime import datetime
+
+    from hpb_coupon.pipeline import suggest_output_path
+
+    path = suggest_output_path(
+        '/Users/tete/Downloads/2607_sunny.pdf', now=datetime(2026, 8, 20, 13, 45)
+    )
+    assert path == '/Users/tete/Downloads/2607_sunny_クーポン照合_20260820_1345.xlsx'
+
+
+def test_出力先はレポートと同じフォルダに作る(tmp_path):
+    from hpb_coupon.pipeline import suggest_output_path
+
+    report = tmp_path / 'サブフォルダ' / 'report.xlsx'
+    report.parent.mkdir()
+    report.write_text('', encoding='utf-8')
+
+    path = suggest_output_path(str(report))
+    assert os.path.dirname(path) == str(report.parent)
+    assert path.endswith('.xlsx')
