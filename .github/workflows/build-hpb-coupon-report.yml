@@ -21,10 +21,11 @@ on:
     paths: *build_paths
   workflow_dispatch: {}
 
-concurrency:
-  group: build-hpb-coupon-report-${{ github.ref }}
-  # 途中で止めない。止めると、完成を待っている実行ファイルが手に入らなくなる。
-  cancel-in-progress: false
+# 同時実行の制限は掛けない。
+# このワークフローは実行ファイルを作るだけで、共有資源を触らないため直列化する
+# 理由がない。むしろ直列化すると、順番待ちの長いmacos-13(Intel)のジョブを含む
+# 古い実行が列を塞ぎ、後続のビルドがいつまでも始まらなくなる(実際に起きた)。
+# cancel-in-progress: true にすると、今度は完成を待っているビルドが打ち切られる。
 
 defaults:
   run:
