@@ -50,3 +50,58 @@ resource "aws_route53_record" "ses_dkim" {
   ttl     = 600
   records = ["${aws_ses_domain_dkim.main[0].dkim_tokens[count.index]}.dkim.amazonses.com"]
 }
+
+# 2026-08-20追記(SES本番アクセス再申請の準備): 送信制限引き上げ申請が
+# 一度却下された件を受け、審査で重視されるカスタムMAIL FROMドメインと
+# バウンス/苦情通知の設定を追加する。ドメイン検証・DKIMのみでは、SESの
+# デフォルトMAIL FROM(amazonses.com配下)がSPF発行元として使われ続け、
+# 独自ドメインでのSPF整合が取れない状態だった。
+
+# カスタムMAIL FROMドメイン(mail.<domain_name>)。デフォルトの
+# amazonses.comサブドメインではなく自ドメイン配下にすることで、
+# SPFのenvelope-fromが独自ドメインと一致し、迷惑メール判定・審査の両面で有利になる。
+resource "aws_ses_domain_mail_from" "main" {
+  count            = local.has_domain ? 1 : 0
+  domain           = aws_ses_domain_identity.main[0].domain
+  mail_from_domain = "mail.${var.domain_name}"
+}
+
+# MAIL FROMドメイン用MXレコード(SESのバウンスメール受信用)
+resource "aws_route53_record" "ses_mail_from_mx" {
+  count   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
+  zone_id = data.aws_route53_zone.primary[0].zone_id
+  name    = aws_ses_domain_mail_from.main[0].mail_from_domain
+  type    = "MX"
+  ttl     = 600
+  records = ["10 feedback-smtp.${var.aws_region}.amazonses.com"]
+}
+
+# MAIL FROMドメイン用SPFレコード(このドメインからのSES送信を正当と示す)
+resource "aws_route53_record" "ses_mail_from_spf" {
+  count   = local.has_domain && var.manage_dns_in_route53 ? 1 : 0
+  zone_id = data.aws_route53_zone.primary[0].zone_id
+  name    = aws_ses_domain_mail_from.main[0].mail_from_domain
+  type    = "TXT"
+  ttl     = 600
+  records = ["v=spf1 include:amazonses.com ~all"]
+}
+
+# バウンス・苦情通知。既存の共通SNSトピック(monitoring.tf の
+# aws_sns_topic.alerts、通知先メールは既に購読済み)を再利用し、
+# 新規のSNSトピック・購読を増やさない。SESがこのトピックへpublishできるよう
+# 許可するIAMポリシーステートメントはmonitoring.tf側のトピックポリシーに追加している。
+resource "aws_ses_identity_notification_topic" "bounce" {
+  count                    = local.has_domain ? 1 : 0
+  identity                 = aws_ses_domain_identity.main[0].domain
+  notification_type        = "Bounce"
+  topic_arn                = aws_sns_topic.alerts.arn
+  include_original_headers = true
+}
+
+resource "aws_ses_identity_notification_topic" "complaint" {
+  count                    = local.has_domain ? 1 : 0
+  identity                 = aws_ses_domain_identity.main[0].domain
+  notification_type        = "Complaint"
+  topic_arn                = aws_sns_topic.alerts.arn
+  include_original_headers = true
+}
