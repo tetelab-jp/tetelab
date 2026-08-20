@@ -236,6 +236,21 @@ resource "aws_sns_topic_policy" "alerts_allow_eventbridge" {
         Principal = { Service = "events.amazonaws.com" }
         Action    = "SNS:Publish"
         Resource  = aws_sns_topic.alerts.arn
+      },
+      # 2026-08-20追記: SESのバウンス・苦情通知(ses.tfのaws_ses_identity_notification_topic)を
+      # この共通トピックへpublishできるようにする。SourceAccountで自アカウント発のSESからの
+      # publishのみに限定する。
+      {
+        Sid       = "AllowSesPublish"
+        Effect    = "Allow"
+        Principal = { Service = "ses.amazonaws.com" }
+        Action    = "SNS:Publish"
+        Resource  = aws_sns_topic.alerts.arn
+        Condition = {
+          StringEquals = {
+            "AWS:SourceAccount" = data.aws_caller_identity.current.account_id
+          }
+        }
       }
     ]
   })

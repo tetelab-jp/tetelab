@@ -88,6 +88,22 @@ output "ses_dkim_records" {
   ] : []
 }
 
+output "ses_mail_from_records" {
+  description = "manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSESカスタムMAIL FROMドメイン用レコード(MX・SPF/TXTの2件)"
+  value = local.has_domain ? [
+    {
+      name  = aws_ses_domain_mail_from.main[0].mail_from_domain
+      type  = "MX"
+      value = "10 feedback-smtp.${var.aws_region}.amazonses.com"
+    },
+    {
+      name  = aws_ses_domain_mail_from.main[0].mail_from_domain
+      type  = "TXT"
+      value = "v=spf1 include:amazonses.com ~all"
+    }
+  ] : []
+}
+
 output "rds_endpoint" {
   description = "データ移行スクリプト実行時などに使う接続先(ホスト:ポート)"
   value       = aws_db_instance.main.endpoint
