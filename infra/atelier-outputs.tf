@@ -39,6 +39,42 @@ output "atelier_images_bucket" {
   value = aws_s3_bucket.atelier_images.bucket
 }
 
+output "atelier_ses_domain_verification_record" {
+  description = "atelier_manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSESドメイン所有権検証用TXTレコード"
+  value = local.atelier_has_domain ? {
+    name  = "_amazonses.${var.atelier_domain_name}"
+    type  = "TXT"
+    value = aws_ses_domain_identity.atelier[0].verification_token
+  } : null
+}
+
+output "atelier_ses_dkim_records" {
+  description = "atelier_manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSES DKIM署名用CNAMEレコード(3件)"
+  value = local.atelier_has_domain ? [
+    for token in aws_ses_domain_dkim.atelier[0].dkim_tokens : {
+      name  = "${token}._domainkey.${var.atelier_domain_name}"
+      type  = "CNAME"
+      value = "${token}.dkim.amazonses.com"
+    }
+  ] : []
+}
+
+output "atelier_ses_mail_from_records" {
+  description = "atelier_manage_dns_in_route53=false の場合、自分のDNSに追加が必要なSESカスタムMAIL FROMドメイン用レコード(MX・SPF/TXTの2件)"
+  value = local.atelier_has_domain ? [
+    {
+      name  = aws_ses_domain_mail_from.atelier[0].mail_from_domain
+      type  = "MX"
+      value = "10 feedback-smtp.${var.aws_region}.amazonses.com"
+    },
+    {
+      name  = aws_ses_domain_mail_from.atelier[0].mail_from_domain
+      type  = "TXT"
+      value = "v=spf1 include:amazonses.com ~all"
+    }
+  ] : []
+}
+
 output "atelier_alb_dns_name" {
   description = "atelier_manage_dns_in_route53=false の場合、自分のDNSでatelier_domain_nameをこのALBへ向けること(CNAME)"
   value       = aws_lb.app.dns_name
