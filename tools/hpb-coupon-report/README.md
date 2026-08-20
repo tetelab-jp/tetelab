@@ -21,8 +21,8 @@
 
 **方法A: 単体アプリを使う（推奨。Pythonのインストール不要）**
 
-GitHubの Actions → `Build HPB coupon report app` → 最新の実行 → Artifacts から
-自分のOS向けをダウンロードする。中身は実行ファイル1つだけ。
+GitHubにログインした状態で Actions → `Build HPB coupon report app` → 最新の実行を開き、
+ページ下部の **Artifacts** から自分のOS向けをダウンロードする。中身は実行ファイル1つだけ。
 
 | OS | Artifact | 使い方 |
 | --- | --- | --- |
@@ -34,23 +34,27 @@ GitHubの Actions → `Build HPB coupon report app` → 最新の実行 → Arti
 自分のMacがどちらかは、左上のリンゴマーク →「このMacについて」で確認できる
 （チップが **Apple M1/M2/M3…** なら Apple Silicon、**Intel Core…** なら Intel）。
 
-**macOSでの手順**
+**macOSでの手順（Finderだけで完結します。ターミナルは不要）**
 
-```bash
-# Artifactのzipを展開すると tar.gz が出てくるので、それを展開する
-tar -xzf hpb-coupon-report-macos.tar.gz
-# ダウンロード時に付く隔離属性を外す(これをしないと「壊れている」と言われる)
-xattr -dr com.apple.quarantine hpb-coupon-report.app
-open hpb-coupon-report.app
-```
+1. ダウンロードした zip をダブルクリックする → フォルダができる
+2. 中に入っている `hpb-coupon-report-macos.tar.gz` をダブルクリックする
+   → `hpb-coupon-report.app` ができる
+3. できた `.app` を「アプリケーション」フォルダに移動する（任意。どこに置いても動く）
+4. ダブルクリックする → **「開発元を検証できないため開けません」と出る**（初回だけ）
+5. 「完了」で閉じ、**アップルマーク → システム設定 → プライバシーとセキュリティ** を開く
+6. 下のほうに「"hpb-coupon-report"は開発元を確認できないため、使用がブロックされました」
+   と出ているので、その横の **「このまま開く」** を押す（Touch IDかパスワードを求められる）
+7. 2回目以降は普通にダブルクリックで開く
 
-Artifactのzipでは実行権限が落ちてしまうため、macOS版は`.app`をtarで固めて配っている。
+> 古いmacOS（Monterey/Venturaなど）では、5〜6の代わりに
+> `.app` を **右クリック（またはcontrolキーを押しながらクリック）→「開く」→「開く」** でも起動できる。
 
-> **初回起動時に警告が出ます。** コード署名をしていないため、
-> Windowsでは「WindowsによってPCが保護されました」→ **詳細情報** → **実行**、
-> macOSでは上記の `xattr` を実行するか、右クリック → **開く** → **開く**。
-> （署名するには有料のApple Developer Program登録が必要なので、
-> 社内利用の範囲では未署名のままにしている）
+この警告はアプリが壊れているわけではなく、**Appleに料金を払って署名していない**
+アプリすべてに出るもの。署名するにはApple Developer Program（年額99ドル）の登録が必要なので、
+社内利用の範囲では未署名のままにしている。
+
+なおArtifactのzipでは実行権限が落ちてしまうため、macOS版は`.app`をtarで固めて配っている
+（手順2が1つ増えているのはこのため）。
 
 ファイル名は自由に変えてよい（例: `クーポン照合.exe`）。中身は1ファイルで完結している。
 
