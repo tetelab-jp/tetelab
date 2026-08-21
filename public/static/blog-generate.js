@@ -7,10 +7,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   var imageInput = document.getElementById('blog-generate-image-input')
   var dropzoneLabel = document.getElementById('blog-generate-dropzone-label')
+  var dropzoneIcon = document.getElementById('blog-generate-dropzone-icon')
+  var previewImg = document.getElementById('blog-generate-preview')
   if (imageInput && dropzoneLabel) {
     imageInput.addEventListener('change', function () {
       var file = imageInput.files && imageInput.files[0]
       dropzoneLabel.textContent = file ? file.name : 'タップして画像を選択'
+      // 2026-08-21追記(ユーザー指定): 画像を選択し終えたら、その場でプレビュー表示する
+      if (file && previewImg) {
+        var reader = new FileReader()
+        reader.onload = function (e) {
+          previewImg.src = e.target.result
+          previewImg.classList.remove('hidden')
+          if (dropzoneIcon) dropzoneIcon.classList.add('hidden')
+        }
+        reader.readAsDataURL(file)
+      } else if (previewImg) {
+        previewImg.classList.add('hidden')
+        previewImg.removeAttribute('src')
+        if (dropzoneIcon) dropzoneIcon.classList.remove('hidden')
+      }
     })
   }
 

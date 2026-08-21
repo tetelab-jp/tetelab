@@ -11,6 +11,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const paginationLabelEl = document.getElementById('import-pagination-label')
   const pagePrevBtn = document.getElementById('import-page-prev')
   const pageNextBtn = document.getElementById('import-page-next')
+  const lastFetchAtEl = document.getElementById('style-fetch-last-at')
   const progressModal = document.getElementById('import-progress-modal')
   const progressText = document.getElementById('import-progress-text')
   const abortBtn = document.getElementById('import-abort-btn')
@@ -233,7 +234,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (cached && cached.styles.length > 0) {
     setStyles(cached.styles)
     statusEl.textContent =
-      cached.styles.length + '件のスタイル（最終取得: ' + formatFetchedAt(cached.fetchedAt) + '）を表示しています。最新の状態にするには再取得してください。'
+      cached.styles.length + '件のスタイルを表示しています。最新の状態にするには再取得してください。'
   }
 
   if (fetchBtn) {
@@ -257,8 +258,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         setStyles(data.styles)
         saveCache(data.styles)
-        statusEl.textContent =
-          data.styles.length + '件のスタイル（最終取得: ' + formatFetchedAt(Date.now()) + '）が見つかりました'
+        statusEl.textContent = data.styles.length + '件のスタイルが見つかりました'
+        if (lastFetchAtEl) lastFetchAtEl.textContent = '最終取得: ' + formatFetchedAt(Date.now())
       } catch (e) {
         statusEl.textContent = '通信エラーが発生しました'
       } finally {

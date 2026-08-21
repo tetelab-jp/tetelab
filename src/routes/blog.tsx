@@ -172,15 +172,17 @@ blog.get('/blog/salon', async (c) => {
         <div class="flex-1 min-w-[240px]">
           <p class="font-semibold text-sm">サロンボードから読み込む</p>
           <p class="text-xs text-gray-400 mt-1">
-            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
-          </p>
-          <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}（参考記事{referenceArticleCount}件）
+            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします
           </p>
         </div>
-        <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-          サロンボードからブログ読み込み
-        </button>
+        <div class="flex flex-col items-center gap-1">
+          <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+            サロンボードからブログ読み込み
+          </button>
+          <p id="blog-salon-last-at" class="text-xs text-gray-400">
+            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
+          </p>
+        </div>
         <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
       </div>
 
@@ -409,8 +411,14 @@ blog.get('/blog/template', async (c) => {
     .all<CategoryRow>()
 
   const catList = categories || []
-  const selectedId = Number(c.req.query('category')) || catList[0]?.id || 0
-  const selected = catList.find((cat) => cat.id === selectedId) || null
+  // 2026-08-21追記(ユーザー指定): 「新規追加」と「既存編集」の境界が
+  // わかりにくかったため、常に選択状態を表示する一体型UIをやめ、
+  // クエリパラメータで3状態(ランディング/新規追加フォーム/編集フォーム)を
+  // 切り替えるページ遷移方式に変更する。
+  const isNewMode = c.req.query('new') === '1'
+  const categoryParam = c.req.query('category')
+  const selectedId = categoryParam ? Number(categoryParam) : 0
+  const selected = selectedId ? catList.find((cat) => cat.id === selectedId) || null : null
 
   const { results: stylists } = await c.env.DB.prepare(
     'SELECT id, name FROM stylists WHERE user_id = ? AND salon_id = ? AND is_active = 1 ORDER BY sort_order ASC'
@@ -435,146 +443,164 @@ blog.get('/blog/template', async (c) => {
         </div>
       )}
 
-      <div class="flex gap-6 flex-col lg:flex-row">
-        <div class="bg-white rounded-xl border border-gray-100 lg:w-64 flex-none p-4 space-y-4">
-          {catList.length < 10 && (
-            <form method="post" action="/blog/template/categories/add" class="flex flex-col gap-2">
-              <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs" />
-              <button type="submit" class="w-full bg-pink-500 hover:bg-pink-600 text-white text-xs font-semibold px-3 py-1.5 rounded-lg">カテゴリ追加</button>
+      {isNewMode ? (
+        <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+          <a href="/blog/template" class="text-xs text-pink-600 hover:underline">
+            <i class="fas fa-arrow-left mr-1"></i>テンプレート一覧に戻る
+          </a>
+          <p class="font-semibold">
+            <i class="fas fa-plus mr-2 text-pink-500"></i>新しい記事テンプレートを追加
+          </p>
+          {catList.length >= 10 ? (
+            <p class="text-sm text-gray-400">記事カテゴリは最大10件までです。既存のテンプレートを整理してから追加してください。</p>
+          ) : (
+            <form method="post" action="/blog/template/categories/add" class="flex flex-col sm:flex-row gap-2">
+              <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+              <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg flex-shrink-0">カテゴリを追加する</button>
             </form>
           )}
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <p class="font-semibold text-sm">テンプレート一覧</p>
+        </div>
+      ) : selected ? (
+        <div class="space-y-6 min-w-0">
+          <a href="/blog/template" class="text-xs text-pink-600 hover:underline">
+            <i class="fas fa-arrow-left mr-1"></i>テンプレート一覧に戻る
+          </a>
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-center justify-between mb-3">
+              <p class="font-semibold">
+                <i class="fas fa-tag mr-2 text-pink-500"></i>この記事カテゴリについて
+              </p>
+              <form method="post" action={`/blog/template/categories/${selected.id}/delete`} onsubmit="return confirm('このカテゴリを削除します(記事のカテゴリ設定は解除されます)。よろしいですか？')">
+                <button type="submit" class="text-xs text-gray-400 hover:text-red-500">
+                  <i class="fas fa-trash mr-1"></i>削除
+                </button>
+              </form>
+            </div>
+            <form method="post" action={`/blog/template/categories/${selected.id}`} class="space-y-4">
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">名前</label>
+                  <input type="text" name="name" value={selected.name} required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">HPBブログカテゴリ</label>
+                  <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                    <option value="">選択しない</option>
+                    {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
+                      <option value={opt} selected={selected.hpb_category_value === opt}>{opt}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label class="block text-sm font-medium text-gray-700 mb-1">デフォルト投稿者</label>
+                  <select name="default_stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                    <option value="">選択しない</option>
+                    {(stylists || []).map((st) => (
+                      <option value={st.id} selected={selected.default_stylist_id === st.id}>{st.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+              <div>
+                {hasReferenceMaterial ? (
+                  <p class="text-xs text-green-600 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                    <i class="fas fa-circle-check mr-1"></i>
+                    サロンボードから読み込んだ過去のブログ記事・キャッチ・コピー・メッセージを参考に生成します
+                  </p>
+                ) : (
+                  <p class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <i class="fas fa-triangle-exclamation mr-1"></i>
+                    生成するためには先に
+                    <a href="/blog/salon" class="underline font-semibold">「サロンボードから読み込む」</a>
+                    を実行してください
+                  </p>
+                )}
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  配信する月を限定する<span class="text-xs text-gray-400 ml-2">選んだ月ごろの内容として生成され、その記事の投稿予定月にもなります</span>
+                </label>
+                <div class="flex flex-wrap gap-3">
+                  {(() => {
+                    const selectedMonths = parseSeasonMonths(selected.season_months_json)
+                    return SEASON_MONTH_PAIRS.map(([m1, m2]) => (
+                      <label class="flex items-center gap-1.5 text-sm">
+                        <input
+                          type="checkbox"
+                          name="season_pairs"
+                          value={`${m1},${m2}`}
+                          checked={selectedMonths.includes(m1) && selectedMonths.includes(m2)}
+                          class="accent-pink-500"
+                        />
+                        {m1}・{m2}月
+                      </label>
+                    ))
+                  })()}
+                </div>
+              </div>
+              <div>
+                <label class="block text-sm font-medium text-gray-700 mb-1">
+                  伝えたいこと(本文の生成指示)<span class="text-xs text-gray-400 ml-2">記事の中身になります</span>
+                </label>
+                <textarea id="key-message-input" name="key_message" rows={3} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{selected.key_message || ''}</textarea>
+                <button type="button" id="generate-draft-btn" data-category-id={selected.id} class="mt-2 text-xs text-pink-600 hover:underline">
+                  <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで下書き生成
+                </button>
+              </div>
+              <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg">保存する</button>
+            </form>
+          </div>
+          <p class="text-xs text-gray-400">
+            このテンプレートを使って記事を作るには
+            <a href="/blog/generate" class="text-pink-600 hover:underline">AI記事生成</a>
+            画面を開いてください。
+          </p>
+        </div>
+      ) : (
+        <div class="space-y-6">
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <p class="font-semibold mb-3">
+              <i class="fas fa-plus mr-2 text-pink-500"></i>新しい記事テンプレートを追加
+            </p>
+            <a
+              href="/blog/template?new=1"
+              class="inline-block bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
+            >
+              新しい記事テンプレートを追加する
+            </a>
+          </div>
+
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-center justify-between mb-3">
+              <p class="font-semibold">
+                <i class="fas fa-pen mr-2 text-pink-500"></i>既存の記事テンプレートを編集
+              </p>
               <span class="text-xs text-gray-400">{catList.length}/10</span>
             </div>
             {catList.length === 0 ? (
-              <p class="text-sm text-gray-400">まだありません</p>
+              <p class="text-sm text-gray-400">まだテンプレートがありません。上のボタンから作成してください。</p>
             ) : (
-              <select
-                onchange="location.href='/blog/template?category='+this.value"
-                class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              >
-                {catList.map((cat) => (
-                  <option value={cat.id} selected={cat.id === selectedId}>
-                    {cat.name}
-                    {!cat.hpb_category_value ? '(HPB未設定)' : ''}
-                  </option>
-                ))}
-              </select>
+              <div class="space-y-3">
+                <select id="template-edit-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  {catList.map((cat) => (
+                    <option value={cat.id}>
+                      {cat.name}
+                      {!cat.hpb_category_value ? '(HPB未設定)' : ''}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  onclick="location.href='/blog/template?category='+document.getElementById('template-edit-select').value"
+                  class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
+                >
+                  既存の記事テンプレートを編集
+                </button>
+              </div>
             )}
           </div>
         </div>
-
-        {!selected ? (
-          <div class="flex-1 bg-white rounded-xl border border-gray-100 p-6 text-sm text-gray-400">
-            左の入力欄から記事カテゴリを追加してください。
-          </div>
-        ) : (
-          <div class="flex-1 space-y-6 min-w-0">
-            <div class="bg-white rounded-xl border border-gray-100 p-6">
-              <div class="flex items-center justify-between mb-3">
-                <p class="font-semibold">
-                  <i class="fas fa-tag mr-2 text-pink-500"></i>この記事カテゴリについて
-                </p>
-                <form method="post" action={`/blog/template/categories/${selected.id}/delete`} onsubmit="return confirm('このカテゴリを削除します(記事のカテゴリ設定は解除されます)。よろしいですか？')">
-                  <button type="submit" class="text-xs text-gray-400 hover:text-red-500">
-                    <i class="fas fa-trash mr-1"></i>削除
-                  </button>
-                </form>
-              </div>
-              <form method="post" action={`/blog/template/categories/${selected.id}`} class="space-y-4">
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">名前</label>
-                    <input type="text" name="name" value={selected.name} required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-                  </div>
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">HPBブログカテゴリ</label>
-                    <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                      <option value="">選択しない</option>
-                      {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
-                        <option value={opt} selected={selected.hpb_category_value === opt}>{opt}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">デフォルト投稿者</label>
-                    <select name="default_stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
-                      <option value="">選択しない</option>
-                      {(stylists || []).map((st) => (
-                        <option value={st.id} selected={selected.default_stylist_id === st.id}>{st.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  {hasReferenceMaterial ? (
-                    <p class="text-xs text-green-600 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                      <i class="fas fa-circle-check mr-1"></i>
-                      サロンボードから読み込んだ過去のブログ記事・キャッチ・コピー・メッセージを参考に生成します
-                    </p>
-                  ) : (
-                    <p class="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-                      <i class="fas fa-triangle-exclamation mr-1"></i>
-                      生成するためには先に
-                      <a href="/blog/salon" class="underline font-semibold">「サロンボードから読み込む」</a>
-                      を実行してください
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">
-                    季節柄<span class="text-xs text-gray-400 ml-2">選んだ月ごろの内容として生成され、その記事の投稿予定月にもなります</span>
-                  </label>
-                  <div class="flex flex-wrap gap-3">
-                    {(() => {
-                      const selectedMonths = parseSeasonMonths(selected.season_months_json)
-                      return SEASON_MONTH_PAIRS.map(([m1, m2]) => (
-                        <label class="flex items-center gap-1.5 text-sm">
-                          <input
-                            type="checkbox"
-                            name="season_pairs"
-                            value={`${m1},${m2}`}
-                            checked={selectedMonths.includes(m1) && selectedMonths.includes(m2)}
-                            class="accent-pink-500"
-                          />
-                          {m1}・{m2}月
-                        </label>
-                      ))
-                    })()}
-                  </div>
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">
-                    伝えたいこと<span class="text-xs text-gray-400 ml-2">記事の中身になります</span>
-                  </label>
-                  <textarea id="key-message-input" name="key_message" rows={3} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{selected.key_message || ''}</textarea>
-                  <button type="button" id="generate-draft-btn" data-category-id={selected.id} class="mt-2 text-xs text-pink-600 hover:underline">
-                    <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで下書き生成
-                  </button>
-                </div>
-                <div>
-                  <label class="block text-sm font-medium text-gray-700 mb-1">本文の生成指示</label>
-                  <textarea name="body_prompt" rows={5} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs font-mono">{selected.body_prompt || ''}</textarea>
-                  <div class="flex gap-1 flex-wrap mt-2">
-                    {['{サロン名}', '{エリア}', '{カテゴリ}', '{伝えたいこと}', '{画像の説明}', '{客層}', '{文体}', '{スタイリスト}', '{クーポン名}', '{本文上限}'].map((v) => (
-                      <span class="text-xs px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-mono">{v}</span>
-                    ))}
-                  </div>
-                  <p class="text-xs text-gray-400 mt-1">未入力の場合は標準の指示文を使用します</p>
-                </div>
-                <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg">保存する</button>
-              </form>
-            </div>
-            <p class="text-xs text-gray-400">
-              このテンプレートを使って記事を作るには
-              <a href="/blog/generate" class="text-pink-600 hover:underline">AI記事生成</a>
-              画面を開いてください。
-            </p>
-          </div>
-        )}
-      </div>
+      )}
 
       <form method="post" action="/blog/template/salon-info" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -1397,7 +1423,8 @@ blog.get('/blog/generate', async (c) => {
               id="blog-generate-dropzone"
               class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
             >
-              <i class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+              <i id="blog-generate-dropzone-icon" class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+              <img id="blog-generate-preview" class="hidden max-h-48 rounded-lg object-contain" />
               <span id="blog-generate-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
               <span class="text-xs text-gray-400">この画像の内容をAIが読み取り、記事の材料にします</span>
             </label>

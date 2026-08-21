@@ -51,19 +51,49 @@ function SyncStatusPanel({ backfillDone, lastSyncRunAt }: { backfillDone: boolea
               ? 'サロンボードとHPBから最新の口コミを取得します(通常1〜2分程度で完了します)。'
               : 'サロンボードの口コミ一覧とHPBの公開口コミ一覧を突き合わせて、過去全件を取り込みます(通常1〜2分程度で完了します)。'}
           </p>
-          {backfillDone && lastSyncRunAt && (
-            <p class="text-xs text-gray-400 mt-1">最終同期: {formatJstDateTimeCompact(lastSyncRunAt)}</p>
+        </div>
+        <div class="flex flex-col items-center gap-1">
+          <button
+            id="review-sync-start-btn"
+            type="button"
+            class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap disabled:opacity-50"
+          >
+            {backfillDone ? 'サロンボードから口コミを同期' : '取り込みを開始'}
+          </button>
+          {backfillDone && (
+            <p class="text-xs text-gray-400 whitespace-nowrap">
+              最終同期: {lastSyncRunAt ? formatJstDateTimeCompact(lastSyncRunAt) : '未実施'}
+            </p>
           )}
         </div>
-        <button
-          id="review-sync-start-btn"
-          type="button"
-          class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap disabled:opacity-50"
-        >
-          {backfillDone ? 'サロンボードから口コミを同期' : '取り込みを開始'}
-        </button>
       </div>
       <p id="review-sync-status-text" class="text-sm text-gray-500 mt-3"></p>
+    </div>
+  )
+}
+
+// 2026-08-21追記(ユーザー指定): ①口コミ評価推移・②スタイリスト別評価の
+// 2ページからは手動同期ボタンを削除し、口コミデータの同期は毎週月曜21時
+// (JST)の自動処理のみで反映する(review-sync-runner.tsのrunSyncStepForSalon
+// 参照)。手動同期ボタンは③口コミ返信ページ(SyncStatusPanel)にのみ残す。
+function ReviewAutoSyncInfo({ backfillDone, lastSyncRunAt }: { backfillDone: boolean; lastSyncRunAt: string | null }) {
+  return (
+    <div class="bg-white rounded-xl border border-gray-100 p-6">
+      <p class="font-semibold">
+        <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>口コミデータの同期
+      </p>
+      {backfillDone ? (
+        <>
+          <p class="text-sm text-gray-600 mt-1">毎週月曜21時に、サロンボードとHPBの最新の口コミを自動で取得・反映します。</p>
+          <p class="text-xs text-gray-400 mt-1">最終同期: {lastSyncRunAt ? formatJstDateTimeCompact(lastSyncRunAt) : '未実施'}</p>
+        </>
+      ) : (
+        <p class="text-sm text-gray-600 mt-1">
+          まだ初回データ取り込みが完了していません。
+          <a href="/reviews/list" class="text-pink-600 hover:underline">口コミ返信</a>
+          画面から取り込みを開始してください。
+        </p>
+      )}
     </div>
   )
 }
@@ -83,7 +113,7 @@ reviews.get('/reviews/trend', async (c) => {
 
   return c.render(
     <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
-      <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
+      <ReviewAutoSyncInfo backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
         <>
@@ -170,7 +200,7 @@ reviews.get('/reviews/by-stylist', async (c) => {
 
   return c.render(
     <PageLayout active="review-by-stylist" salonName={user.salon_name} title="スタイリスト別評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
-      <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
+      <ReviewAutoSyncInfo backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
         <>
