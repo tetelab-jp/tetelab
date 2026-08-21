@@ -260,7 +260,7 @@ async function dispatchReviewReplyJob(
   }
 }
 
-type ScheduleState = { enabled: number; paused_until: string | null }
+type ScheduleState = { enabled: number; paused_until: string | null; use_past_replies: number }
 
 async function canReplyNow(env: Bindings, salonId: number | null, schedule: ScheduleState): Promise<boolean> {
   if (schedule.enabled !== 1) return false
@@ -300,12 +300,17 @@ async function selectNextEligibleReview(env: Bindings, userId: number, salonId: 
 export type ReviewReplyDispatchResult = { dispatched: boolean; jobId?: number; reviewId?: number }
 
 /** 1件だけ、次に返信すべき口コミを生成・投入する(バッチループの1ステップ)。 */
-async function dispatchNextReviewReply(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyDispatchResult> {
+async function dispatchNextReviewReply(
+  env: Bindings,
+  userId: number,
+  salonId: number | null,
+  usePastReplies: boolean
+): Promise<ReviewReplyDispatchResult> {
   const review = await selectNextEligibleReview(env, userId, salonId)
   if (!review) return { dispatched: false }
 
   const profile = await loadSalonProfileForGeneration(env, userId, salonId)
-  const pastReplies = await loadRecentReviewReplies(env, salonId)
+  const pastReplies = usePastReplies ? await loadRecentReviewReplies(env, salonId) : []
   const reviewInput: ReviewForReplyGeneration = {
     scoreOverall: review.score_overall,
     content: review.content,
@@ -338,7 +343,7 @@ export type ReviewReplyBatchResult = { totalDispatched: number }
  * その時点で打ち切る。
  */
 export async function runReviewReplyBatchForUser(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyBatchResult> {
-  const schedule = await env.DB.prepare(`SELECT enabled, paused_until FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
+  const schedule = await env.DB.prepare(`SELECT enabled, paused_until, use_past_replies FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
     .bind(userId, salonId)
     .first<ScheduleState>()
   if (!schedule) return { totalDispatched: 0 }
@@ -346,9 +351,10 @@ export async function runReviewReplyBatchForUser(env: Bindings, userId: number, 
 
   await requireCredentialsConfigured(env, userId)
 
+  const usePastReplies = schedule.use_past_replies !== 0
   let totalDispatched = 0
   for (;;) {
-    const result = await dispatchNextReviewReply(env, userId, salonId)
+    const result = await dispatchNextReviewReply(env, userId, salonId, usePastReplies)
     // dispatched=falseは「対象の口コミが無くなった(正常終了)」と「直近の
     // 口コミへの投入に失敗した」の両方で返る。後者の場合、同じ口コミを
     // 選び直して即再試行すると同じ理由で失敗し続ける恐れがあるため、

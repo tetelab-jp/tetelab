@@ -34,7 +34,7 @@ const NAV_ITEMS: {
   { key: 'blog-articles', href: '/blog/articles', icon: 'fa-newspaper', label: '投稿記事一覧', group: 'blog' },
   { key: 'blog-generate', href: '/blog/generate', icon: 'fa-robot', label: 'AI記事生成', group: 'blog' },
   { key: 'blog-template', href: '/blog/template', icon: 'fa-wand-magic-sparkles', label: '生成テンプレート', group: 'blog' },
-  { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'ブログスタイル設定', group: 'blog' },
+  { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: '既存ブログの読み込み', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
   { key: 'review-list', href: '/reviews/list', icon: 'fa-comments', label: '口コミ返信', group: 'review' },

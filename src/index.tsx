@@ -364,7 +364,11 @@ const bindings: Bindings = {
       `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS default_stylist_id INTEGER REFERENCES stylists(id) ON DELETE SET NULL`,
       `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS key_message TEXT`,
       `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS title_prompt TEXT`,
-      `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS body_prompt TEXT`
+      `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS body_prompt TEXT`,
+      // 2026-08-21追記(ユーザー指定): カテゴリごとに「過去のブログの文章を
+      // 参考にする」ON/OFFを切り替えられるようにする。既存の挙動(常に参照)を
+      // 維持するためデフォルトはON(1)。
+      `ALTER TABLE blog_categories ADD COLUMN IF NOT EXISTS use_reference_articles INTEGER NOT NULL DEFAULT 1`
     ]
     for (const ddl of blogCategoryColumns) {
       await bindings.DB.prepare(ddl).run()
@@ -966,6 +970,11 @@ const bindings: Bindings = {
          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
          UNIQUE(salon_id)
        )`
+    ).run()
+    // 2026-08-21追記(ユーザー指定): 「過去の返信の文章を参考にする」ON/OFF。
+    // 既存の挙動(常に参考にする)を維持するためデフォルトはON(1)。
+    await bindings.DB.prepare(
+      `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS use_past_replies INTEGER NOT NULL DEFAULT 1`
     ).run()
 
     await bindings.DB.prepare(

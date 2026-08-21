@@ -62,3 +62,18 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   })
 })
+
+// 取り込んだ過去の記事一覧: 全選択/全解除ボタン
+document.addEventListener('DOMContentLoaded', () => {
+  var selectAllBtn = document.getElementById('blog-ref-select-all-btn')
+  var deselectAllBtn = document.getElementById('blog-ref-deselect-all-btn')
+  if (!selectAllBtn && !deselectAllBtn) return
+
+  function setAll(checked) {
+    document.querySelectorAll('.blog-ref-checkbox').forEach(function (cb) {
+      cb.checked = checked
+    })
+  }
+  if (selectAllBtn) selectAllBtn.addEventListener('click', function () { setAll(true) })
+  if (deselectAllBtn) deselectAllBtn.addEventListener('click', function () { setAll(false) })
+})

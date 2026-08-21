@@ -237,6 +237,11 @@ export type ArticleGenerationInput = {
   bodyMaxChars: number
   profile: SalonProfileForGeneration
   seasonMonths?: number[] | null
+  // 2026-08-21追記(ユーザー指定): カテゴリ単位の「過去のブログの文章を
+  // 参考にする」トグル。falseの場合はbuildReferenceArticleLines(過去記事の
+  // 抜粋)を一切システムプロンプトに含めず、テンプレートの情報(サロンの
+  // 人格・季節感・本文の生成指示)のみで生成する。
+  useReferenceArticles: boolean
 }
 
 export interface GeneratedArticle {
@@ -319,7 +324,9 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     )
   }
 
-  systemLines.push(...buildReferenceArticleLines(input.profile))
+  if (input.useReferenceArticles) {
+    systemLines.push(...buildReferenceArticleLines(input.profile))
+  }
 
   // 2026-08-17追記(ユーザー指定): 文章スタイル選択ドロップダウン(style_mode)を
   // 廃止したため、サロン基本情報の参考文章(reference_text)はUIから入力できなく
