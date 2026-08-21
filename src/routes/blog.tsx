@@ -10,7 +10,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
-import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripAllTrailingFooterText } from '../lib/blog-footer'
+import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, getFooterTextAndSeparatorForSalon, stripTrailingFooterBlock } from '../lib/blog-footer'
 import { formatJstDateCompact, formatJstDateTimeCompact, compactDate } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
@@ -1395,8 +1395,8 @@ blog.post('/blog/articles/new', async (c) => {
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
   if (parsed.footerEnabled) {
-    const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
-    parsed.body = stripAllTrailingFooterText(parsed.body, footerText)
+    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
 
   const nextOrderRow = await c.env.DB.prepare(
@@ -1491,8 +1491,8 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   // (getArticleRowForJob)にもう1つ付いて二重になり、全角1000文字制限を
   // 超えて投稿に失敗していた(実機ログで確認)。
   if (parsed.footerEnabled) {
-    const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
-    parsed.body = stripAllTrailingFooterText(parsed.body, footerText)
+    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
 
   await c.env.DB.prepare(

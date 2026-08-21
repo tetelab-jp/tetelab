@@ -85,8 +85,42 @@ export function stripAllTrailingFooterText(body: string, footerText: string): st
   return current
 }
 
-/** user_id/salon_idから、投稿本文に付けるフッター文字列を組み立てる(salon_profiles + salonboard_salons.salon_name を参照)。 */
-export async function getFooterTextForSalon(env: Bindings, userId: number, salonId: number | null): Promise<string> {
+/**
+ * stripAllTrailingFooterText(完全一致)に加えて、フッター区切り記号
+ * (footer_separatorを16回繰り返した行、buildAutoFooterTextが必ず
+ * フッター先頭に置く行)を境界マーカーとして検出し、それ以降を丸ごと
+ * 取り除く。
+ * 2026-08-21追記(ユーザー指定): 完全一致だけに頼ると、本文保存後に
+ * サロン基本情報やSEO対策ワードが変更されて現在のフッター文字列が
+ * 本文に埋め込まれている文字列と一致しなくなった場合、既存フッターを
+ * 検出できずもう1つ付け足してしまう(二重付与の再発)。区切り行は
+ * 内容が変わっても位置と文字が変わらないため、より確実な境界として使う。
+ * 区切り行が複数回(過去の不具合で二重・三重に焼き込まれた場合)出現する
+ * 場合は最初の出現位置から丸ごと取り除き、一度の呼び出しで正常化する。
+ */
+export function stripTrailingFooterBlock(body: string, footerText: string, footerSeparator: string | null): string {
+  const exactStripped = stripAllTrailingFooterText(body, footerText)
+  if (exactStripped !== body) return exactStripped
+
+  const sepChar = (footerSeparator || '＊').trim().slice(0, 1) || '＊'
+  const escapedSepChar = sepChar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const markerPattern = new RegExp(`^${escapedSepChar}{16}$`, 'gm')
+
+  let earliestIndex: number | null = null
+  let match: RegExpExecArray | null
+  while ((match = markerPattern.exec(body)) !== null) {
+    if (earliestIndex === null) earliestIndex = match.index
+  }
+  if (earliestIndex === null) return body
+  return body.slice(0, earliestIndex).replace(/\s+$/, '')
+}
+
+/** user_id/salon_idから、投稿本文に付けるフッター文字列と区切り記号を組み立てる(salon_profiles + salonboard_salons.salon_name を参照)。 */
+export async function getFooterTextAndSeparatorForSalon(
+  env: Bindings,
+  userId: number,
+  salonId: number | null
+): Promise<{ text: string; separator: string }> {
   const [profile, salon] = await Promise.all([
     env.DB.prepare(
       `SELECT address, nearest_station, walk_minutes, business_hours, closing_days, footer_separator, footer_keywords_json, footer_override_text
@@ -98,5 +132,14 @@ export async function getFooterTextForSalon(env: Bindings, userId: number, salon
       .bind(salonId)
       .first<{ salon_name: string | null }>()
   ])
-  return buildFooterText(salon?.salon_name || null, profile)
+  return {
+    text: buildFooterText(salon?.salon_name || null, profile),
+    separator: (profile?.footer_separator || '＊').trim().slice(0, 1) || '＊'
+  }
+}
+
+/** user_id/salon_idから、投稿本文に付けるフッター文字列を組み立てる(salon_profiles + salonboard_salons.salon_name を参照)。 */
+export async function getFooterTextForSalon(env: Bindings, userId: number, salonId: number | null): Promise<string> {
+  const { text } = await getFooterTextAndSeparatorForSalon(env, userId, salonId)
+  return text
 }

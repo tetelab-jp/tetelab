@@ -12,7 +12,7 @@
 import type { Bindings } from '../types'
 import { runBlogPostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
-import { getFooterTextForSalon, stripAllTrailingFooterText } from './blog-footer'
+import { getFooterTextAndSeparatorForSalon, stripTrailingFooterBlock } from './blog-footer'
 import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
@@ -133,7 +133,7 @@ export async function getArticleRowForJob(env: Bindings, articleId: number): Pro
   const row = await env.DB.prepare(`${READY_ARTICLE_SELECT} WHERE a.id = ?`).bind(articleId).first<ReadyArticleRowInternal>()
   if (!row) return null
   if (row.footer_enabled_flag === 1 && row.body) {
-    const footerText = await getFooterTextForSalon(env, row.user_id, row.salon_id)
+    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(env, row.user_id, row.salon_id)
     if (footerText) {
       // 2026-08-21追記(重大バグ修正): row.bodyに既にフッターが焼き込まれている
       // ケース(下記/blog/articles/:id/editのバグ、または過去の不具合で保存された
@@ -141,7 +141,11 @@ export async function getArticleRowForJob(env: Bindings, articleId: number): Pro
       // 全角1000文字制限を超えてSALON BOARD側の確認画面へ進めず投稿失敗する
       // (実機ログで確認済み)。付ける前に末尾の既存フッターを取り除いておく
       // ことで、何重に焼き込まれていても常に1つだけになるようにする。
-      const cleanBody = stripAllTrailingFooterText(row.body, footerText)
+      // フッター内容(基本情報・SEO対策ワード)が本文保存後に変更され、
+      // 完全一致でのstripが効かなくなるケースにも対応できるよう、区切り行
+      // (footer_separatorを16回繰り返した行)を境界マーカーとしても検出する
+      // stripTrailingFooterBlockを使う(ユーザー指定)。
+      const cleanBody = stripTrailingFooterBlock(row.body, footerText, separator)
       row.body = `${cleanBody}\n\n${footerText}`
     }
   }
