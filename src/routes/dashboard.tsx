@@ -1082,6 +1082,165 @@ dashboard.get('/settings/auto-update', async (c) => {
   )
 })
 
+// ---------- サロン情報(HPB公開ページから取得したAI参考材料の確認) ----------
+// 2026-08-22追記(ユーザー指摘): サロン情報機能はHPB公開ページからのデータ取得と
+// AI記事生成への反映(参考材料としての内部利用)のみを実装しており、当初の依頼
+// (「設定・確認」に確認用の画面を追加する)にあった、取得内容をユーザー自身が
+// 確認できる画面が抜けていた。取得済みデータ(salon_profiles/stylists/coupons)を
+// 読み出すだけの確認専用ページとして追加する(編集はできない。データの更新は
+// 従来通り「HPBからブログ追加」画面の「サロンボードからブログ読み込み」で行う)。
+
+function SalonInfoSection({ title, icon, children }: { title: string; icon: string; children: any }) {
+  return (
+    <div class="bg-white rounded-xl border border-gray-100 p-6">
+      <p class="font-semibold mb-3">
+        <i class={`fas ${icon} mr-2 text-pink-500`}></i>
+        {title}
+      </p>
+      {children}
+    </div>
+  )
+}
+
+function SalonInfoField({ label, value }: { label: string; value: string | null }) {
+  return (
+    <div class="mb-3 last:mb-0">
+      <p class="text-xs font-semibold text-gray-400 mb-1">{label}</p>
+      {value ? (
+        <p class="text-sm text-gray-700 whitespace-pre-wrap">{value}</p>
+      ) : (
+        <p class="text-sm text-gray-300">未取得</p>
+      )}
+    </div>
+  )
+}
+
+dashboard.get('/settings/salon-info', async (c) => {
+  const user = c.get('user')
+
+  const profile = await c.env.DB.prepare(
+    `SELECT salonboard_synced_at, hpb_catch, hpb_copy, hpb_message, hpb_avg_price_first, hpb_avg_price_repeat,
+            hpb_customer_ratio, hpb_atmosphere_text, hpb_salon_data_text, hpb_specials_text, hpb_kodawari_text
+     FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{
+      salonboard_synced_at: string | null
+      hpb_catch: string | null
+      hpb_copy: string | null
+      hpb_message: string | null
+      hpb_avg_price_first: string | null
+      hpb_avg_price_repeat: string | null
+      hpb_customer_ratio: string | null
+      hpb_atmosphere_text: string | null
+      hpb_salon_data_text: string | null
+      hpb_specials_text: string | null
+      hpb_kodawari_text: string | null
+    }>()
+
+  const { results: stylistRows } = await c.env.DB.prepare(
+    `SELECT name, hpb_bio_text FROM stylists
+     WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key IS NOT NULL
+     ORDER BY sort_order ASC, id ASC`
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ name: string; hpb_bio_text: string | null }>()
+
+  const { results: couponRows } = await c.env.DB.prepare(
+    `SELECT name, hpb_description_text FROM coupons
+     WHERE user_id = ? AND salon_id = ? AND hpb_description_text IS NOT NULL
+     ORDER BY sort_order ASC, id ASC`
+  )
+    .bind(user.id, user.active_salon_id)
+    .all<{ name: string; hpb_description_text: string }>()
+
+  const stylists = stylistRows || []
+  const coupons = couponRows || []
+
+  return c.render(
+    <PageLayout
+      seoEnabled={user.seo_enabled !== 0}
+      reviewEnabled={user.review_enabled !== 0}
+      isImpersonated={user.is_impersonated === 1}
+      active="salon-info"
+      salonName={user.salon_name}
+      title="サロン情報"
+      styleEnabled={user.style_enabled !== 0}
+      blogEnabled={user.blog_enabled !== 0}
+    >
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <p class="font-semibold text-sm">HPB公開ページから取得した、AI記事生成の参考材料</p>
+          <p class="text-xs text-gray-400 mt-1">
+            サロンボード連携時にHPB(ホットペッパービューティー)の公開ページから自動取得し、AI記事生成の参考情報として使われます。内容の更新は「HPBからブログ追加」画面の「サロンボードからブログ読み込み」から行えます。
+          </p>
+        </div>
+        <div class="flex flex-col items-end gap-1">
+          <a href="/blog/salon" class="text-sm text-pink-600 hover:underline whitespace-nowrap">
+            HPBからブログ追加へ<i class="fas fa-arrow-right ml-1"></i>
+          </a>
+          <p class="text-xs text-gray-400">
+            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
+          </p>
+        </div>
+      </div>
+
+      <SalonInfoSection title="①サロントップ" icon="fa-shop">
+        <SalonInfoField label="キャッチコピー" value={profile?.hpb_catch ?? null} />
+        <SalonInfoField label="紹介文" value={profile?.hpb_copy ?? null} />
+        <SalonInfoField label="サロンからの一言" value={profile?.hpb_message ?? null} />
+        <SalonInfoField label="サロンの雰囲気" value={profile?.hpb_atmosphere_text ?? null} />
+        <SalonInfoField label="サロンデータ" value={profile?.hpb_salon_data_text ?? null} />
+        <SalonInfoField label="平均予約金額(新規/リピート)" value={profile?.hpb_avg_price_first || profile?.hpb_avg_price_repeat ? `${profile?.hpb_avg_price_first || '-'} / ${profile?.hpb_avg_price_repeat || '-'}` : null} />
+        <SalonInfoField label="来店者の性別・年代比率" value={profile?.hpb_customer_ratio ?? null} />
+      </SalonInfoSection>
+
+      <SalonInfoSection title="②スタイリスト個別プロフィール" icon="fa-users">
+        {stylists.length === 0 ? (
+          <p class="text-sm text-gray-300">未取得(サロンボードと連携済みのスタイリストのみ対象です)</p>
+        ) : (
+          <div class="space-y-4">
+            {stylists.map((st) => (
+              <div class="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+                <p class="text-sm font-semibold text-gray-700 mb-1">{st.name}</p>
+                {st.hpb_bio_text ? (
+                  <p class="text-sm text-gray-700 whitespace-pre-wrap">{st.hpb_bio_text}</p>
+                ) : (
+                  <p class="text-sm text-gray-300">未取得</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </SalonInfoSection>
+
+      <SalonInfoSection title="③こだわり" icon="fa-heart">
+        <SalonInfoField label="こだわりページ" value={profile?.hpb_kodawari_text ?? null} />
+      </SalonInfoSection>
+
+      <SalonInfoSection title="④特集" icon="fa-star">
+        <SalonInfoField label="特集(サロントップのカルーセル)" value={profile?.hpb_specials_text ?? null} />
+      </SalonInfoSection>
+
+      <SalonInfoSection title="⑤クーポン内容" icon="fa-ticket">
+        {coupons.length === 0 ? (
+          <p class="text-sm text-gray-300">未取得</p>
+        ) : (
+          <div class="space-y-4">
+            {coupons.map((cp) => (
+              <div class="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
+                <p class="text-sm font-semibold text-gray-700 mb-1">{cp.name}</p>
+                <p class="text-sm text-gray-700 whitespace-pre-wrap">{cp.hpb_description_text}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </SalonInfoSection>
+    </PageLayout>,
+    { title: 'サロン情報' }
+  )
+})
+
 // ---------- スタイリスト・クーポン同期 ----------
 
 dashboard.post('/api/settings/sync-stylists-coupons', async (c) => {
