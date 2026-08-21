@@ -115,7 +115,10 @@ type ExecutionLogRow = {
   showToggle: boolean
 }
 
-function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId: string }) {
+// 2026-08-21追記(ユーザー指定): 「投稿ログ」列(エラーメッセージ等の詳細)は
+// サロン間で見えてはいけない情報を含みうるため、なりすましログイン中のみ表示し、
+// 通常のサロンログインでは列自体を非表示にする(ページ自体は通常表示する)。
+function ExecutionLogTable({ rows, tableId, showPostLog }: { rows: ExecutionLogRow[]; tableId: string; showPostLog: boolean }) {
   if (rows.length === 0) {
     return <p class="text-sm text-gray-400">まだログがありません</p>
   }
@@ -137,9 +140,9 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
           <colgroup>
             <col id={dateColId} style="width:9%" />
             <col id={categoryColId} style="width:6%" />
-            <col style="width:25%" />
-            <col style="width:8%" />
-            <col style="width:52%" />
+            <col style={showPostLog ? 'width:25%' : 'width:45%'} />
+            <col style={showPostLog ? 'width:8%' : 'width:20%'} />
+            {showPostLog && <col style="width:52%" />}
           </colgroup>
           <thead>
             <tr class="text-left text-gray-400 border-b border-gray-100">
@@ -159,7 +162,7 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
               </th>
               <th class="py-2">内容</th>
               <th class="py-2 text-center">ステータス</th>
-              <th class="py-2">投稿ログ</th>
+              {showPostLog && <th class="py-2">投稿ログ</th>}
             </tr>
           </thead>
           <tbody>
@@ -175,18 +178,20 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
                 <td class="py-2 text-center">
                   <span class={'text-xs px-2 py-0.5 rounded font-semibold ' + r.statusClass}>{r.statusLabel}</span>
                 </td>
-                <td class="py-2 text-xs text-gray-400">
-                  <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
-                  {r.showToggle && (
-                    <button
-                      type="button"
-                      class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
-                      onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
-                    >
-                      続きを見る
-                    </button>
-                  )}
-                </td>
+                {showPostLog && (
+                  <td class="py-2 text-xs text-gray-400">
+                    <p class={'break-words' + (r.showToggle ? ' line-clamp-2' : '')}>{r.errorText}</p>
+                    {r.showToggle && (
+                      <button
+                        type="button"
+                        class="text-xs font-semibold text-pink-500 hover:underline mt-0.5"
+                        onclick="const p=this.previousElementSibling; p.classList.toggle('line-clamp-2'); this.textContent = p.classList.contains('line-clamp-2') ? '続きを見る' : '閉じる'"
+                      >
+                        続きを見る
+                      </button>
+                    )}
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
@@ -208,7 +213,7 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
               {r.contentLabel}
             </div>
             <div class="text-sm text-gray-700 mt-0.5 truncate">{r.contentName}</div>
-            {r.errorText !== '-' && (
+            {showPostLog && r.errorText !== '-' && (
               <div class="mt-1.5">
                 <p class={'text-xs text-gray-400 break-words' + (r.showToggle ? ' line-clamp-2' : '')}>
                   {r.errorText}
@@ -231,11 +236,14 @@ function ExecutionLogTable({ rows, tableId }: { rows: ExecutionLogRow[]; tableId
   )
 }
 
-// 2026-08-19追記(ユーザー指定): 個別実行ログ(投稿内容・エラーメッセージ等)は
-// サロン間で見えてはいけない情報を含むため、通常のサロンログインでは
-// 一切表示せず、管理者サイトの「なりすましログイン」経由(検証用)のみに限定する。
-automation.get('/style/test-run', requireAuth, requireImpersonated, async (c) => {
+// 2026-08-21追記(ユーザー指定): ページ自体は通常のサロンログインでも表示する。
+// 投稿ログ(エラーメッセージ等の詳細)だけがサロン間で見えてはいけない情報を
+// 含むため、そちらはisImpersonated判定でExecutionLogTable内側のみ隠す
+// (以前requireImpersonatedでページごとブロックしていたのは指示の意図と
+// 異なっていたため戻す)。
+automation.get('/style/test-run', requireAuth, async (c) => {
   const user = c.get('user')
+  const showPostLog = user.is_impersonated === 1
 
   const { results: logs } = await c.env.DB.prepare(
     `SELECT l.id, l.status, l.message, l.execution_type, l.style_id, l.style_no, l.post_id, l.blog_article_id, l.created_at,
@@ -339,10 +347,10 @@ automation.get('/style/test-run', requireAuth, requireImpersonated, async (c) =>
         </div>
 
         <div data-tab-panel="style">
-          <ExecutionLogTable rows={styleLogRows} tableId="style" />
+          <ExecutionLogTable rows={styleLogRows} tableId="style" showPostLog={showPostLog} />
         </div>
         <div data-tab-panel="blog" class="hidden">
-          <ExecutionLogTable rows={blogLogRows} tableId="blog" />
+          <ExecutionLogTable rows={blogLogRows} tableId="blog" showPostLog={showPostLog} />
         </div>
       </div>
 
