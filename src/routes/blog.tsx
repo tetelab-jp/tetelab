@@ -10,7 +10,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
-import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
+import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, getFooterTextAndSeparatorForSalon, stripTrailingFooterBlock } from '../lib/blog-footer'
 import { formatJstDateCompact, formatJstDateTimeCompact, compactDate } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
@@ -222,20 +222,26 @@ blog.get('/blog/salon', async (c) => {
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
-            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。
+            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
-            <ul class="max-h-80 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
+            <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a) => (
                 <li class="flex items-start gap-3 p-3">
                   <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox mt-1 w-4 h-4 accent-pink-500 flex-shrink-0" />
-                  <div class="min-w-0">
+                  <button
+                    type="button"
+                    class="blog-ref-view-btn min-w-0 flex-1 text-left"
+                    data-title={a.title || '（無題）'}
+                    data-date={a.posted_date ? compactDate(a.posted_date) : ''}
+                    data-content={a.excerpt}
+                  >
                     <p class="text-sm font-medium text-gray-700 truncate">{a.title || '（無題）'}</p>
                     <p class="text-xs text-gray-400 mt-0.5">
                       {a.posted_date ? `${compactDate(a.posted_date)} ・ ` : ''}
                       {a.excerpt.slice(0, 60)}
                     </p>
-                  </div>
+                  </button>
                 </li>
               ))}
             </ul>
@@ -245,6 +251,19 @@ blog.get('/blog/salon', async (c) => {
           </form>
         </div>
       )}
+
+      <div id="blog-ref-view-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
+        <div class="bg-white rounded-xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto space-y-3">
+          <div class="flex items-start justify-between gap-2">
+            <p id="blog-ref-view-title" class="font-semibold"></p>
+            <button type="button" id="blog-ref-view-close-btn" class="text-gray-400 hover:text-gray-600 flex-shrink-0">
+              <i class="fas fa-xmark text-lg"></i>
+            </button>
+          </div>
+          <p id="blog-ref-view-date" class="text-xs text-gray-400"></p>
+          <p id="blog-ref-view-content" class="text-sm text-gray-700 whitespace-pre-line"></p>
+        </div>
+      </div>
 
       <form method="post" action="/blog/salon" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -700,6 +719,7 @@ blog.get('/blog/template', async (c) => {
             ) : (
               <div class="space-y-3">
                 <select id="template-edit-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+                  <option value="" selected disabled>既存テンプレートを選ぶ</option>
                   {catList.map((cat) => (
                     <option value={cat.id}>
                       {cat.name}
@@ -709,10 +729,11 @@ blog.get('/blog/template', async (c) => {
                 </select>
                 <button
                   type="button"
-                  onclick="location.href='/blog/template?category='+document.getElementById('template-edit-select').value"
-                  class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
+                  id="template-edit-open-btn"
+                  disabled
+                  class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  既存の記事テンプレートを編集
+                  既存テンプレートを選ぶ
                 </button>
               </div>
             )}
@@ -722,21 +743,22 @@ blog.get('/blog/template', async (c) => {
 
       <form method="post" action="/blog/template/salon-info" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <p class="font-semibold mb-3">
-            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
+          <p class="font-semibold mb-1">
+            <i class="fas fa-shoe-prints mr-2 text-pink-500"></i>フッター設定<span class="text-xs text-gray-400 ml-2">記事ごとにON/OFFを切り替えられます(記事編集画面)</span>
           </p>
+          <p class="text-xs text-gray-500 mb-3">ブログの文章の最後にサロン情報とSEOのキーワードを追加します。</p>
           <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div>
               <label class="block text-sm font-medium text-gray-700 mb-1">区切り記号</label>
               <input type="text" name="footer_separator" value={profile?.footer_separator || '＊'} maxlength={1} class="w-24 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">検索されたい言葉（カンマ区切り）</label>
+              <label class="block text-sm font-medium text-gray-700 mb-1">SEO対策ワード（半角スラッシュ区切り）</label>
               <input
                 type="text"
                 name="footer_keywords"
-                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join(', ')}
-                placeholder="例）〇〇駅, 縮毛矯正, 髪質改善"
+                value={(JSON.parse(profile?.footer_keywords_json || '[]') as string[]).join('/')}
+                placeholder="例）〇〇駅/縮毛矯正/髪質改善"
                 class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
               />
             </div>
@@ -818,7 +840,7 @@ blog.post('/blog/template/salon-info', async (c) => {
     footer_separator: String(body.footer_separator || '＊').trim().slice(0, 1) || '＊',
     footer_keywords_json: JSON.stringify(
       String(body.footer_keywords || '')
-        .split(',')
+        .split('/')
         .map((k) => k.trim())
         .filter(Boolean)
     ),
@@ -1373,8 +1395,8 @@ blog.post('/blog/articles/new', async (c) => {
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
   if (parsed.footerEnabled) {
-    const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
-    parsed.body = stripTrailingFooterText(parsed.body, footerText)
+    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
 
   const nextOrderRow = await c.env.DB.prepare(
@@ -1462,6 +1484,17 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
 
+  // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
+  // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
+  // ブラウザ側JS(blog-article-form.js)が本文欄末尾へフッターを差し込むため、
+  // それをそのまま保存するとDBのbodyにフッターが焼き込まれ、投稿時
+  // (getArticleRowForJob)にもう1つ付いて二重になり、全角1000文字制限を
+  // 超えて投稿に失敗していた(実機ログで確認)。
+  if (parsed.footerEnabled) {
+    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
+  }
+
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
        category_id=?, stylist_id=?, coupon_id=?, title=?, body=?, month_tags_json=?,
@@ -1527,6 +1560,7 @@ blog.get('/blog/generate', async (c) => {
               <p class="font-semibold">テンプレート(記事カテゴリ)を選ぶ</p>
             </div>
             <select name="category_id" required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <option value="" selected disabled>テンプレートを選ぶ</option>
               {catList.map((cat) => (
                 <option value={cat.id}>
                   {cat.name}
