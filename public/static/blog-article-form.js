@@ -63,9 +63,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // 2026-08-21追記(ユーザー指定): 必須項目(タイトル・本文・HPBブログカテゴリ・
   // 投稿者)が未設定のまま、または本文がフッター込みで950文字を超えたまま
   // 「投稿一覧に追加」/「保存する」を押せないようにする。未設定の項目は赤く表示する。
+  var TITLE_MAX_CHARS = 25
   var BODY_MAX_CHARS = 950
   var titleInput = document.getElementById('article-title-input')
   var titleLabel = document.getElementById('article-title-label')
+  var titleCharCount = document.getElementById('article-title-charcount')
   var bodyLabel = document.getElementById('article-body-label')
   var bodyCharCount = document.getElementById('article-body-charcount')
   var categorySelect = document.getElementById('article-category-select')
@@ -95,6 +97,14 @@ document.addEventListener('DOMContentLoaded', () => {
     setLabelInvalid(bodyLabel, bodyMissing)
     setLabelInvalid(categoryLabel, categoryMissing)
     setLabelInvalid(stylistLabel, stylistMissing)
+
+    if (titleCharCount && titleInput) {
+      var titleLen = titleInput.value.length
+      var titleOverLimit = titleLen > TITLE_MAX_CHARS
+      titleCharCount.textContent = titleLen + ' / ' + TITLE_MAX_CHARS + '文字'
+      titleCharCount.classList.toggle('text-red-600', titleOverLimit)
+      titleCharCount.classList.toggle('text-gray-400', !titleOverLimit)
+    }
 
     var charCount = bodyTextarea.value.length
     var overLimit = charCount > BODY_MAX_CHARS

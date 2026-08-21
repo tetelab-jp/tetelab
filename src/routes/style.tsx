@@ -562,7 +562,7 @@ style.get('/style/import', async (c) => {
       isImpersonated={user.is_impersonated === 1}
       active="style-import"
       salonName={user.salon_name}
-      title="HPBからスタイルを取り込む"
+      title="HPBからスタイル追加"
       blogEnabled={user.blog_enabled !== 0}
     >
       {!cred && (
@@ -654,7 +654,7 @@ style.get('/style/import', async (c) => {
 
       <script src="/static/style-import.js"></script>
     </PageLayout>,
-    { title: 'HPBからスタイルを取り込む' }
+    { title: 'HPBからスタイル追加' }
   )
 })
 

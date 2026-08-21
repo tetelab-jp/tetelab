@@ -257,9 +257,18 @@ function currentJstMonth(): number {
  * させた)条件も明示的に含める。まだユーザーが内容を確認・保存していない
  * 生成直後のunapproved状態の記事が、cron/自動投稿の巡回対象に混入しない
  * ようにするため。
+ * 2026-08-21追記(ユーザー指定): 自動投稿の必須条件を画像・投稿者にも拡張。
+ * image_r2_key/stylist_idは記事行に直接持つ列なので書き込み時の検証で
+ * 通常は保証されるが、投稿者(stylists)はON DELETE SET NULLのため、参照先の
+ * スタイリストが削除されると記事側を直接更新しないままstylist_idだけが
+ * 静かにNULLになりうる(HPBブログカテゴリがblog_categories側の変更で
+ * 無効化されうるのと同じ理由)。選定条件自体にも含めて保険とする。
+ * タイトル・本文の文字数は書き込み経路(articleAutoPostRequirementsMet)側で
+ * 常に保証され、上記のような外部要因での事後変化もないため、SQL側では見ない。
  */
 const ELIGIBLE_ARTICLE_WHERE = `
   a.user_id = ? AND a.salon_id = ? AND a.status = 'approved' AND a.auto_post_enabled_flag = 1
+  AND a.image_r2_key IS NOT NULL AND a.stylist_id IS NOT NULL
   AND EXISTS (SELECT 1 FROM blog_categories bc WHERE bc.id = a.category_id AND bc.hpb_category_value IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
   AND (

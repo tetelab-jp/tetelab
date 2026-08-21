@@ -18,18 +18,20 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   // 自動投稿ON/OFFトグル
-  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
-  // たびに必ず失敗するため、ONへの切り替え自体をブロックし警告する
-  // (サーバー側/api/blog/articles/toggle-auto-postにも同じ判定があり、
-  // これはそこへ到達する前に即座に気づけるようにするためのもの)。
+  // 2026-08-21追記(ユーザー指定): 自動投稿の必須条件(画像・タイトル・本文・
+  // カテゴリ・投稿者)のいずれかが未達の記事は投稿するたびに必ず失敗するため、
+  // ONへの切り替え自体をブロックし警告する(サーバー側
+  // /api/blog/articles/toggle-auto-postにも同じ判定があり、これはそこへ
+  // 到達する前に即座に気づけるようにするためのもの)。
   document.querySelectorAll('.blog-auto-post-toggle').forEach((checkbox) => {
     checkbox.addEventListener('change', async (e) => {
       const target = e.target
       const articleId = Number(target.getAttribute('data-article-id'))
       const enabled = target.checked
-      const row = target.closest('[data-article-id][data-hpb-category-missing]')
-      if (enabled && row && row.getAttribute('data-hpb-category-missing') === '1') {
-        alert('「HPBブログカテゴリ」が未設定です。設定されていないと投稿ができません。')
+      const row = target.closest('[data-article-id][data-auto-post-blocked]')
+      if (enabled && row && row.getAttribute('data-auto-post-blocked') === '1') {
+        const reason = row.getAttribute('data-auto-post-blocked-reason') || ''
+        alert('自動投稿の条件未達(' + reason + ')のため、ONにできません。編集画面で設定してください。')
         target.checked = false
         return
       }

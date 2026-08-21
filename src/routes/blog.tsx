@@ -6,7 +6,6 @@ import {
   generateCategoryDraft,
   generateArticleContent,
   generateImageDescription,
-  generateSalonPersona,
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
@@ -101,7 +100,14 @@ async function getBlogReferenceArticleCount(c: AppContext, user: AppUser): Promi
   return row?.cnt ?? 0
 }
 
-type BlogReferenceArticleRow = { id: number; title: string | null; excerpt: string; posted_date: string | null }
+type BlogReferenceArticleRow = {
+  id: number
+  title: string | null
+  excerpt: string
+  posted_date: string | null
+  category_name: string | null
+  stylist_name: string | null
+}
 
 // 2026-08-21追記(ユーザー指定): 「サロンボードからブログ読み込み」で取得した
 // 過去記事一覧(blog_reference_articles、既にAI生成の参考材料として保存済み)を、
@@ -110,7 +116,8 @@ type BlogReferenceArticleRow = { id: number; title: string | null; excerpt: stri
 // 追加アクセス(全文取得)は行わない(一覧の抜粋のみを取り込み用の本文にする)。
 async function getBlogReferenceArticles(c: AppContext, user: AppUser): Promise<BlogReferenceArticleRow[]> {
   const { results } = await c.env.DB.prepare(
-    'SELECT id, title, excerpt, posted_date FROM blog_reference_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC'
+    `SELECT id, title, excerpt, posted_date, category_name, stylist_name
+     FROM blog_reference_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC`
   )
     .bind(user.id, user.active_salon_id)
     .all<BlogReferenceArticleRow>()
@@ -173,18 +180,12 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
 
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
-  const saved = c.req.query('saved')
   const [profile, referenceArticles] = await Promise.all([getSalonProfile(c, user), getBlogReferenceArticles(c, user)])
   const referenceArticleCount = referenceArticles.length
   const imported = c.req.query('imported')
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログを取り込む" styleEnabled={user.style_enabled !== 0}>
-      {saved && (
-        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
-          <i class="fas fa-circle-check mr-2"></i>保存しました
-        </div>
-      )}
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログ追加" styleEnabled={user.style_enabled !== 0}>
       {imported && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を登録ブログへ追加しました
@@ -222,9 +223,12 @@ blog.get('/blog/salon', async (c) => {
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
-            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。タイトルをタップすると内容を確認できます。
+            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。カテゴリ・投稿者はHPB公開ページの表示から一致するものを自動設定します(一致しない場合は未設定のままなので、追加後に編集画面で設定してください)。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
+            <button type="submit" class="mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+              登録ブログへ追加
+            </button>
             <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a) => (
                 <li class="flex items-start gap-3 p-3">
@@ -241,6 +245,12 @@ blog.get('/blog/salon', async (c) => {
                       {a.posted_date ? `${compactDate(a.posted_date)} ・ ` : ''}
                       {a.excerpt.slice(0, 60)}
                     </p>
+                    {(a.category_name || a.stylist_name) && (
+                      <p class="text-xs text-gray-400 mt-0.5">
+                        {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 mr-1">{a.category_name}</span>}
+                        {a.stylist_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{a.stylist_name}</span>}
+                      </p>
+                    )}
                   </button>
                 </li>
               ))}
@@ -265,43 +275,6 @@ blog.get('/blog/salon', async (c) => {
         </div>
       </div>
 
-      <form method="post" action="/blog/salon" class="space-y-6">
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <p class="font-semibold">
-              <i class="fas fa-heart mr-2 text-pink-500"></i>サロンの人格<span class="text-xs text-gray-400 ml-2">AI生成の材料になります</span>
-            </p>
-            <button type="button" id="persona-generate-btn" class="bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap">
-              <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成する
-            </button>
-          </div>
-          <p id="persona-generate-status" class="text-xs text-gray-400 mb-3"></p>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">コンセプト</label>
-              <textarea id="persona-concept" name="concept" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.concept || ''}</textarea>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">得意なこと・強み</label>
-              <textarea id="persona-strengths" name="strengths" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.strengths || ''}</textarea>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">来てくれる人（読み手）</label>
-                <textarea id="persona-target-customer" name="target_customer" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.target_customer || ''}</textarea>
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">価格帯</label>
-                <input id="persona-price-range" type="text" name="price_range" value={profile?.price_range || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
-          保存する
-        </button>
-      </form>
       <p class="text-xs text-gray-400">
         住所・営業時間などの基本情報とフッター設定は
         <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
@@ -310,7 +283,7 @@ blog.get('/blog/salon', async (c) => {
 
       <script src="/static/blog-salon.js"></script>
     </PageLayout>,
-    { title: 'HPBからブログを取り込む' }
+    { title: 'HPBからブログ追加' }
   )
 })
 
@@ -320,7 +293,11 @@ blog.get('/blog/salon', async (c) => {
 // ため)。自動投稿は既に公開済みの記事の再投稿を防ぐためOFFで追加する。
 blog.post('/blog/salon/import-references', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): { all: true }を付けずに
+  // parseBody()を呼ぶと、同名(reference_id)のチェックボックスが複数
+  // チェックされていても最後の1件の値で上書きされてしまい(Honoの既定動作)、
+  // 複数選択して「登録ブログへ追加」を押しても1件しか追加されなかった。
+  const body = await c.req.parseBody({ all: true })
   const idsRaw = body.reference_id
   const ids = (Array.isArray(idsRaw) ? idsRaw : idsRaw ? [idsRaw] : [])
     .map((v) => Number(v))
@@ -329,11 +306,20 @@ blog.post('/blog/salon/import-references', async (c) => {
   if (ids.length === 0) return c.redirect('/blog/salon')
 
   const { results: rows } = await c.env.DB.prepare(
-    `SELECT id, title, excerpt, posted_date FROM blog_reference_articles
+    `SELECT id, title, excerpt, posted_date, category_name, stylist_name, stylist_salonboard_key
+     FROM blog_reference_articles
      WHERE id IN (${ids.map(() => '?').join(',')}) AND user_id = ? AND salon_id = ?`
   )
     .bind(...ids, user.id, user.active_salon_id)
-    .all<{ id: number; title: string | null; excerpt: string; posted_date: string | null }>()
+    .all<{
+      id: number
+      title: string | null
+      excerpt: string
+      posted_date: string | null
+      category_name: string | null
+      stylist_name: string | null
+      stylist_salonboard_key: string | null
+    }>()
 
   const nextOrderRow = await c.env.DB.prepare(
     'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
@@ -347,16 +333,31 @@ blog.post('/blog/salon/import-references', async (c) => {
   // (既存スタイル取り込みと同じ位置づけ)。GET /blog/articlesがstatus='approved'
   // のみ表示するようになったため、ここもapprovedで作成しないと追加した記事が
   // 一覧に一切表示されなくなってしまう。
+  // 2026-08-21追記(ユーザー提供の実HTMLで確認): HPB公開ブログ一覧にはカテゴリ・
+  // 投稿者(スタイリスト)も掲載されている。カテゴリはHPB_BLOG_CATEGORY_OPTIONSの
+  // ラベル文字列と一致する想定なのでresolveArticleCategoryIdでcategory_idへ
+  // (存在しなければ生成テンプレートと同じ仕組みで自動作成)、投稿者は
+  // stylists.salonboard_stylist_key(Tコード)との完全一致でstylist_idへ変換する
+  // (曖昧一致はしない。一致しなければ未設定のまま、編集画面で手動設定できる)。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
+    const categoryId = row.category_name ? await resolveArticleCategoryId(c, user, row.category_name) : null
+    const stylistRow = row.stylist_salonboard_key
+      ? await c.env.DB.prepare(
+          'SELECT id FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key = ?'
+        )
+          .bind(user.id, user.active_salon_id, row.stylist_salonboard_key)
+          .first<{ id: number }>()
+      : null
+
     await c.env.DB.prepare(
       `INSERT INTO blog_articles (
-         user_id, salon_id, title, body, month_tags_json,
+         user_id, salon_id, category_id, stylist_id, title, body, month_tags_json,
          footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
-        user.id, user.active_salon_id, row.title, row.excerpt,
+        user.id, user.active_salon_id, categoryId, stylistRow?.id ?? null, row.title, row.excerpt,
         sortOrder, lastPostedAt, lastPostedAt ? 1 : 0
       )
       .run()
@@ -364,37 +365,6 @@ blog.post('/blog/salon/import-references', async (c) => {
   }
 
   return c.redirect(`/blog/salon?imported=${rows?.length ?? 0}`)
-})
-
-blog.post('/blog/salon', async (c) => {
-  const user = c.get('user')
-  const body = await c.req.parseBody()
-  const fields = {
-    concept: String(body.concept || '').trim(),
-    strengths: String(body.strengths || '').trim(),
-    target_customer: String(body.target_customer || '').trim(),
-    price_range: String(body.price_range || '').trim()
-  }
-
-  // 2026-08-16追記(ブログ機能再設計): このページは「サロンの人格」の列だけを
-  // 更新する。「基本情報」「フッター」は/blog/templateページ側のPOSTハンドラが
-  // 担当し、同じsalon_profiles行の別の列を更新するため、ON CONFLICT DO UPDATEで
-  // 自分が担当する列だけを書き換え、相手の列には触れない。
-  // 2026-08-17追記(ユーザー指定): 「書き方」欄(参考文章・文体パラメータ・
-  // NGワード)をUI上から削除したため、reference_text/first_person/
-  // sentence_ending/writing_tone/ng_words列はこのハンドラでは更新しない
-  // (既存データを無言で空上書きしないよう、触れないままにする)。
-  await c.env.DB.prepare(
-    `INSERT INTO salon_profiles (user_id, salon_id, concept, strengths, target_customer, price_range)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (salon_id) DO UPDATE SET
-       concept = EXCLUDED.concept, strengths = EXCLUDED.strengths, target_customer = EXCLUDED.target_customer,
-       price_range = EXCLUDED.price_range, updated_at = CURRENT_TIMESTAMP`
-  )
-    .bind(user.id, user.active_salon_id, fields.concept, fields.strengths, fields.target_customer, fields.price_range)
-    .run()
-
-  return c.redirect('/blog/salon?saved=1')
 })
 
 // サロンボード同期(既存の/api/settings/sync-stylists-coupons、dashboard.tsx参照)を
@@ -444,10 +414,15 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       let sortOrder = 0
       for (const item of blogResult.items) {
         await c.env.DB.prepare(
-          `INSERT INTO blog_reference_articles (user_id, salon_id, title, excerpt, source_url, posted_date, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO blog_reference_articles (
+             user_id, salon_id, title, excerpt, source_url, posted_date,
+             category_name, stylist_name, stylist_salonboard_key, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-          .bind(user.id, user.active_salon_id, item.title, item.excerpt, item.sourceUrl, item.postedDate, sortOrder)
+          .bind(
+            user.id, user.active_salon_id, item.title, item.excerpt, item.sourceUrl, item.postedDate,
+            item.categoryName, item.stylistName, item.stylistSalonboardKey, sortOrder
+          )
           .run()
         sortOrder += 1
       }
@@ -478,20 +453,6 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   }
 
   return c.json({ success: true, articleCount, hpbError })
-})
-
-// 「サロンの人格」(コンセプト・強み・来てくれる人・価格帯)を、HPB公開情報から
-// AIに下書きさせる。フォームへの反映のみ行い、保存(DB更新)は既存の
-// /blog/salon POSTハンドラ(保存するボタン)にユーザーが回すことで行う。
-blog.post('/api/blog/salon/generate-persona', async (c) => {
-  const user = c.get('user')
-  try {
-    const profile = await getSalonProfileForGeneration(c, user)
-    const persona = await generateSalonPersona(c.env, profile)
-    return c.json({ success: true, ...persona })
-  } catch (err: any) {
-    return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
-  }
 })
 
 // ---------- 2. 生成テンプレート ----------
@@ -1164,7 +1125,10 @@ function ArticleForm({
 
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
-            <label id="article-title-label" class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
+            <div class="flex items-center justify-between mb-1">
+              <label id="article-title-label" class="block text-sm font-medium text-gray-700">タイトル</label>
+              <span id="article-title-charcount" class="text-xs text-gray-400"></span>
+            </div>
             <input
               type="text"
               name="title"
@@ -1324,6 +1288,46 @@ async function categoryHasHpbValue(c: AppContext, user: AppUser, categoryId: num
   return !!row?.hpb_category_value
 }
 
+const ARTICLE_TITLE_MAX_CHARS = 25
+const ARTICLE_BODY_MAX_CHARS = 950
+
+/** 本文(フッター除去済み)にフッターが付く場合の、実際に投稿される文字数(概算)。 */
+function effectiveBodyCharCount(body: string, footerEnabled: boolean, footerText: string): number {
+  if (!footerEnabled || !footerText) return body.length
+  return body.replace(/\s+$/, '').length + 2 + footerText.length
+}
+
+// 2026-08-21追記(ユーザー指定): 自動投稿の必須条件を「HPBブログカテゴリ設定」
+// だけでなく、画像・タイトル文字数(全角25文字以下)・本文文字数(フッター込みで
+// 全角950文字以下)・投稿者の設定も含めて判定するよう拡張する。categoryHasHpbValue
+// と同じく、全ての書き込み経路(新規作成/編集保存/AI記事生成)でこの判定を通し、
+// いずれか未達ならauto_post_enabled_flagを強制的に0にする。
+// 純粋な判定部分(meetsAutoPostRequirements)を切り出しているのは、登録ブログ
+// 一覧(GET /blog/articles)側で記事ごとにDB問い合わせを増やさず、既にJOIN済みの
+// hpb_category_valueをそのまま渡して判定できるようにするため。
+function meetsAutoPostRequirements(args: {
+  categoryHasHpb: boolean
+  stylistId: number | null
+  hasImage: boolean
+  title: string
+  bodyCharCount: number
+}): boolean {
+  if (!args.hasImage) return false
+  if (!args.title || args.title.length > ARTICLE_TITLE_MAX_CHARS) return false
+  if (args.bodyCharCount > ARTICLE_BODY_MAX_CHARS) return false
+  if (!args.stylistId) return false
+  return args.categoryHasHpb
+}
+
+async function articleAutoPostRequirementsMet(
+  c: AppContext,
+  user: AppUser,
+  args: { categoryId: number | null; stylistId: number | null; hasImage: boolean; title: string; bodyCharCount: number }
+): Promise<boolean> {
+  const categoryHasHpb = await categoryHasHpbValue(c, user, args.categoryId)
+  return meetsAutoPostRequirements({ ...args, categoryHasHpb })
+}
+
 async function resolveArticleCategoryId(c: AppContext, user: AppUser, hpbCategoryValue: string): Promise<number | null> {
   if (!hpbCategoryValue) return null
 
@@ -1427,15 +1431,32 @@ blog.get('/blog/articles/new', async (c) => {
 
 blog.post('/blog/articles/new', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正の横展開): 月タグ(month_tags)は
+  // 同名チェックボックスが複数あり、{ all: true }を付けないと複数選択時に
+  // 最後の1件しか渡らない(Honoの既定動作)。/blog/salon/import-referencesと
+  // 同じ原因のため、同じ修正をこの記事フォームにも適用する。
+  const body = await c.req.parseBody({ all: true })
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
-  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
+
+  const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
   if (parsed.footerEnabled) {
-    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
+
+  // 2026-08-21追記(ユーザー指定): 自動投稿はHPBブログカテゴリだけでなく、
+  // 画像・タイトル/本文の文字数・投稿者もすべて揃っていない限りONにしない。
+  const hasImage = body.image instanceof File && body.image.size > 0
+  const autoPostEnabled =
+    parsed.autoPostEnabled &&
+    (await articleAutoPostRequirementsMet(c, user, {
+      categoryId,
+      stylistId: parsed.stylistId,
+      hasImage,
+      title: parsed.title,
+      bodyCharCount: effectiveBodyCharCount(parsed.body, parsed.footerEnabled, footerText)
+    }))
 
   const nextOrderRow = await c.env.DB.prepare(
     'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
@@ -1512,12 +1533,16 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const existing = await c.env.DB.prepare('SELECT id, category_id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+  const existing = await c.env.DB.prepare(
+    'SELECT id, category_id, image_r2_key FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?'
+  )
     .bind(id, user.id, user.active_salon_id)
-    .first<{ id: number; category_id: number | null }>()
+    .first<{ id: number; category_id: number | null; image_r2_key: string | null }>()
   if (!existing) return c.notFound()
 
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正の横展開): { all: true }を
+  // 付けないと月タグ(month_tags)を複数チェックしても最後の1件しか渡らない。
+  const body = await c.req.parseBody({ all: true })
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   // 2026-08-21追記(ユーザー指摘によるバグ修正): 「カテゴリ（HPBブログカテゴリ）」欄は
@@ -1530,10 +1555,6 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   // category_idを維持し、実際に別の値を選んだ場合だけ付け替えるようにする。
   const hpbCategoryValueInput = String(body.hpb_category_value || '').trim()
   const categoryId = hpbCategoryValueInput ? await resolveArticleCategoryId(c, user, hpbCategoryValueInput) : existing.category_id
-  // 2026-08-21追記(ユーザー指定): 必須項目(HPBブログカテゴリ)が未設定の
-  // カテゴリに属したまま「自動投稿の対象にする」にチェックを入れて保存しても、
-  // 実効HPBブログカテゴリが無ければ強制的にOFFで保存する(須くOFFの方針)。
-  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
 
   // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
   // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
@@ -1541,10 +1562,27 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   // それをそのまま保存するとDBのbodyにフッターが焼き込まれ、投稿時
   // (getArticleRowForJob)にもう1つ付いて二重になり、全角1000文字制限を
   // 超えて投稿に失敗していた(実機ログで確認)。
+  const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
   if (parsed.footerEnabled) {
-    const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
+
+  // 2026-08-21追記(ユーザー指定): 必須項目(HPBブログカテゴリ)が未設定の
+  // カテゴリに属したまま「自動投稿の対象にする」にチェックを入れて保存しても、
+  // 実効HPBブログカテゴリが無ければ強制的にOFFで保存する(須くOFFの方針)。
+  // あわせて画像・タイトル/本文の文字数・投稿者もすべて揃っていなければONにしない。
+  // 画像は今回のアップロードで新規に付いた場合、または既存の画像が既に
+  // 設定済みの場合のいずれかであればよい(編集のたびに再アップロードは不要)。
+  const hasImage = (body.image instanceof File && body.image.size > 0) || !!existing.image_r2_key
+  const autoPostEnabled =
+    parsed.autoPostEnabled &&
+    (await articleAutoPostRequirementsMet(c, user, {
+      categoryId,
+      stylistId: parsed.stylistId,
+      hasImage,
+      title: parsed.title,
+      bodyCharCount: effectiveBodyCharCount(parsed.body, parsed.footerEnabled, footerText)
+    }))
 
   // 2026-08-21追記(ユーザー指摘によるバグ修正): 新規作成/AI生成直後の記事は
   // status='unapproved'でDBに存在するが、まだ登録ブログ一覧には出さない
@@ -1723,9 +1761,21 @@ blog.post('/blog/generate', async (c) => {
     // 2026-08-21追記(ユーザー指定): auto_post_enabled_flagは常に1固定で
     // INSERTしていたため、選択したカテゴリにHPBブログカテゴリが未設定の
     // 場合でも自動投稿ONの記事が生成され、投稿するたびに必ず失敗していた。
-    // 必須項目(HPBブログカテゴリ)が未設定の記事は自動投稿を須くOFFにする
-    // という方針に合わせ、カテゴリの実効HPBブログカテゴリが無ければ
-    // 0で作成する。
+    // 必須項目(HPBブログカテゴリ・画像・タイトル/本文の文字数・投稿者)が
+    // 揃っていない記事は自動投稿を須くOFFにするという方針に合わせ、
+    // articleAutoPostRequirementsMetで判定する。画像は生成前に必須チェック
+    // 済み、タイトル/本文はbodyMaxChars(950文字-フッター分)で既に上限内に
+    // 収まる想定だが、実際のフッター文字数で改めて確認する。
+    const { text: footerText } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    const stylistId = category.default_stylist_id || null
+    const autoPostEnabled = await articleAutoPostRequirementsMet(c, user, {
+      categoryId,
+      stylistId,
+      hasImage: true,
+      title: result.title,
+      bodyCharCount: effectiveBodyCharCount(result.body, footerEnabled, footerText)
+    })
+
     const insert = await c.env.DB.prepare(
       `INSERT INTO blog_articles (
          user_id, salon_id, category_id, stylist_id, image_r2_key, image_file_name, image_description,
@@ -1733,9 +1783,9 @@ blog.post('/blog/generate', async (c) => {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unapproved', ?)`
     )
       .bind(
-        user.id, user.active_salon_id, categoryId, category.default_stylist_id || null, key, fileName, imageDescription,
+        user.id, user.active_salon_id, categoryId, stylistId, key, fileName, imageDescription,
         result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0,
-        category.hpb_category_value ? 1 : 0, nextOrderRow?.n ?? 0
+        autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
       )
       .run()
 
@@ -1748,12 +1798,12 @@ blog.post('/blog/generate', async (c) => {
 
 // 登録スタイル一覧(style.tsx)のAutoPostStatusBadgesと同じ見た目で、
 // 自動投稿ON/OFFと直近の投稿結果(公開/エラー)をタグ表示する。
-// 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定の記事は投稿する
-// たびに必ず同じ理由で失敗するため、汎用的な「エラー」ではなく専用の警告を
+// 2026-08-21追記(ユーザー指定): 自動投稿の必須条件(画像・タイトル・本文・
+// カテゴリ・投稿者)のいずれかが未達の記事は投稿するたびに必ず同じ理由で
+// 失敗するため、汎用的な「エラー」ではなく、未達の項目名を挙げた専用の警告を
 // 表示する(原因と対処がひと目でわかるように)。
-function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
+function BlogAutoPostStatusBadges({ a, missingReasons }: { a: ArticleListRow; missingReasons: string[] }) {
   const isOn = a.auto_post_enabled_flag === 1
-  const hpbCategoryMissing = !a.hpb_category_value
   return (
     <>
       <span
@@ -1763,9 +1813,9 @@ function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
       >
         自動投稿{isOn ? 'ON' : 'OFF'}
       </span>
-      {hpbCategoryMissing ? (
+      {missingReasons.length > 0 ? (
         <span class="text-xs px-2 py-0.5 rounded font-semibold bg-amber-50 text-amber-600">
-          「HPBブログカテゴリ」が未設定です
+          自動投稿の条件未達: {missingReasons.join('・')}
         </span>
       ) : (
         <>
@@ -1783,8 +1833,11 @@ type ArticleListRow = {
   id: number
   no: number
   title: string | null
+  body: string | null
   image_r2_key: string | null
   category_id: number | null
+  stylist_id: number | null
+  footer_enabled_flag: number
   stylist_name: string | null
   coupon_name: string | null
   month_tags_json: string
@@ -1819,8 +1872,8 @@ blog.get('/blog/articles', async (c) => {
   const { results: rows } = await c.env.DB.prepare(
     `SELECT
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
-       a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
-       a.auto_post_enabled_flag, a.category_id, a.last_error,
+       a.id, a.title, a.body, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
+       a.auto_post_enabled_flag, a.category_id, a.stylist_id, a.footer_enabled_flag, a.last_error,
        st.name AS stylist_name, cp.name AS coupon_name, bc.hpb_category_value
      FROM blog_articles a
      LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
@@ -1834,13 +1887,25 @@ blog.get('/blog/articles', async (c) => {
 
   const articles = rows || []
 
-  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定のまま自動投稿ONに
-  // なっている記事は、設定を直すまで投稿するたびに必ず同じ理由で失敗し続ける
-  // (プロキシ不調等の一過性の失敗とは異なる)。この一覧を開いた時点で検知し、
-  // 実際に投稿(Fargateタスク起動)されてしまう前に自動投稿をOFFへ倒す
+  // 2026-08-21追記(ユーザー指定): 自動投稿の必須条件を「画像・タイトル文字数・
+  // 本文文字数・カテゴリ・投稿者」の5点に拡張する。いずれか未達のまま自動投稿
+  // ONになっている記事は、設定を直すまで投稿するたびに必ず同じ理由で失敗し
+  // 続ける(プロキシ不調等の一過性の失敗とは異なる)。この一覧を開いた時点で
+  // 検知し、実際に投稿(Fargateタスク起動)されてしまう前に自動投稿をOFFへ倒す
   // (automation.tsx側の投稿失敗時の自動OFFは、この一覧を開く前に投稿タイミングが
   // 来てしまった場合の保険として引き続き残す)。
-  const needsAutoPostOff = articles.filter((a) => a.auto_post_enabled_flag === 1 && !a.hpb_category_value)
+  const { text: footerText } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+  function missingAutoPostReasons(a: ArticleListRow): string[] {
+    const reasons: string[] = []
+    if (!a.image_r2_key) reasons.push('画像')
+    if (!a.title || a.title.length > ARTICLE_TITLE_MAX_CHARS) reasons.push('タイトル')
+    if (effectiveBodyCharCount(a.body || '', a.footer_enabled_flag === 1, footerText) > ARTICLE_BODY_MAX_CHARS) reasons.push('本文')
+    if (!a.hpb_category_value) reasons.push('カテゴリ')
+    if (!a.stylist_id) reasons.push('投稿者')
+    return reasons
+  }
+
+  const needsAutoPostOff = articles.filter((a) => a.auto_post_enabled_flag === 1 && missingAutoPostReasons(a).length > 0)
   if (needsAutoPostOff.length > 0) {
     await c.env.DB.prepare(
       `UPDATE blog_articles SET auto_post_enabled_flag = 0, updated_at = CURRENT_TIMESTAMP
@@ -1956,7 +2021,8 @@ blog.get('/blog/articles', async (c) => {
                   data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
                   data-category-id={a.category_id ?? ''}
                   data-month-tags={a.month_tags_json || '[]'}
-                  data-hpb-category-missing={a.hpb_category_value ? '0' : '1'}
+                  data-auto-post-blocked={missingAutoPostReasons(a).length > 0 ? '1' : '0'}
+                  data-auto-post-blocked-reason={missingAutoPostReasons(a).join('・')}
                 >
                   <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
                     <input
@@ -1993,7 +2059,7 @@ blog.get('/blog/articles', async (c) => {
                       {a.last_posted_at && <span>最終投稿 {formatJstDateCompact(a.last_posted_at)}(投稿{a.post_count}回)</span>}
                     </p>
                     <div class="flex flex-wrap gap-1 mt-1">
-                      <BlogAutoPostStatusBadges a={a} />
+                      <BlogAutoPostStatusBadges a={a} missingReasons={missingAutoPostReasons(a)} />
                     </div>
                   </div>
                   <div class="flex flex-col md:flex-row items-stretch md:items-center gap-1 md:gap-2 flex-shrink-0">
@@ -2103,20 +2169,43 @@ blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
   const user = c.get('user')
   const { articleId, enabled } = await c.req.json<{ articleId: number; enabled: boolean }>()
 
-  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
-  // たびに必ず失敗するため、ONへの切り替え自体を拒否する(クライアント側
-  // (blog-articles.js)にも同じ判定があるが、こちらはその保険)。
+  // 2026-08-21追記(ユーザー指定): 必須項目(画像・タイトル・本文・HPBブログ
+  // カテゴリ・投稿者)が揃っていない記事は投稿するたびに必ず失敗する
+  // (またはSALON BOARD側で弾かれる)ため、ONへの切り替え自体を拒否する
+  // (クライアント側(blog-articles.js)にも同じ判定があるが、こちらはその保険)。
   if (enabled) {
     const row = await c.env.DB.prepare(
-      `SELECT bc.hpb_category_value
+      `SELECT a.category_id, a.stylist_id, a.image_r2_key, a.title, a.body, a.footer_enabled_flag
        FROM blog_articles a
-       LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
        WHERE a.id = ? AND a.user_id = ? AND a.salon_id = ?`
     )
       .bind(articleId, user.id, user.active_salon_id)
-      .first<{ hpb_category_value: string | null }>()
-    if (!row?.hpb_category_value) {
-      return c.json({ success: false, error: '「HPBブログカテゴリ」が未設定です。設定されていないと投稿ができません。' }, 400)
+      .first<{
+        category_id: number | null
+        stylist_id: number | null
+        image_r2_key: string | null
+        title: string | null
+        body: string | null
+        footer_enabled_flag: number
+      }>()
+    if (!row) return c.json({ success: false, error: '記事が見つかりません' }, 404)
+
+    const { text: footerText } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
+    const requirementsMet = await articleAutoPostRequirementsMet(c, user, {
+      categoryId: row.category_id,
+      stylistId: row.stylist_id,
+      hasImage: !!row.image_r2_key,
+      title: row.title || '',
+      bodyCharCount: effectiveBodyCharCount(row.body || '', row.footer_enabled_flag === 1, footerText)
+    })
+    if (!requirementsMet) {
+      return c.json(
+        {
+          success: false,
+          error: '必須項目(画像・タイトル・本文・カテゴリ・投稿者)が揃っていません。設定されていないと投稿ができません。'
+        },
+        400
+      )
     }
   }
 
