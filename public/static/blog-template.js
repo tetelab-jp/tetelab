@@ -39,7 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (closingDays) lines.push('※定休：' + closingDays)
       }
       var keywords = keywordsRaw
-        .split(',')
+        .split('/')
         .map(function (k) {
           return k.trim()
         })
@@ -114,6 +114,18 @@ document.addEventListener('DOMContentLoaded', () => {
         draftBtn.disabled = false
         draftBtn.innerHTML = '<i class="fas fa-wand-magic-sparkles mr-1"></i>AIで下書き生成'
       }
+    })
+  }
+  // 既存テンプレート編集: プレースホルダーのまま(未選択)では開けないようにする
+  var templateEditSelect = document.getElementById('template-edit-select')
+  var templateEditOpenBtn = document.getElementById('template-edit-open-btn')
+  if (templateEditSelect && templateEditOpenBtn) {
+    templateEditSelect.addEventListener('change', function () {
+      templateEditOpenBtn.disabled = !templateEditSelect.value
+    })
+    templateEditOpenBtn.addEventListener('click', function () {
+      if (!templateEditSelect.value) return
+      location.href = '/blog/template?category=' + encodeURIComponent(templateEditSelect.value)
     })
   }
 })

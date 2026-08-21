@@ -100,6 +100,36 @@ const LOG_RESULT_BORDER: Record<string, string> = {
   failure: 'border-red-500'
 }
 
+// review_sync_jobs/review_reply_jobsのstatusは'success'/'failed'なので、
+// 既存のLOG_RESULT_*マップの値と揃うようにfailedをfailureへ読み替える。
+function reviewJobStatusLabel(status: string): string {
+  return LOG_RESULT_LABEL[status === 'failed' ? 'failure' : status] || status
+}
+function reviewJobStatusClass(status: string): string {
+  return LOG_RESULT_COLOR[status === 'failed' ? 'failure' : status] || 'bg-gray-100 text-gray-500'
+}
+function reviewJobStatusBorder(status: string): string {
+  return LOG_RESULT_BORDER[status === 'failed' ? 'failure' : status] || 'border-gray-300'
+}
+
+const REVIEW_SYNC_MODE_LABEL: Record<string, string> = {
+  full_backfill: '初回取込',
+  incremental: '定期同期'
+}
+
+// ranking_results.statusは順位測定固有の値('ok'/'not_found'/'error')のため専用マップを持つ。
+const RANKING_STATUS_LABEL: Record<string, string> = { ok: '完了', not_found: '圏外', error: '失敗' }
+const RANKING_STATUS_COLOR: Record<string, string> = {
+  ok: 'bg-green-50 text-green-600',
+  not_found: 'bg-amber-50 text-amber-600',
+  error: 'bg-red-50 text-red-600'
+}
+const RANKING_STATUS_BORDER: Record<string, string> = {
+  ok: 'border-green-500',
+  not_found: 'border-amber-500',
+  error: 'border-red-500'
+}
+
 type ExecutionLogRow = {
   id: number
   dateLabel: string
@@ -313,6 +343,130 @@ automation.get('/style/test-run', requireAuth, async (c) => {
   const styleLogRows = logRows.filter((r) => r.category === 'スタイル')
   const blogLogRows = logRows.filter((r) => r.category === 'ブログ')
 
+  // 2026-08-21追記(ユーザー指定): 口コミ・SEOも実行履歴に表示する。
+  // どちらもexecution_logsではなく専用のジョブ/結果テーブルを持つため、
+  // ここで別途取得してExecutionLogRowと同じ形に変換する。
+  const [{ results: reviewSyncRows }, { results: reviewReplyRows }, { results: rankingRows }] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT id, mode, status, matched_count, unmatched_count, result_message, created_at
+       FROM review_sync_jobs WHERE user_id = ? AND salon_id = ? ORDER BY id DESC LIMIT 30`
+    )
+      .bind(user.id, user.active_salon_id)
+      .all<{
+        id: number
+        mode: string
+        status: string
+        matched_count: number
+        unmatched_count: number
+        result_message: string | null
+        created_at: string
+      }>(),
+    c.env.DB.prepare(
+      `SELECT rrj.id, rrj.status, rrj.result_message, rrj.created_at, r.hpb_nickname, r.content
+       FROM review_reply_jobs rrj
+       LEFT JOIN reviews r ON r.id = rrj.review_id
+       WHERE rrj.user_id = ? AND rrj.salon_id = ? ORDER BY rrj.id DESC LIMIT 30`
+    )
+      .bind(user.id, user.active_salon_id)
+      .all<{
+        id: number
+        status: string
+        result_message: string | null
+        created_at: string
+        hpb_nickname: string | null
+        content: string | null
+      }>(),
+    c.env.DB.prepare(
+      `SELECT id, keyword, area_scope, rank, status, error_message, measured_at
+       FROM ranking_results WHERE user_id = ? AND salon_id = ? ORDER BY id DESC LIMIT 30`
+    )
+      .bind(user.id, user.active_salon_id)
+      .all<{
+        id: number
+        keyword: string
+        area_scope: string
+        rank: number | null
+        status: string
+        error_message: string | null
+        measured_at: string
+      }>()
+  ])
+
+  type ReviewLogSource = { createdAt: string; row: ExecutionLogRow }
+
+  const reviewSyncSources: ReviewLogSource[] = (reviewSyncRows || []).map((j) => {
+    const errorText = (j.result_message || '').slice(0, 10000)
+    const modeLabel = REVIEW_SYNC_MODE_LABEL[j.mode] || j.mode
+    const contentName = `${modeLabel}(突合${j.matched_count}件 / 未突合${j.unmatched_count}件)`
+    return {
+      createdAt: j.created_at,
+      row: {
+        id: j.id,
+        dateLabel: formatJstDate(j.created_at),
+        category: '口コミ同期',
+        categoryClass: 'bg-teal-50 text-teal-600',
+        content: <>{contentName}</>,
+        contentLabel: null,
+        contentName,
+        statusLabel: reviewJobStatusLabel(j.status),
+        statusClass: reviewJobStatusClass(j.status),
+        borderClass: reviewJobStatusBorder(j.status),
+        errorText: errorText || '-',
+        showToggle: errorText.length > 150
+      }
+    }
+  })
+
+  const reviewReplySources: ReviewLogSource[] = (reviewReplyRows || []).map((j) => {
+    const errorText = (j.result_message || '').slice(0, 10000)
+    const name = j.hpb_nickname || '(匿名)'
+    const excerpt = (j.content || '').slice(0, 30)
+    const contentName = `${name} ${excerpt}`
+    return {
+      createdAt: j.created_at,
+      row: {
+        id: j.id,
+        dateLabel: formatJstDate(j.created_at),
+        category: '口コミ返信',
+        categoryClass: 'bg-indigo-50 text-indigo-600',
+        content: <>{contentName}</>,
+        contentLabel: null,
+        contentName,
+        statusLabel: reviewJobStatusLabel(j.status),
+        statusClass: reviewJobStatusClass(j.status),
+        borderClass: reviewJobStatusBorder(j.status),
+        errorText: errorText || '-',
+        showToggle: errorText.length > 150
+      }
+    }
+  })
+
+  const reviewLogRows = [...reviewSyncSources, ...reviewReplySources]
+    .sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0))
+    .slice(0, 30)
+    .map((s) => s.row)
+
+  const rankingLogRows: ExecutionLogRow[] = (rankingRows || []).map((r) => {
+    const errorText = (r.error_message || '').slice(0, 10000)
+    const scopeLabel = r.area_scope === 'small' ? '小エリア' : '中エリア'
+    const rankText = r.rank != null ? `${r.rank}位` : '圏外'
+    const contentName = `${r.keyword}（${scopeLabel}）${r.status === 'ok' ? ' ' + rankText : ''}`
+    return {
+      id: r.id,
+      dateLabel: formatJstDate(r.measured_at),
+      category: 'SEO',
+      categoryClass: 'bg-cyan-50 text-cyan-600',
+      content: <>{contentName}</>,
+      contentLabel: null,
+      contentName,
+      statusLabel: RANKING_STATUS_LABEL[r.status] || r.status,
+      statusClass: RANKING_STATUS_COLOR[r.status] || 'bg-gray-100 text-gray-500',
+      borderClass: RANKING_STATUS_BORDER[r.status] || 'border-gray-300',
+      errorText: errorText || '-',
+      showToggle: errorText.length > 150
+    }
+  })
+
   return c.render(
     <PageLayout
       seoEnabled={user.seo_enabled !== 0}
@@ -344,6 +498,20 @@ automation.get('/style/test-run', requireAuth, async (c) => {
           >
             ブログ（{blogLogRows.length}）
           </button>
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400"
+            data-tab="review"
+          >
+            口コミ（{reviewLogRows.length}）
+          </button>
+          <button
+            type="button"
+            class="log-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400"
+            data-tab="seo"
+          >
+            SEO（{rankingLogRows.length}）
+          </button>
         </div>
 
         <div data-tab-panel="style">
@@ -351,6 +519,12 @@ automation.get('/style/test-run', requireAuth, async (c) => {
         </div>
         <div data-tab-panel="blog" class="hidden">
           <ExecutionLogTable rows={blogLogRows} tableId="blog" showPostLog={showPostLog} />
+        </div>
+        <div data-tab-panel="review" class="hidden">
+          <ExecutionLogTable rows={reviewLogRows} tableId="review" showPostLog={showPostLog} />
+        </div>
+        <div data-tab-panel="seo" class="hidden">
+          <ExecutionLogTable rows={rankingLogRows} tableId="seo" showPostLog={showPostLog} />
         </div>
       </div>
 
