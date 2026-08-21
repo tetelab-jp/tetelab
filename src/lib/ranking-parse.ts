@@ -527,3 +527,66 @@ export function parseHpbBlogListPage(html: string): HpbBlogListPageResult {
 
   return { items, nextPageUrl }
 }
+
+export type HpbBlogDetailResult = {
+  title: string | null
+  /** 全文(埋め込み画像を除いた本文テキスト、<br />は改行に変換) */
+  body: string | null
+  /** 本文中に埋め込まれた画像のURL(一覧サムネと同じCDNパス、サイズのクエリ違い) */
+  imageUrl: string | null
+  categoryName: string | null
+  stylistName: string | null
+  stylistSalonboardKey: string | null
+  /** coupons.salonboard_coupon_keyと同じ形式(例: CP00000010528227) */
+  couponSalonboardKey: string | null
+}
+
+/**
+ * HPB公開ブログ個別記事ページ(blog_reference_articles.source_urlが指すページ)を
+ * パースする。一覧ページと違い、全文・本文埋め込み画像・おすすめクーポンが
+ * 掲載されている。2026-08-21追記(ユーザー提供の実HTMLで確認した構造):
+ *   - dl.blogDtlInner > dt がタイトル、> dd が本文(先頭に画像を含む)
+ *   - div.blogCategoryLarge.dynamicBlogCategory がカテゴリ(一覧側とクラス名が異なる)
+ *   - div.blogSidePosterWrap 内の a[href*="/stylist/"] が投稿者
+ *   - table.couponTable 内の data-couponid 属性(CP########形式)がおすすめクーポン
+ */
+export function parseHpbBlogDetailPage(html: string): HpbBlogDetailResult {
+  const $ = cheerio.load(html)
+
+  const title = $('dl.blogDtlInner dt').first().text().replace(/\s+/g, ' ').trim() || null
+
+  const $dd = $('dl.blogDtlInner dd').first()
+  let imageUrl: string | null = null
+  let body: string | null = null
+  if ($dd.length > 0) {
+    const src = $dd.find('img').first().attr('src') || null
+    imageUrl = src ? (src.startsWith('http') ? src : `https:${src.replace(/^\/\//, '')}`) : null
+
+    const $bodyClone = $dd.clone()
+    $bodyClone.find('img').remove()
+    $bodyClone.find('div.taC').remove()
+    $bodyClone.find('br').replaceWith('\n')
+    body = $bodyClone.text().replace(/\n{3,}/g, '\n\n').trim() || null
+  }
+
+  const categoryName = $('.blogCategoryLarge').first().text().replace(/\s+/g, ' ').trim() || null
+
+  let stylistName: string | null = null
+  let stylistSalonboardKey: string | null = null
+  const $stylistLinks =
+    $('div.blogSidePosterWrap a[href*="/stylist/"]').length > 0
+      ? $('div.blogSidePosterWrap a[href*="/stylist/"]')
+      : $('a[href*="/stylist/"]')
+  $stylistLinks.each((_, a) => {
+    const href = $(a).attr('href') || ''
+    const match = href.match(/\/stylist\/([^/]+)\/?/)
+    if (!match) return
+    stylistSalonboardKey = match[1]
+    stylistName = $(a).text().replace(/\s+/g, ' ').trim() || stylistName
+    return false
+  })
+
+  const couponSalonboardKey = $('table.couponTable [data-couponid]').first().attr('data-couponid')?.trim() || null
+
+  return { title, body, imageUrl, categoryName, stylistName, stylistSalonboardKey, couponSalonboardKey }
+}

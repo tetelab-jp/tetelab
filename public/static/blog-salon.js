@@ -48,33 +48,3 @@ document.addEventListener('DOMContentLoaded', () => {
   if (selectAllBtn) selectAllBtn.addEventListener('click', function () { setAll(true) })
   if (deselectAllBtn) deselectAllBtn.addEventListener('click', function () { setAll(false) })
 })
-
-// 取り込んだ過去の記事一覧: クリックで内容を確認するモーダル
-document.addEventListener('DOMContentLoaded', () => {
-  var modal = document.getElementById('blog-ref-view-modal')
-  if (!modal) return
-  var titleEl = document.getElementById('blog-ref-view-title')
-  var dateEl = document.getElementById('blog-ref-view-date')
-  var contentEl = document.getElementById('blog-ref-view-content')
-  var closeBtn = document.getElementById('blog-ref-view-close-btn')
-
-  function openModal(btn) {
-    titleEl.textContent = btn.getAttribute('data-title') || ''
-    dateEl.textContent = btn.getAttribute('data-date') || ''
-    contentEl.textContent = btn.getAttribute('data-content') || ''
-    modal.classList.remove('hidden')
-    modal.classList.add('flex')
-  }
-  function closeModal() {
-    modal.classList.add('hidden')
-    modal.classList.remove('flex')
-  }
-
-  document.querySelectorAll('.blog-ref-view-btn').forEach(function (btn) {
-    btn.addEventListener('click', function () { openModal(btn) })
-  })
-  if (closeBtn) closeBtn.addEventListener('click', closeModal)
-  modal.addEventListener('click', function (e) {
-    if (e.target === modal) closeModal()
-  })
-})
