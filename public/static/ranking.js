@@ -203,6 +203,7 @@
     measureRunBtn.addEventListener('click', async function () {
       measureRunBtn.disabled = true
       if (status) status.textContent = '測定を開始しています...'
+      if (window.SalonSyncModal) window.SalonSyncModal.show('順位測定を開始しています...')
       try {
         var res = await fetch('/seo/measure', { method: 'POST' })
         var data = await res.json()
@@ -219,6 +220,8 @@
       } catch (e) {
         if (status) status.textContent = '通信エラーが発生しました'
         measureRunBtn.disabled = false
+      } finally {
+        if (window.SalonSyncModal) window.SalonSyncModal.hide()
       }
     })
   }

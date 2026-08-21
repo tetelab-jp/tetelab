@@ -178,6 +178,9 @@ document.addEventListener('DOMContentLoaded', () => {
     btn.classList.remove('bg-pink-500', 'hover:bg-pink-600')
     btn.classList.add('bg-gray-400')
     statusEl.textContent = 'サロンボードと同期中...（1分ほどかかる場合があります）'
+    // 2026-08-21追記(ユーザー指定): 同期中はページ遷移させないよう、操作不能の
+    // 待機ポップアップを表示する(public/static/sync-modal.js、全ページ共通)。
+    if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードと同期しています…')
     try {
       const res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
       const data = await res.json()
@@ -196,6 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       statusEl.textContent = '通信エラーが発生しました'
     } finally {
+      if (window.SalonSyncModal) window.SalonSyncModal.hide()
       btn.disabled = false
       btn.textContent = originalText
       btn.classList.remove('bg-gray-400')

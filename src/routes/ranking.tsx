@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { requireAuth, requireSeoEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
-import { formatJstDateTime } from '../lib/date-format'
+import { formatJstDateTime, formatJstDateTimeCompact } from '../lib/date-format'
 import { measureRank } from '../lib/ranking-scraper'
 import { getPrimarySalonArea, buildAreaLabel, type PrimarySalonArea } from '../lib/ranking-areas'
 import { timingSafeEqual } from '../lib/crypto'
@@ -696,13 +696,18 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
             </div>
           </div>
           {keywordsList.length > 0 && (
-            <button
-              type="button"
-              id="measure-run-btn"
-              class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition disabled:opacity-50"
-            >
-              <i class="fas fa-magnifying-glass-chart mr-2"></i>測定
-            </button>
+            <div class="flex flex-col items-stretch sm:items-end gap-1 flex-shrink-0">
+              <button
+                type="button"
+                id="measure-run-btn"
+                class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white font-bold px-10 py-3.5 rounded-lg text-base shadow-sm transition disabled:opacity-50"
+              >
+                <i class="fas fa-magnifying-glass-chart mr-2"></i>順位測定
+              </button>
+              {runs.length > 0 && (
+                <p class="text-xs text-gray-400">最終測定: {formatJstDateTimeCompact(runs[0].measuredAt)}</p>
+              )}
+            </div>
           )}
         </div>
 

@@ -335,6 +335,7 @@ export function PageLayout({
       </div>
       <script src="/static/salon-switcher.js"></script>
       <script src="/static/autosize-textarea.js"></script>
+      <script src="/static/sync-modal.js"></script>
     </div>
   )
 }
