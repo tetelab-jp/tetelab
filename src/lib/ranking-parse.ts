@@ -630,6 +630,61 @@ export function formatStylistBioText(info: HpbStylistDetailInfo): string | null 
   return lines.length > 0 ? lines.join('\n') : null
 }
 
+export type HpbCouponListItem = {
+  /** coupons.salonboard_coupon_keyと同じ形式(例: CP00000007918355)。予約リンクのcouponIdクエリから抽出 */
+  couponSalonboardKey: string | null
+  name: string
+  description: string
+}
+
+export type HpbCouponListPageResult = {
+  items: HpbCouponListItem[]
+  nextPageUrl: string | null
+}
+
+/**
+ * HPB公開「クーポン・メニュー」ページ(https://beauty.hotpepper.jp/sln{ID}/coupon/、
+ * 2ページ目以降は<link rel="next">を辿る)を1ページ分パースする。
+ * table.couponTable単位がクーポン(table.menuTblはクーポン無しの単なるメニューの
+ * ため対象外)。個々のクーポンIDはdata属性ではなく予約リンクのcouponId=クエリに
+ * しか無い(2026-08-21追記(ユーザー提供の実HTMLで確認))。
+ */
+export function parseHpbCouponListPage(html: string): HpbCouponListPageResult {
+  const $ = cheerio.load(html)
+
+  const items: HpbCouponListItem[] = []
+  $('table.couponTable').each((_, table) => {
+    const $table = $(table)
+    const name = $table.find('.couponMenuName').first().text().replace(/\s+/g, ' ').trim()
+    const description = $table.find('.couponDescription').first().text().replace(/\s+/g, ' ').trim()
+
+    let couponSalonboardKey: string | null = null
+    $table.find('a[href*="couponId="]').each((_, a) => {
+      const href = $(a).attr('href') || ''
+      const match = href.match(/couponId=(CP\d+)/)
+      if (!match) return
+      couponSalonboardKey = match[1]
+      return false
+    })
+
+    if (name || description) items.push({ couponSalonboardKey, name, description })
+  })
+
+  const nextPageUrl = $('link[rel="next"]').attr('href') || null
+
+  return { items, nextPageUrl }
+}
+
+/** HPB公開クーポン一覧を、AI参考材料用の1テキストに整形する(件数が多いため上限を設ける) */
+const MAX_COUPONS_IN_TEXT = 15
+export function formatCouponsText(items: HpbCouponListItem[]): string | null {
+  if (items.length === 0) return null
+  return items
+    .slice(0, MAX_COUPONS_IN_TEXT)
+    .map((c) => [c.name, c.description].filter(Boolean).join(' / '))
+    .join('\n')
+}
+
 export type HpbBlogListItem = {
   title: string | null
   excerpt: string

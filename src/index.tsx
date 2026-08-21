@@ -1095,6 +1095,17 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(サロン情報機能)に失敗しました:', err)
   }
+  try {
+    // 2026-08-21追記(ユーザー指定): 「サロン情報」機能のクーポン部分。
+    // HPB公開のクーポン・メニューページから「クーポン内容」(既存の
+    // coupons.nameだけでは無かった、説明文)を取得しcouponsへ追加保存する。
+    // salon_profiles側には、参考材料として使いやすいよう上位数件をまとめた
+    // テキストも持たせる(詳細はmigrations-pg/0038_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE coupons ADD COLUMN IF NOT EXISTS hpb_description_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_coupons_text TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(サロン情報機能・クーポン)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。

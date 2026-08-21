@@ -95,6 +95,7 @@ export async function loadSalonProfileForGeneration(
     hpb_salon_data_text: null,
     hpb_specials_text: null,
     hpb_kodawari_text: null,
+    hpb_coupons_text: null,
     reference_articles: []
   }
 }

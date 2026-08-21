@@ -49,6 +49,7 @@ export type SalonProfileForGeneration = {
   hpb_salon_data_text: string | null
   hpb_specials_text: string | null
   hpb_kodawari_text: string | null
+  hpb_coupons_text: string | null
   reference_articles: BlogReferenceArticle[]
 } | null
 
@@ -85,6 +86,7 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   if (profile?.hpb_salon_data_text) lines.push(`サロンデータ: ${profile.hpb_salon_data_text}`)
   if (profile?.hpb_specials_text) lines.push(`サロンの特集・強み: ${profile.hpb_specials_text}`)
   if (profile?.hpb_kodawari_text) lines.push(`サロンのこだわり: ${profile.hpb_kodawari_text}`)
+  if (profile?.hpb_coupons_text) lines.push(`サロンのクーポン例: ${profile.hpb_coupons_text}`)
   return lines
 }
 

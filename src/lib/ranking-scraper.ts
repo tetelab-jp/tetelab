@@ -19,12 +19,14 @@ import {
   parseHpbBlogListPage,
   parseHpbKodawariPage,
   parseHpbStylistDetailPage,
+  parseHpbCouponListPage,
   type SalonAreaInfo,
   type HpbReviewItem,
   type SalonHpbProfileInfo,
   type HpbBlogListItem,
   type HpbKodawariPage,
-  type HpbStylistDetailInfo
+  type HpbStylistDetailInfo,
+  type HpbCouponListItem
 } from './ranking-parse'
 
 const USER_AGENT =
@@ -365,4 +367,41 @@ export async function fetchHpbStylistDetail(
   const dispatcher = await makeDispatcher(options.proxyUrl)
   const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/stylist/${tCode}/`, dispatcher, options.signal)
   return parseHpbStylistDetailPage(html)
+}
+
+const DEFAULT_MAX_COUPON_PAGES = 20
+const DEFAULT_COUPON_PAGE_DELAY_MS = 800
+
+export type HpbCouponListResult = {
+  items: HpbCouponListItem[]
+  pagesScanned: number
+}
+
+/**
+ * HPB公開「クーポン・メニュー」ページ(https://beauty.hotpepper.jp/sln{ID}/coupon/)を
+ * <link rel="next">を辿って全ページ巡回する。ログイン不要・Puppeteer不要。
+ */
+export async function fetchHpbCouponList(
+  hpbSlnId: string,
+  options: ScrapeOptions = {}
+): Promise<HpbCouponListResult> {
+  const maxPages = options.maxPages ?? DEFAULT_MAX_COUPON_PAGES
+  const delayMs = options.delayMs ?? DEFAULT_COUPON_PAGE_DELAY_MS
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+
+  const items: HpbCouponListItem[] = []
+  let url: string | null = `https://beauty.hotpepper.jp/${hpbSlnId}/coupon/`
+  let pagesScanned = 0
+
+  while (url && pagesScanned < maxPages) {
+    const html = await fetchHtml(url, dispatcher, options.signal)
+    const parsed = parseHpbCouponListPage(html)
+    pagesScanned += 1
+    items.push(...parsed.items)
+    if (!parsed.nextPageUrl) break
+    url = parsed.nextPageUrl
+    await sleep(delayMs)
+  }
+
+  return { items, pagesScanned }
 }
