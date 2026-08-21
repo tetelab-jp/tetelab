@@ -7,12 +7,19 @@ document.addEventListener('DOMContentLoaded', () => {
   btn.addEventListener('click', async function () {
     btn.disabled = true
     status.textContent = 'サロンボードから読み込み中...(数十秒かかることがあります)'
-    if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードからブログを読み込んでいます...')
+    // 2026-08-22追記(ユーザー指定): このポップアップにキャンセルボタンを配置する。
+    var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+    if (window.SalonSyncModal) {
+      window.SalonSyncModal.show('サロンボードからブログを読み込んでいます...', function () {
+        if (abortController) abortController.abort()
+      })
+    }
     try {
-      var res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
+      var signal = abortController ? abortController.signal : undefined
+      var res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST', signal: signal })
       var data = await res.json()
       if (data.success) {
-        var syncRes = await fetch('/blog/salon/mark-synced', { method: 'POST' })
+        var syncRes = await fetch('/blog/salon/mark-synced', { method: 'POST', signal: signal })
         var syncData = await syncRes.json()
         var msg = `完了しました(スタイリスト${data.stylistCount}件・クーポン${data.couponCount}件・ブログ記事${syncData.articleCount || 0}件を取得)`
         if (syncData.hpbError) {
@@ -26,7 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
         status.textContent = 'エラー: ' + (data.error || '不明なエラー')
       }
     } catch (e) {
-      status.textContent = '通信エラーが発生しました'
+      status.textContent = e && e.name === 'AbortError' ? 'キャンセルしました' : '通信エラーが発生しました'
     } finally {
       if (window.SalonSyncModal) window.SalonSyncModal.hide()
       btn.disabled = false

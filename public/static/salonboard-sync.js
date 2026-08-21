@@ -180,9 +180,18 @@ document.addEventListener('DOMContentLoaded', () => {
     statusEl.textContent = 'サロンボードと同期中...（1分ほどかかる場合があります）'
     // 2026-08-21追記(ユーザー指定): 同期中はページ遷移させないよう、操作不能の
     // 待機ポップアップを表示する(public/static/sync-modal.js、全ページ共通)。
-    if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードと同期しています…')
+    // 2026-08-22追記(ユーザー指定): このポップアップにキャンセルボタンを配置する。
+    var abortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+    if (window.SalonSyncModal) {
+      window.SalonSyncModal.show('サロンボードと同期しています…', function () {
+        if (abortController) abortController.abort()
+      })
+    }
     try {
-      const res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
+      const res = await fetch('/api/settings/sync-stylists-coupons', {
+        method: 'POST',
+        signal: abortController ? abortController.signal : undefined
+      })
       const data = await res.json()
       if (data.success) {
         statusEl.textContent =
@@ -197,7 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
       }
     } catch (e) {
-      statusEl.textContent = '通信エラーが発生しました'
+      statusEl.textContent = e && e.name === 'AbortError' ? 'キャンセルしました' : '通信エラーが発生しました'
     } finally {
       if (window.SalonSyncModal) window.SalonSyncModal.hide()
       btn.disabled = false

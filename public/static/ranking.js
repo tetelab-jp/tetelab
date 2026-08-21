@@ -207,9 +207,18 @@
     measureRunBtn.addEventListener('click', async function () {
       measureRunBtn.disabled = true
       if (status) status.textContent = '測定を開始しています...'
-      if (window.SalonSyncModal) window.SalonSyncModal.show('順位測定を開始しています...')
+      // 2026-08-22追記(ユーザー指定): このポップアップにキャンセルボタンを配置する。
+      var measureAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+      if (window.SalonSyncModal) {
+        window.SalonSyncModal.show('順位測定を開始しています...', function () {
+          if (measureAbortController) measureAbortController.abort()
+        })
+      }
       try {
-        var res = await fetch('/seo/measure', { method: 'POST' })
+        var res = await fetch('/seo/measure', {
+          method: 'POST',
+          signal: measureAbortController ? measureAbortController.signal : undefined
+        })
         var data = await res.json()
         if (data.success) {
           if (status)
@@ -222,7 +231,7 @@
           measureRunBtn.disabled = false
         }
       } catch (e) {
-        if (status) status.textContent = '通信エラーが発生しました'
+        if (status) status.textContent = e && e.name === 'AbortError' ? 'キャンセルしました' : '通信エラーが発生しました'
         measureRunBtn.disabled = false
       } finally {
         if (window.SalonSyncModal) window.SalonSyncModal.hide()

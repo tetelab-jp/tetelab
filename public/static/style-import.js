@@ -244,9 +244,18 @@ document.addEventListener('DOMContentLoaded', () => {
       statusEl.textContent = 'サロンボードからデータを取得中\n少しお待ちください'
       // 2026-08-21追記(ユーザー指定): 取得中はページ遷移させないよう、
       // 操作不能の待機ポップアップを表示する(public/static/sync-modal.js)。
-      if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードからスタイルを取得しています…')
+      // 2026-08-22追記(ユーザー指定): このポップアップにキャンセルボタンを配置する。
+      const fetchAbortController = typeof AbortController !== 'undefined' ? new AbortController() : null
+      if (window.SalonSyncModal) {
+        window.SalonSyncModal.show('サロンボードからスタイルを取得しています…', function () {
+          if (fetchAbortController) fetchAbortController.abort()
+        })
+      }
       try {
-        const res = await fetch('/api/style/import/fetch-list', { method: 'POST' })
+        const res = await fetch('/api/style/import/fetch-list', {
+          method: 'POST',
+          signal: fetchAbortController ? fetchAbortController.signal : undefined
+        })
         const data = await res.json()
         if (!data.success) {
           statusEl.textContent = 'エラー: ' + (data.error || '不明なエラー')
@@ -261,7 +270,7 @@ document.addEventListener('DOMContentLoaded', () => {
         statusEl.textContent = data.styles.length + '件のスタイルが見つかりました'
         if (lastFetchAtEl) lastFetchAtEl.textContent = '最終取得: ' + formatFetchedAt(Date.now())
       } catch (e) {
-        statusEl.textContent = '通信エラーが発生しました'
+        statusEl.textContent = e && e.name === 'AbortError' ? 'キャンセルしました' : '通信エラーが発生しました'
       } finally {
         if (window.SalonSyncModal) window.SalonSyncModal.hide()
         fetchBtn.disabled = false

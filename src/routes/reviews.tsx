@@ -483,6 +483,143 @@ reviews.get('/reviews/list', async (c) => {
   )
 })
 
+// ---------- ④返信済み口コミ ----------
+// 2026-08-22追記(ユーザー指定): デザインは③口コミ返信と同じベースを使う。
+// 未返信一覧と違い、送信済みの返信文を最初から(開かなくても)表示し、
+// 「編集する」ボタンで返信文を編集して再投稿できるようにする。SALON BOARD側の
+// 投稿フロー自体は未返信の口コミへの返信と同じ(dispatchManualReviewReplyを
+// そのまま再利用、返信済みによるブロックは撤廃済み)。
+reviews.get('/reviews/replied', async (c) => {
+  const user = c.get('user')
+  const salonId = user.active_salon_id
+  if (!salonId) return c.text('サロンが選択されていません', 400)
+
+  const state = await getBackfillState(c, salonId)
+  const backfillDone = !!state?.backfill_completed_at
+
+  const { results: rows } = backfillDone
+    ? await c.env.DB.prepare(
+        `SELECT id, posted_at, score_overall, content, hpb_nickname, stylist_name_raw, matched_at,
+                replied_at, reply_content, reply_method, ai_reply_draft
+         FROM reviews WHERE salon_id = ? AND replied_at IS NOT NULL
+         ORDER BY replied_at DESC
+         LIMIT ${REVIEW_LIST_PAGE_SIZE}`
+      )
+        .bind(salonId)
+        .all<ReviewListRowForUi>()
+    : { results: [] as ReviewListRowForUi[] }
+
+  return c.render(
+    <PageLayout active="review-replied" salonName={user.salon_name} title="返信済み口コミ" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
+      <ReviewAutoSyncInfo backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
+
+      {backfillDone && (
+        <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
+          <div class="px-6 py-4 border-b border-gray-100">
+            <p class="font-semibold">
+              <i class="fas fa-comment-dots mr-2 text-pink-500"></i>返信済みの口コミ(最新{REVIEW_LIST_PAGE_SIZE}件)
+            </p>
+            <p class="text-xs text-gray-400 mt-1">返信内容を修正して再投稿したい場合は「編集する」から行えます。</p>
+          </div>
+          {rows.length === 0 ? (
+            <p class="text-sm text-gray-400 text-center py-10">返信済みの口コミはありません</p>
+          ) : (
+            <div class="divide-y divide-gray-50" id="review-list-container">
+              {rows.map((r) => (
+                <div class="p-6" data-review-id={r.id} data-review-content={r.content || ''}>
+                  <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        {r.score_overall != null ? (
+                          <span class="text-amber-500 text-sm font-bold whitespace-nowrap">
+                            <i class="fas fa-star mr-1"></i>
+                            {r.score_overall}
+                          </span>
+                        ) : (
+                          <span class="text-xs text-gray-400 whitespace-nowrap">評点未取得(HPB未掲載)</span>
+                        )}
+                        {r.hpb_nickname && <span class="text-sm text-gray-500">{r.hpb_nickname}</span>}
+                        {r.stylist_name_raw && (
+                          <span class="text-xs text-gray-400 bg-gray-50 rounded-full px-2 py-0.5">
+                            担当: {r.stylist_name_raw}
+                          </span>
+                        )}
+                        <span class="text-xs font-semibold text-pink-600 bg-pink-50 rounded-full px-2 py-0.5">返信済み</span>
+                      </div>
+                      <p class="text-xs text-gray-400 mt-1">{r.posted_at || ''}</p>
+                    </div>
+                  </div>
+                  <p class="text-sm text-gray-700 mt-3 whitespace-pre-wrap">{r.content || '(本文なし)'}</p>
+
+                  <div class="mt-3 bg-gray-50 rounded-lg p-4">
+                    <p class="text-xs font-semibold text-gray-400 mb-1">
+                      サロンからの返信{r.replied_at ? `(${r.replied_at})` : ''}
+                    </p>
+                    <p class="text-sm text-gray-700 whitespace-pre-wrap">{r.reply_content || '(本文なし)'}</p>
+                  </div>
+
+                  <div class="mt-3">
+                    <button
+                      type="button"
+                      class="review-reply-open-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-sm font-semibold px-4 py-2 rounded-lg"
+                      data-review-id={r.id}
+                    >
+                      <i class="fas fa-pen mr-1"></i>編集する
+                    </button>
+                    <div class="review-reply-form hidden mt-3 bg-gray-50 rounded-lg p-4 space-y-3" data-review-id={r.id}>
+                      <div class="flex items-center justify-between gap-2 flex-wrap">
+                        <p class="text-xs font-semibold text-gray-400">返信文を編集して再投稿できます</p>
+                        <div class="flex items-center gap-2">
+                          <button
+                            type="button"
+                            class="review-reply-generate-btn bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                            data-review-id={r.id}
+                          >
+                            <i class="fas fa-wand-magic-sparkles mr-1"></i>AI下書きを生成
+                          </button>
+                          <button
+                            type="button"
+                            class="review-reply-close-btn bg-white border border-gray-300 text-gray-500 hover:bg-gray-100 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
+                            data-review-id={r.id}
+                          >
+                            <i class="fas fa-xmark mr-1"></i>閉じる
+                          </button>
+                        </div>
+                      </div>
+                      <textarea
+                        class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
+                        rows={4}
+                        maxlength={500}
+                        placeholder="返信文を修正してください(全角500文字以内)"
+                        data-review-id={r.id}
+                      >
+                        {r.reply_content || ''}
+                      </textarea>
+                      <div class="flex items-center justify-between gap-2">
+                        <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
+                        <button
+                          type="button"
+                          class="review-reply-send-btn bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap disabled:opacity-50"
+                          data-review-id={r.id}
+                        >
+                          この内容で再投稿する
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <script src="/static/reviews.js"></script>
+    </PageLayout>,
+    { title: '返信済み口コミ' }
+  )
+})
+
 reviews.post('/reviews/reply/schedule', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()

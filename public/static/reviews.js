@@ -203,6 +203,16 @@ document.addEventListener('DOMContentLoaded', () => {
     pollTimer = null
   }
 
+  // 2026-08-22追記(ユーザー指定): 同期処理中ポップアップにキャンセルボタンを
+  // 配置する。同期ジョブ自体はFargate側で既に走っているため、キャンセルは
+  // このページでの進捗待ち(ポーリング)をやめるのみで、ジョブは裏で完了まで
+  // 継続する(完了すればDBには反映される)。その旨を状態表示に明記する。
+  function cancelSyncWatch() {
+    stopPolling()
+    if (startBtn) startBtn.disabled = false
+    if (statusText) statusText.textContent = '進捗表示をキャンセルしました(同期処理自体は裏側で継続します)'
+  }
+
   function describeStatus(data) {
     if (!data || data.status === 'none') return ''
     if (data.status === 'pending' || data.status === 'running') return '同期処理中です(通常1〜2分程度で完了します)…'
@@ -238,7 +248,7 @@ document.addEventListener('DOMContentLoaded', () => {
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true
       if (statusText) statusText.textContent = '同期ジョブを投入中...'
-      if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードから口コミを同期しています...')
+      if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードから口コミを同期しています...', cancelSyncWatch)
       try {
         const res = await fetch('/api/reviews/sync/start', { method: 'POST' })
         const data = await res.json()
@@ -265,7 +275,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.status === 'pending' || data.status === 'running') {
           startBtn.disabled = true
           if (statusText) statusText.textContent = describeStatus(data)
-          if (window.SalonSyncModal) window.SalonSyncModal.show(describeStatus(data) || '処理中...')
+          if (window.SalonSyncModal) window.SalonSyncModal.show(describeStatus(data) || '処理中...', cancelSyncWatch)
           pollTimer = setInterval(pollStatus, 4000)
         }
       })
