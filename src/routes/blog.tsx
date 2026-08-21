@@ -6,7 +6,6 @@ import {
   generateCategoryDraft,
   generateArticleContent,
   generateImageDescription,
-  generateSalonPersona,
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
@@ -173,18 +172,12 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
 
 blog.get('/blog/salon', async (c) => {
   const user = c.get('user')
-  const saved = c.req.query('saved')
   const [profile, referenceArticles] = await Promise.all([getSalonProfile(c, user), getBlogReferenceArticles(c, user)])
   const referenceArticleCount = referenceArticles.length
   const imported = c.req.query('imported')
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログを取り込む" styleEnabled={user.style_enabled !== 0}>
-      {saved && (
-        <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
-          <i class="fas fa-circle-check mr-2"></i>保存しました
-        </div>
-      )}
       {imported && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を登録ブログへ追加しました
@@ -225,6 +218,9 @@ blog.get('/blog/salon', async (c) => {
             選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
+            <button type="submit" class="mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+              登録ブログへ追加
+            </button>
             <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a) => (
                 <li class="flex items-start gap-3 p-3">
@@ -265,43 +261,6 @@ blog.get('/blog/salon', async (c) => {
         </div>
       </div>
 
-      <form method="post" action="/blog/salon" class="space-y-6">
-        <div class="bg-white rounded-xl border border-gray-100 p-6">
-          <div class="flex items-center justify-between flex-wrap gap-2 mb-3">
-            <p class="font-semibold">
-              <i class="fas fa-heart mr-2 text-pink-500"></i>サロンの人格<span class="text-xs text-gray-400 ml-2">AI生成の材料になります</span>
-            </p>
-            <button type="button" id="persona-generate-btn" class="bg-white border border-pink-300 text-pink-600 hover:bg-pink-50 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap">
-              <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで生成する
-            </button>
-          </div>
-          <p id="persona-generate-status" class="text-xs text-gray-400 mb-3"></p>
-          <div class="space-y-4">
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">コンセプト</label>
-              <textarea id="persona-concept" name="concept" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.concept || ''}</textarea>
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">得意なこと・強み</label>
-              <textarea id="persona-strengths" name="strengths" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.strengths || ''}</textarea>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">来てくれる人（読み手）</label>
-                <textarea id="persona-target-customer" name="target_customer" rows={2} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">{profile?.target_customer || ''}</textarea>
-              </div>
-              <div>
-                <label class="block text-sm font-medium text-gray-700 mb-1">価格帯</label>
-                <input id="persona-price-range" type="text" name="price_range" value={profile?.price_range || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
-          保存する
-        </button>
-      </form>
       <p class="text-xs text-gray-400">
         住所・営業時間などの基本情報とフッター設定は
         <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
@@ -320,7 +279,11 @@ blog.get('/blog/salon', async (c) => {
 // ため)。自動投稿は既に公開済みの記事の再投稿を防ぐためOFFで追加する。
 blog.post('/blog/salon/import-references', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): { all: true }を付けずに
+  // parseBody()を呼ぶと、同名(reference_id)のチェックボックスが複数
+  // チェックされていても最後の1件の値で上書きされてしまい(Honoの既定動作)、
+  // 複数選択して「登録ブログへ追加」を押しても1件しか追加されなかった。
+  const body = await c.req.parseBody({ all: true })
   const idsRaw = body.reference_id
   const ids = (Array.isArray(idsRaw) ? idsRaw : idsRaw ? [idsRaw] : [])
     .map((v) => Number(v))
@@ -364,37 +327,6 @@ blog.post('/blog/salon/import-references', async (c) => {
   }
 
   return c.redirect(`/blog/salon?imported=${rows?.length ?? 0}`)
-})
-
-blog.post('/blog/salon', async (c) => {
-  const user = c.get('user')
-  const body = await c.req.parseBody()
-  const fields = {
-    concept: String(body.concept || '').trim(),
-    strengths: String(body.strengths || '').trim(),
-    target_customer: String(body.target_customer || '').trim(),
-    price_range: String(body.price_range || '').trim()
-  }
-
-  // 2026-08-16追記(ブログ機能再設計): このページは「サロンの人格」の列だけを
-  // 更新する。「基本情報」「フッター」は/blog/templateページ側のPOSTハンドラが
-  // 担当し、同じsalon_profiles行の別の列を更新するため、ON CONFLICT DO UPDATEで
-  // 自分が担当する列だけを書き換え、相手の列には触れない。
-  // 2026-08-17追記(ユーザー指定): 「書き方」欄(参考文章・文体パラメータ・
-  // NGワード)をUI上から削除したため、reference_text/first_person/
-  // sentence_ending/writing_tone/ng_words列はこのハンドラでは更新しない
-  // (既存データを無言で空上書きしないよう、触れないままにする)。
-  await c.env.DB.prepare(
-    `INSERT INTO salon_profiles (user_id, salon_id, concept, strengths, target_customer, price_range)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT (salon_id) DO UPDATE SET
-       concept = EXCLUDED.concept, strengths = EXCLUDED.strengths, target_customer = EXCLUDED.target_customer,
-       price_range = EXCLUDED.price_range, updated_at = CURRENT_TIMESTAMP`
-  )
-    .bind(user.id, user.active_salon_id, fields.concept, fields.strengths, fields.target_customer, fields.price_range)
-    .run()
-
-  return c.redirect('/blog/salon?saved=1')
 })
 
 // サロンボード同期(既存の/api/settings/sync-stylists-coupons、dashboard.tsx参照)を
@@ -478,20 +410,6 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   }
 
   return c.json({ success: true, articleCount, hpbError })
-})
-
-// 「サロンの人格」(コンセプト・強み・来てくれる人・価格帯)を、HPB公開情報から
-// AIに下書きさせる。フォームへの反映のみ行い、保存(DB更新)は既存の
-// /blog/salon POSTハンドラ(保存するボタン)にユーザーが回すことで行う。
-blog.post('/api/blog/salon/generate-persona', async (c) => {
-  const user = c.get('user')
-  try {
-    const profile = await getSalonProfileForGeneration(c, user)
-    const persona = await generateSalonPersona(c.env, profile)
-    return c.json({ success: true, ...persona })
-  } catch (err: any) {
-    return c.json({ error: err.message || 'AI生成に失敗しました' }, 500)
-  }
 })
 
 // ---------- 2. 生成テンプレート ----------
@@ -1427,7 +1345,11 @@ blog.get('/blog/articles/new', async (c) => {
 
 blog.post('/blog/articles/new', async (c) => {
   const user = c.get('user')
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正の横展開): 月タグ(month_tags)は
+  // 同名チェックボックスが複数あり、{ all: true }を付けないと複数選択時に
+  // 最後の1件しか渡らない(Honoの既定動作)。/blog/salon/import-referencesと
+  // 同じ原因のため、同じ修正をこの記事フォームにも適用する。
+  const body = await c.req.parseBody({ all: true })
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
@@ -1517,7 +1439,9 @@ blog.post('/blog/articles/:id/edit', async (c) => {
     .first<{ id: number; category_id: number | null }>()
   if (!existing) return c.notFound()
 
-  const body = await c.req.parseBody()
+  // 2026-08-21追記(ユーザー指摘によるバグ修正の横展開): { all: true }を
+  // 付けないと月タグ(month_tags)を複数チェックしても最後の1件しか渡らない。
+  const body = await c.req.parseBody({ all: true })
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   // 2026-08-21追記(ユーザー指摘によるバグ修正): 「カテゴリ（HPBブログカテゴリ）」欄は

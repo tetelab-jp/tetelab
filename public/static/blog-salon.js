@@ -34,35 +34,6 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 })
 
-// サロン基本情報ページ: 「サロンの人格」AI生成ボタン
-document.addEventListener('DOMContentLoaded', () => {
-  var btn = document.getElementById('persona-generate-btn')
-  var status = document.getElementById('persona-generate-status')
-  if (!btn) return
-
-  btn.addEventListener('click', async function () {
-    btn.disabled = true
-    status.textContent = 'AIで生成中...'
-    try {
-      var res = await fetch('/api/blog/salon/generate-persona', { method: 'POST' })
-      var data = await res.json()
-      if (data.success) {
-        document.getElementById('persona-concept').value = data.concept || ''
-        document.getElementById('persona-strengths').value = data.strengths || ''
-        document.getElementById('persona-target-customer').value = data.target_customer || ''
-        document.getElementById('persona-price-range').value = data.price_range || ''
-        status.textContent = '生成しました。内容を確認して「保存する」を押してください'
-      } else {
-        status.textContent = 'エラー: ' + (data.error || '不明なエラー')
-      }
-    } catch (e) {
-      status.textContent = '通信エラーが発生しました'
-    } finally {
-      btn.disabled = false
-    }
-  })
-})
-
 // 取り込んだ過去の記事一覧: 全選択/全解除ボタン
 document.addEventListener('DOMContentLoaded', () => {
   var selectAllBtn = document.getElementById('blog-ref-select-all-btn')
