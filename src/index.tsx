@@ -1036,6 +1036,37 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(reviews.replied_atバックフィル)に失敗しました:', err)
   }
+  try {
+    // 2026-08-21追記(ユーザー指摘によるバグ修正): blog_articlesのstatus列・
+    // approved_at列は「登録ブログ一覧に反映するのはユーザーが明示的に
+    // 承認(保存)した記事だけ」という設計のために元々用意されていた
+    // (CREATE TABLE時点のデフォルト値'pending_generation'、ELIGIBLE_ARTICLE_WHERE
+    // 付近のコメント「投稿対象として有効(承認済み・自動投稿ON...)」が
+    // その名残)。しかし実装時にこの承認ゲートが一覧クエリ側に一切
+    // 反映されておらず、AI生成/新規作成の時点でDBへINSERTした記事
+    // (status='unapproved')がその場で登録ブログ一覧にも表示されてしまって
+    // いた(「投稿一覧に追加」を押す前から一覧に出てしまうバグ)。
+    // この修正でstatus='approved'を実際の表示条件として使うようにする
+    // ため、これまでに保存された既存記事(現状すべてstatus='unapproved'。
+    // 元々ユーザーの目には「登録済みの記事」として見えていたもの)は
+    // 一括で承認済み扱いへ移行する。以後は新規作成/AI生成時点では
+    // 'unapproved'のまま(まだ一覧に出さない)、記事編集フォームの保存
+    // (POST /blog/articles/:id/edit)で初めて'approved'へ確定する。
+    const blogArticleApprovalBackfillDone = await bindings.DB.prepare(
+      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'blog_article_approval_backfill_v1'`
+    ).first()
+    if (!blogArticleApprovalBackfillDone) {
+      await bindings.DB.prepare(
+        `UPDATE blog_articles SET status = 'approved', approved_at = COALESCE(approved_at, created_at)
+         WHERE status != 'approved'`
+      ).run()
+      await bindings.DB.prepare(
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('blog_article_approval_backfill_v1') ON CONFLICT (flag_key) DO NOTHING RETURNING flag_key`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_articles承認済みバックフィル)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。

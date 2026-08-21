@@ -954,7 +954,13 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
       .bind(message, jobId)
       .run()
     // 2026-08-15追記(ユーザー指定): 失敗しても承認状態は解除しない
-    await c.env.DB.prepare(`UPDATE blog_articles SET last_error = ? WHERE id = ?`)
+    // 2026-08-21追記(ユーザー指定): この失敗は設定不足が原因で、リトライしても
+    // 修正されるまで毎回必ず同じ理由で失敗し続ける(プロキシ不調等の一過性の
+    // 失敗とは異なる)。放置すると1日1回Fargateタスクを起動しては無駄に
+    // 失敗し続けるだけなので、自動投稿を自動的にOFFにする(登録ブログ一覧側で
+    // 「「HPBブログカテゴリ」が未設定です」の専用バッジを表示し、HPBブログ
+    // カテゴリを設定すれば手動で再度ONにできる)。
+    await c.env.DB.prepare(`UPDATE blog_articles SET last_error = ?, auto_post_enabled_flag = 0 WHERE id = ?`)
       .bind(message, job.article_id)
       .run()
     await c.env.DB.prepare(

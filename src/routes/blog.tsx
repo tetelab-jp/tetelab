@@ -342,13 +342,18 @@ blog.post('/blog/salon/import-references', async (c) => {
     .first<{ n: number }>()
   let sortOrder = nextOrderRow?.n ?? 0
 
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): このルートは新規作成/AI生成と
+  // 違い、確認・編集画面を挟まずクリックした時点で直接一覧へ追加する仕様
+  // (既存スタイル取り込みと同じ位置づけ)。GET /blog/articlesがstatus='approved'
+  // のみ表示するようになったため、ここもapprovedで作成しないと追加した記事が
+  // 一覧に一切表示されなくなってしまう。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
     await c.env.DB.prepare(
       `INSERT INTO blog_articles (
          user_id, salon_id, title, body, month_tags_json,
-         footer_enabled_flag, auto_post_enabled_flag, status, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'unapproved', ?, ?, ?)`
+         footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
+       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
         user.id, user.active_salon_id, row.title, row.excerpt,
@@ -1002,10 +1007,13 @@ blog.get('/blog/article/:id/image', async (c) => {
   })
 })
 
+// 2026-08-21追記(ユーザー指定): 本文の文字数上限はフッター込みで950文字
+// (SALON BOARD側の実際の上限1000文字より少し余裕を持たせた値)。この関数は
+// AI生成が使う「本文だけの」上限なので、950からフッター分の文字数を引く。
 async function computeBodyMaxChars(c: AppContext, user: AppUser): Promise<number> {
   const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
   const footerText = buildFooterText(salon?.salon_name || null, profile)
-  return Math.max(300, 1000 - footerText.length)
+  return Math.max(300, 950 - footerText.length)
 }
 
 async function generateOneArticle(
@@ -1040,8 +1048,13 @@ async function generateOneArticle(
 
   // カテゴリに季節パラメータが設定されていれば、生成した記事の月タグへ
   // そのまま反映する(その月に合わせて投稿されるようにするため)。
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 以前はここで無条件に
+  // status='unapproved'に戻していたため、既に登録ブログ一覧に表示済み
+  // (status='approved')の記事で「本文をAIで再生成」を押すと、一覧クエリが
+  // status='approved'のみを表示するようになったことで記事が一覧から
+  // 消えてしまう不具合になる。statusには触れず、現在の承認状態を維持する。
   await c.env.DB.prepare(
-    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, month_tags_json=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
+    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, month_tags_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(result.title, result.body, category.default_stylist_id || null, JSON.stringify(seasonMonths), article.id, user.id, user.active_salon_id)
     .run()
@@ -1151,17 +1164,21 @@ function ArticleForm({
 
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
+            <label id="article-title-label" class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
             <input
               type="text"
               name="title"
+              id="article-title-input"
               value={detail?.title || ''}
               maxlength={25}
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">本文</label>
+            <div class="flex items-center justify-between mb-1">
+              <label id="article-body-label" class="block text-sm font-medium text-gray-700">本文</label>
+              <span id="article-body-charcount" class="text-xs text-gray-400"></span>
+            </div>
             <textarea name="body" id="article-body-textarea" rows={10} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {initialBody}
             </textarea>
@@ -1178,8 +1195,8 @@ function ArticleForm({
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ（HPBブログカテゴリ）</label>
-              <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <label id="article-category-label" class="block text-sm font-medium text-gray-700 mb-1">カテゴリ（HPBブログカテゴリ）</label>
+              <select name="hpb_category_value" id="article-category-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
                   <option value={opt} selected={selectedCategoryHpbValue === opt}>{opt}</option>
@@ -1248,16 +1265,21 @@ function ArticleForm({
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button
-            type="submit"
-            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm"
-          >
-            {submitLabel}
-          </button>
-          <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
-            一覧に戻る
-          </a>
+        <div>
+          <p id="article-required-error" class="hidden text-sm text-red-600 mb-2">必須項目が設定されていません</p>
+          <p id="article-charlimit-error" class="hidden text-sm text-red-600 mb-2">文字数制限(950文字)を超えています。</p>
+          <div class="flex items-center gap-3">
+            <button
+              type="submit"
+              id="article-submit-btn"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitLabel}
+            </button>
+            <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
+              一覧に戻る
+            </a>
+          </div>
         </div>
       </form>
     </div>
@@ -1287,6 +1309,21 @@ function parseArticleForm(body: Record<string, any>) {
 // category_id(blog_categoriesへのFK)で保持する設計を崩さないため、選択された
 // 固定値と同じhpb_category_valueを持つblog_categories行を探し、無ければ
 // (name=hpb_category_valueとして)自動作成してそのidを使う。
+// 2026-08-21追記(ユーザー指定): 「必須項目(HPBブログカテゴリ)が未設定の
+// 記事は自動投稿を須くOFFにする」という方針を、この画面の個別チェックに
+// 頼らず全ての書き込み経路(新規作成/編集保存/AI記事生成)で保証するための
+// 共通ヘルパー。category_idが指すカテゴリに実効HPBブログカテゴリが
+// 無ければ、ユーザーが自動投稿チェックをONにしていても強制的にOFFで保存する。
+async function categoryHasHpbValue(c: AppContext, user: AppUser, categoryId: number | null): Promise<boolean> {
+  if (!categoryId) return false
+  const row = await c.env.DB.prepare(
+    'SELECT hpb_category_value FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+  )
+    .bind(categoryId, user.id, user.active_salon_id)
+    .first<{ hpb_category_value: string | null }>()
+  return !!row?.hpb_category_value
+}
+
 async function resolveArticleCategoryId(c: AppContext, user: AppUser, hpbCategoryValue: string): Promise<number | null> {
   if (!hpbCategoryValue) return null
 
@@ -1394,6 +1431,7 @@ blog.post('/blog/articles/new', async (c) => {
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
+  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
   if (parsed.footerEnabled) {
     const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
@@ -1414,7 +1452,7 @@ blog.post('/blog/articles/new', async (c) => {
     .bind(
       user.id, user.active_salon_id, categoryId, parsed.stylistId, parsed.couponId,
       parsed.title, parsed.body, JSON.stringify(parsed.monthTags),
-      parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
+      parsed.footerEnabled ? 1 : 0, autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
     )
     .run()
 
@@ -1474,15 +1512,28 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const existing = await c.env.DB.prepare('SELECT id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id, category_id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
     .bind(id, user.id, user.active_salon_id)
-    .first<{ id: number }>()
+    .first<{ id: number; category_id: number | null }>()
   if (!existing) return c.notFound()
 
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
-  const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 「カテゴリ（HPBブログカテゴリ）」欄は
+  // 記事の現在のカテゴリがHPB_BLOG_CATEGORY_OPTIONSの固定値と一致しない場合(生成
+  // テンプレート側でHPBブログカテゴリが未設定のカテゴリに属している記事等)、初期表示が
+  // 「選択しない」になる。この状態でユーザーがこの欄に触れずタイトル・本文だけ直して
+  // 保存すると、以前はresolveArticleCategoryId('')がnullを返し、記事のcategory_idが
+  // 無条件にNULLへ上書きされてカテゴリ紐付けが失われていた(投稿は元々失敗する状態
+  // だったが、さらに元のカテゴリとの関連も失われてしまう)。未選択のままなら既存の
+  // category_idを維持し、実際に別の値を選んだ場合だけ付け替えるようにする。
+  const hpbCategoryValueInput = String(body.hpb_category_value || '').trim()
+  const categoryId = hpbCategoryValueInput ? await resolveArticleCategoryId(c, user, hpbCategoryValueInput) : existing.category_id
+  // 2026-08-21追記(ユーザー指定): 必須項目(HPBブログカテゴリ)が未設定の
+  // カテゴリに属したまま「自動投稿の対象にする」にチェックを入れて保存しても、
+  // 実効HPBブログカテゴリが無ければ強制的にOFFで保存する(須くOFFの方針)。
+  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
 
   // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
   // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
@@ -1495,15 +1546,20 @@ blog.post('/blog/articles/:id/edit', async (c) => {
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
 
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 新規作成/AI生成直後の記事は
+  // status='unapproved'でDBに存在するが、まだ登録ブログ一覧には出さない
+  // (GET /blog/articlesがstatus='approved'のみ表示する)。この保存(「投稿一覧に
+  // 追加」/「保存する」)で初めてapprovedへ確定し、一覧に反映される。
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
        category_id=?, stylist_id=?, coupon_id=?, title=?, body=?, month_tags_json=?,
-       footer_enabled_flag=?, auto_post_enabled_flag=?, updated_at=CURRENT_TIMESTAMP
+       footer_enabled_flag=?, auto_post_enabled_flag=?, status='approved',
+       approved_at=COALESCE(approved_at, CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP
      WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
       categoryId, parsed.stylistId, parsed.couponId, parsed.title, parsed.body,
-      JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0,
+      JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, autoPostEnabled ? 1 : 0,
       id, user.id, user.active_salon_id
     )
     .run()
@@ -1616,7 +1672,7 @@ blog.post('/blog/generate', async (c) => {
 
   const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json, use_reference_articles FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json, use_reference_articles, hpb_category_value FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(categoryId, user.id, user.active_salon_id)
     .first<CategoryRow>()
@@ -1664,15 +1720,22 @@ blog.post('/blog/generate', async (c) => {
       useReferenceArticles: category.use_reference_articles !== 0
     })
 
+    // 2026-08-21追記(ユーザー指定): auto_post_enabled_flagは常に1固定で
+    // INSERTしていたため、選択したカテゴリにHPBブログカテゴリが未設定の
+    // 場合でも自動投稿ONの記事が生成され、投稿するたびに必ず失敗していた。
+    // 必須項目(HPBブログカテゴリ)が未設定の記事は自動投稿を須くOFFにする
+    // という方針に合わせ、カテゴリの実効HPBブログカテゴリが無ければ
+    // 0で作成する。
     const insert = await c.env.DB.prepare(
       `INSERT INTO blog_articles (
          user_id, salon_id, category_id, stylist_id, image_r2_key, image_file_name, image_description,
          title, body, month_tags_json, footer_enabled_flag, auto_post_enabled_flag, status, sort_order
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'unapproved', ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unapproved', ?)`
     )
       .bind(
         user.id, user.active_salon_id, categoryId, category.default_stylist_id || null, key, fileName, imageDescription,
-        result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0, nextOrderRow?.n ?? 0
+        result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0,
+        category.hpb_category_value ? 1 : 0, nextOrderRow?.n ?? 0
       )
       .run()
 
@@ -1685,8 +1748,12 @@ blog.post('/blog/generate', async (c) => {
 
 // 登録スタイル一覧(style.tsx)のAutoPostStatusBadgesと同じ見た目で、
 // 自動投稿ON/OFFと直近の投稿結果(公開/エラー)をタグ表示する。
+// 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定の記事は投稿する
+// たびに必ず同じ理由で失敗するため、汎用的な「エラー」ではなく専用の警告を
+// 表示する(原因と対処がひと目でわかるように)。
 function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
   const isOn = a.auto_post_enabled_flag === 1
+  const hpbCategoryMissing = !a.hpb_category_value
   return (
     <>
       <span
@@ -1696,10 +1763,18 @@ function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
       >
         自動投稿{isOn ? 'ON' : 'OFF'}
       </span>
-      {a.last_posted_at && !a.last_error && (
-        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+      {hpbCategoryMissing ? (
+        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-amber-50 text-amber-600">
+          「HPBブログカテゴリ」が未設定です
+        </span>
+      ) : (
+        <>
+          {a.last_posted_at && !a.last_error && (
+            <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+          )}
+          {a.last_error && <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>}
+        </>
       )}
-      {a.last_error && <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>}
     </>
   )
 }
@@ -1717,6 +1792,7 @@ type ArticleListRow = {
   post_count: number
   auto_post_enabled_flag: number
   last_error: string | null
+  hpb_category_value: string | null
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -1725,6 +1801,12 @@ function jstNow(): Date {
   return new Date(Date.now() + JST_OFFSET_MS)
 }
 
+// 2026-08-21追記(ユーザー指摘によるバグ修正): 新規作成/AI生成は途中で編集
+// 画面を離れても内容を失わないよう生成時点でDBへINSERTする(status='unapproved')
+// 設計だが、この一覧クエリがstatusを見ていなかったため、ユーザーが「投稿一覧に
+// 追加」を押す前(=まだ内容を確認・編集している最中)の記事までここに表示されて
+// しまっていた。status='approved'(POST /blog/articles/:id/editの保存時に確定)
+// のものだけを表示する。
 blog.get('/blog/articles', async (c) => {
   const user = c.get('user')
 
@@ -1739,17 +1821,35 @@ blog.get('/blog/articles', async (c) => {
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
        a.auto_post_enabled_flag, a.category_id, a.last_error,
-       st.name AS stylist_name, cp.name AS coupon_name
+       st.name AS stylist_name, cp.name AS coupon_name, bc.hpb_category_value
      FROM blog_articles a
      LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
      LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
-     WHERE a.user_id = ? AND a.salon_id = ?
+     LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
+     WHERE a.user_id = ? AND a.salon_id = ? AND a.status = 'approved'
      ORDER BY a.sort_order ASC, a.id ASC`
   )
     .bind(user.id, user.active_salon_id)
     .all<ArticleListRow>()
 
   const articles = rows || []
+
+  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定のまま自動投稿ONに
+  // なっている記事は、設定を直すまで投稿するたびに必ず同じ理由で失敗し続ける
+  // (プロキシ不調等の一過性の失敗とは異なる)。この一覧を開いた時点で検知し、
+  // 実際に投稿(Fargateタスク起動)されてしまう前に自動投稿をOFFへ倒す
+  // (automation.tsx側の投稿失敗時の自動OFFは、この一覧を開く前に投稿タイミングが
+  // 来てしまった場合の保険として引き続き残す)。
+  const needsAutoPostOff = articles.filter((a) => a.auto_post_enabled_flag === 1 && !a.hpb_category_value)
+  if (needsAutoPostOff.length > 0) {
+    await c.env.DB.prepare(
+      `UPDATE blog_articles SET auto_post_enabled_flag = 0, updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND salon_id = ? AND id IN (${needsAutoPostOff.map(() => '?').join(',')})`
+    )
+      .bind(user.id, user.active_salon_id, ...needsAutoPostOff.map((a) => a.id))
+      .run()
+    for (const a of needsAutoPostOff) a.auto_post_enabled_flag = 0
+  }
 
   const now = jstNow()
 
@@ -1856,6 +1956,7 @@ blog.get('/blog/articles', async (c) => {
                   data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
                   data-category-id={a.category_id ?? ''}
                   data-month-tags={a.month_tags_json || '[]'}
+                  data-hpb-category-missing={a.hpb_category_value ? '0' : '1'}
                 >
                   <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
                     <input
@@ -2001,6 +2102,23 @@ blog.post('/api/blog/articles/reset-stuck-jobs', async (c) => {
 blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
   const user = c.get('user')
   const { articleId, enabled } = await c.req.json<{ articleId: number; enabled: boolean }>()
+
+  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
+  // たびに必ず失敗するため、ONへの切り替え自体を拒否する(クライアント側
+  // (blog-articles.js)にも同じ判定があるが、こちらはその保険)。
+  if (enabled) {
+    const row = await c.env.DB.prepare(
+      `SELECT bc.hpb_category_value
+       FROM blog_articles a
+       LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
+       WHERE a.id = ? AND a.user_id = ? AND a.salon_id = ?`
+    )
+      .bind(articleId, user.id, user.active_salon_id)
+      .first<{ hpb_category_value: string | null }>()
+    if (!row?.hpb_category_value) {
+      return c.json({ success: false, error: '「HPBブログカテゴリ」が未設定です。設定されていないと投稿ができません。' }, 400)
+    }
+  }
 
   await c.env.DB.prepare(
     'UPDATE blog_articles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'
