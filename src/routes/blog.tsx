@@ -1694,8 +1694,12 @@ blog.post('/blog/generate', async (c) => {
 
 // 登録スタイル一覧(style.tsx)のAutoPostStatusBadgesと同じ見た目で、
 // 自動投稿ON/OFFと直近の投稿結果(公開/エラー)をタグ表示する。
+// 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定の記事は投稿する
+// たびに必ず同じ理由で失敗するため、汎用的な「エラー」ではなく専用の警告を
+// 表示する(原因と対処がひと目でわかるように)。
 function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
   const isOn = a.auto_post_enabled_flag === 1
+  const hpbCategoryMissing = !a.hpb_category_value
   return (
     <>
       <span
@@ -1705,10 +1709,18 @@ function BlogAutoPostStatusBadges({ a }: { a: ArticleListRow }) {
       >
         自動投稿{isOn ? 'ON' : 'OFF'}
       </span>
-      {a.last_posted_at && !a.last_error && (
-        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+      {hpbCategoryMissing ? (
+        <span class="text-xs px-2 py-0.5 rounded font-semibold bg-amber-50 text-amber-600">
+          「HPBブログカテゴリ」が未設定です
+        </span>
+      ) : (
+        <>
+          {a.last_posted_at && !a.last_error && (
+            <span class="text-xs px-2 py-0.5 rounded font-semibold bg-green-50 text-green-600">公開</span>
+          )}
+          {a.last_error && <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>}
+        </>
       )}
-      {a.last_error && <span class="text-xs px-2 py-0.5 rounded font-semibold bg-red-50 text-red-600">エラー</span>}
     </>
   )
 }
@@ -1726,6 +1738,7 @@ type ArticleListRow = {
   post_count: number
   auto_post_enabled_flag: number
   last_error: string | null
+  hpb_category_value: string | null
 }
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000
@@ -1748,10 +1761,11 @@ blog.get('/blog/articles', async (c) => {
        ROW_NUMBER() OVER (ORDER BY a.sort_order ASC, a.id ASC) AS no,
        a.id, a.title, a.image_r2_key, a.month_tags_json, a.last_posted_at, a.post_count,
        a.auto_post_enabled_flag, a.category_id, a.last_error,
-       st.name AS stylist_name, cp.name AS coupon_name
+       st.name AS stylist_name, cp.name AS coupon_name, bc.hpb_category_value
      FROM blog_articles a
      LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
      LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
+     LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
      WHERE a.user_id = ? AND a.salon_id = ?
      ORDER BY a.sort_order ASC, a.id ASC`
   )
