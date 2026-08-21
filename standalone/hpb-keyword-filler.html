@@ -397,24 +397,30 @@ details.opt .stack{margin-top:10px}
         <span>詰め方</span>
         <select id="strategy">
           <option value="priority">優先順に左から詰める</option>
-          <option value="best">余りが最小になる組み合わせを探す</option>
+          <option value="best">余りが最小になる組み合わせを選ぶ</option>
+          <option value="relevance">本文に合う組み合わせを選ぶ（余りは多少残る）</option>
         </select>
       </label>
-      <div class="row">
-        <label class="field" style="width:112px">
-          <span>最大何語まで<span class="hint" title="「余りが最小」で探すときは12語までに制限されます"> ⓘ</span></span>
-          <input type="number" id="maxCount" min="1" max="30" step="1">
-        </label>
-        <label class="field" style="flex:1;min-width:120px">
-          <span>本文と囲みの間</span>
-          <select id="joinSelect">
-            <option value="">なし（詰める）</option>
-            <option value=" ">半角スペース</option>
-            <option value="　">全角スペース</option>
-          </select>
-        </label>
-      </div>
+      <label class="field">
+        <span>本文と囲みの間</span>
+        <select id="joinSelect">
+          <option value="">なし（詰める）</option>
+          <option value=" ">半角スペース</option>
+          <option value="　">全角スペース</option>
+        </select>
+      </label>
       <label class="inline-check"><input type="checkbox" id="excludeUsed"> 本文にすでに出ている語は使わない</label>
+      <label class="inline-check"><input type="checkbox" id="useRelevance"> 本文に合うキーワードを優先する</label>
+      <label class="field">
+        <span>セットの決め方（まとめて処理するとき）</span>
+        <select id="setRule">
+          <option value="group-index">見出し＋番号（こだわり1 の ①）</option>
+          <option value="group">見出しだけ（こだわり1）</option>
+          <option value="index">番号だけ（①）</option>
+          <option value="none">セットにしない（自分の本文だけ見る）</option>
+        </select>
+      </label>
+      <p class="hint">「本文に合うキーワードを優先する」を入れると、その項目の本文と、同じセットの他項目の本文（キャッチに対するコピーなど）に近い語から順に詰めます。</p>
     </div>
   </section>
 
@@ -512,7 +518,8 @@ var S = {
   join:"",
   countMode:"lenb2",
   strategy:"priority",
-  maxCount:12,
+  useRelevance:true,
+  setRule:"group-index",
   excludeUsed:true,
   rotate:false,
   rules: DEFAULT_RULES.slice(),
@@ -532,7 +539,7 @@ var S = {
   try{ var raw = localStorage.getItem(KEY); saved = raw ? JSON.parse(raw) : null; }catch(e){}
   if(!saved) return;
   ["mode","activePresetId","limit","body","sep","wrapOpen","wrapClose","join","countMode",
-   "strategy","maxCount","excludeUsed","rotate","theme"].forEach(function(k){
+   "strategy","useRelevance","setRule","excludeUsed","rotate","theme"].forEach(function(k){
     if(saved[k] !== undefined && saved[k] !== null) S[k] = saved[k];
   });
   if(Array.isArray(saved.presets) && saved.presets.length) S.presets = saved.presets;
@@ -545,7 +552,8 @@ function save(){
     localStorage.setItem(KEY, JSON.stringify({
       mode:S.mode, presets:S.presets, activePresetId:S.activePresetId, limit:S.limit, body:S.body,
       keywords:S.keywords, selected:S.selected, sep:S.sep, wrapOpen:S.wrapOpen, wrapClose:S.wrapClose,
-      join:S.join, countMode:S.countMode, strategy:S.strategy, maxCount:S.maxCount,
+      join:S.join, countMode:S.countMode, strategy:S.strategy,
+      useRelevance:S.useRelevance, setRule:S.setRule,
       excludeUsed:S.excludeUsed, rotate:S.rotate, rules:S.rules, theme:S.theme
     }));
   }catch(e){}
@@ -570,89 +578,156 @@ function usableKeywords(body){
   return pool;
 }
 
-/* 優先順に左から詰める（入らない語は飛ばして次へ） */
-function fillPriority(body, limit, pool, startAt){
+/* ---- 関連度（本文・セット内の他項目との近さ）---------------------------- */
+function normalizeForMatch(str){
+  return String(str || "")
+    .replace(/[\s　]/g, "")
+    .replace(/[！-～]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); })
+    .toLowerCase();
+}
+function bigramSet(str){
+  var t = normalizeForMatch(str), set = Object.create(null);
+  if(t.length === 1){ set[t] = 1; return set; }
+  for(var i=0;i<t.length-1;i++) set[t.substr(i, 2)] = 1;
+  return set;
+}
+function overlapRatio(word, set){
+  var b = bigramSet(word), keys = Object.keys(b);
+  if(!keys.length) return 0;
+  var hit = 0;
+  for(var i=0;i<keys.length;i++) if(set[keys[i]]) hit++;
+  return hit / keys.length;
+}
+/* 自分の本文を1.0、セット内の他項目の本文を0.6で見る */
+function makeScorer(ownText, mateText){
+  if(!S.useRelevance) return function(){ return 0; };
+  var own = bigramSet(ownText || ""), mate = bigramSet(mateText || "");
+  return function(word){
+    return overlapRatio(word, own) + 0.6 * overlapRatio(word, mate);
+  };
+}
+
+/* ---- 優先順に左から詰める（入らない語は飛ばして次へ）-------------------- */
+function fillPriority(body, limit, pool, startAt, score){
   var sepLen = count(S.sep), head = overhead(body), bodyLen = count(body);
-  var picked = [], usedKw = 0;
   var order = pool.slice();
-  if(startAt){
-    var n = order.length;
-    if(n) order = order.slice(startAt % n).concat(order.slice(0, startAt % n));
+  if(S.useRelevance){
+    var rank = {}; pool.forEach(function(k, i){ rank[k.id] = i; });
+    order.sort(function(a, b){
+      var d = score(b.text) - score(a.text);
+      return d !== 0 ? d : rank[a.id] - rank[b.id];
+    });
   }
+  if(startAt && order.length){
+    var at = startAt % order.length;
+    order = order.slice(at).concat(order.slice(0, at));
+  }
+  var picked = [], usedKw = 0;
   for(var i=0;i<order.length;i++){
-    if(picked.length >= S.maxCount) break;
     var add = count(order[i].text) + (picked.length ? sepLen : 0);
     if(bodyLen + head + usedKw + add <= limit){ picked.push(order[i]); usedKw += add; }
   }
   return picked;
 }
 
-/* 余りが最小になる組み合わせを部分和探索で選ぶ */
-var MAX_NODES = 250000;
-function subsetSearch(items, capacity, maxPick){
+/* ---- 余りが最小になる組み合わせ（動的計画法・語数の上限なし）------------ */
+/* 上限文字数が高々数百なので、部分和を全探索するのではなく
+   「到達できる合計文字数」を1回のDPで埋める。語数がいくつあっても
+   計算量は 語数 × 上限文字数 に収まり、しかも最小の余りが厳密に求まる。 */
+var COST_SCALE = 2;      /* LENB/2 の 0.5 刻みを整数に直すため */
+var DP_CELL_LIMIT = 40e6; /* 復元表のメモリ上限（バイト） */
+
+function bestFillDP(pool, capacity, sepLen, score, jitter, mode){
+  var C = Math.round(capacity * COST_SCALE);
+  if(C < 1) return null;
+  var items = [];
+  for(var i=0;i<pool.length;i++){
+    var c = Math.round((count(pool[i].text) + sepLen) * COST_SCALE);
+    if(c > 0 && c <= C){
+      items.push({k: pool[i], c: c, v: 1 + 2 * score(pool[i].text) + (jitter ? jitter[i] : 0)});
+    }
+  }
   var n = items.length;
-  var sorted = items.slice().sort(function(a,b){ return b.cost - a.cost; });
-  var suffix = new Array(n + 1); suffix[n] = 0;
-  for(var i=n-1;i>=0;i--) suffix[i] = suffix[i+1] + sorted[i].cost;
-  var results = [], pick = [], nodes = 0, truncated = false, threshold = capacity;
-  function cmp(a,b){
-    if(a.slack !== b.slack) return a.slack - b.slack;
-    return b.ids.length - a.ids.length;
-  }
-  function prune(){
-    if(results.length < 4000) return;
-    results.sort(cmp); results.length = 1200;
-    threshold = results[results.length - 1].slack;
-  }
-  function dfs(start, used){
-    if(++nodes > MAX_NODES){ truncated = true; return; }
-    if(pick.length){
-      var slack = capacity - used;
-      if(slack <= threshold){ results.push({ids: pick.slice(), used: used, slack: slack}); prune(); }
-    }
-    if(pick.length >= maxPick) return;
-    if(capacity - used - suffix[start] > threshold) return;
-    for(var j=start;j<n;j++){
-      if(used + sorted[j].cost > capacity) continue;
-      pick.push(sorted[j].id);
-      dfs(j + 1, used + sorted[j].cost);
-      pick.pop();
-      if(truncated) return;
+  if(!n) return null;
+  if(n * (C + 1) > DP_CELL_LIMIT) return null;   /* 桁外れの上限は貪欲に任せる */
+
+  var NEG = -Infinity;
+  var value = new Float64Array(C + 1); value.fill(NEG); value[0] = 0;
+  /* take[it][s] = 「品目0..it の最適解で、合計sに品目itを使う」。
+     各パスで上書きしたときだけ立てるので、逆順にたどれば重複なく復元できる。 */
+  var take = new Uint8Array(n * (C + 1));
+
+  for(var it=0; it<n; it++){
+    var cost = items[it].c, val = items[it].v, base = it * (C + 1);
+    for(var sum=C; sum>=cost; sum--){
+      var prev = value[sum - cost];
+      if(prev === NEG) continue;
+      if(prev + val > value[sum]){ value[sum] = prev + val; take[base + sum] = 1; }
     }
   }
-  if(n) dfs(0, 0);
-  results.sort(cmp);
-  return {results: results, truncated: truncated};
+  var best = -1;
+  if(mode === "value"){
+    /* 余りを最小にするより、関連度の合計が高くなる組み合わせを採る */
+    var bestVal = NEG;
+    for(var s=1; s<=C; s++) if(value[s] > bestVal){ bestVal = value[s]; best = s; }
+  } else {
+    for(var s=C; s>=1; s--) if(value[s] !== NEG){ best = s; break; }
+  }
+  if(best < 0) return null;
+
+  var picked = [], cur = best;
+  for(var back=n-1; back>=0 && cur>0; back--){
+    if(take[back * (C + 1) + cur]){ picked.push(items[back].k); cur -= items[back].c; }
+  }
+  var rank = {}; pool.forEach(function(k, i){ rank[k.id] = i; });
+  picked.sort(function(a, b){ return rank[a.id] - rank[b.id]; });
+  return picked;
 }
-function fillBest(body, limit, pool){
-  var sepLen = count(S.sep), head = overhead(body), bodyLen = count(body);
-  var capacity = limit - bodyLen - head + sepLen; /* 先頭語には区切りが付かない分を足す */
-  if(capacity <= 0) return {picked: [], all: [], truncated: false};
-  var items = pool.map(function(k){ return {id: k.id, cost: count(k.text) + sepLen}; });
-  var found = subsetSearch(items, capacity, Math.min(12, S.maxCount));
-  var rank = {}; pool.forEach(function(k,i){ rank[k.id] = i; });
-  var byId = {}; pool.forEach(function(k){ byId[k.id] = k; });
-  var combos = found.results.slice(0, 60).map(function(r){
-    var ids = r.ids.slice().sort(function(a,b){ return rank[a] - rank[b]; });
-    return ids.map(function(id){ return byId[id]; });
+function fillBest(body, limit, pool, score, mode){
+  var sepLen = count(S.sep);
+  var capacity = limit - count(body) - overhead(body) + sepLen;
+  if(capacity <= 0) return {picked: [], all: []};
+
+  var combos = [], seen = {};
+  for(var round=0; round<4; round++){
+    var jitter = null;
+    if(round > 0){
+      jitter = [];
+      for(var i=0;i<pool.length;i++) jitter.push((Math.random() - 0.5) * 0.06);
+    }
+    var picked = bestFillDP(pool, capacity, sepLen, score, jitter, mode);
+    if(!picked || !picked.length) continue;
+    var key = picked.map(function(k){ return k.id; }).sort().join("|");
+    if(seen[key]) continue;
+    seen[key] = 1; combos.push(picked);
+  }
+  if(!combos.length){
+    /* DPが使えないほど上限が大きい場合は優先順の詰め方に落とす */
+    var fallback = fillPriority(body, limit, pool, 0, score);
+    if(fallback.length) combos.push(fallback);
+  }
+  combos.sort(function(a, b){
+    return count(compose(body, b.map(function(k){ return k.text; })))
+         - count(compose(body, a.map(function(k){ return k.text; })));
   });
-  return {picked: combos[0] || [], all: combos, truncated: found.truncated};
+  return {picked: combos[0] || [], all: combos};
 }
 
-function fillOne(body, limit, startAt){
+function fillOne(body, limit, startAt, mateText){
   var pool = usableKeywords(body);
   if(!pool.length) return {picked: [], all: [], reason: "キーワードがありません"};
   if(count(body) + overhead(body) > limit){
     return {picked: [], all: [], reason: "本文だけで上限に達しています"};
   }
-  if(S.strategy === "best"){
-    var r = fillBest(body, limit, pool);
+  var score = makeScorer(body, mateText);
+  if(S.strategy === "best" || S.strategy === "relevance"){
+    var r = fillBest(body, limit, pool, score, S.strategy === "relevance" ? "value" : "fit");
     if(!r.picked.length) r.reason = "余りに入るキーワードがありません";
+    r.exhausted = r.picked.length === pool.length;
     return r;
   }
-  var picked = fillPriority(body, limit, pool, startAt || 0);
-  return {picked: picked, all: picked.length ? [picked] : [],
-          capped: picked.length >= S.maxCount && picked.length < pool.length,
+  var picked = fillPriority(body, limit, pool, startAt || 0, score);
+  return {picked: picked, all: picked.length ? [picked] : [], exhausted: picked.length === pool.length,
           reason: picked.length ? "" : "余りに入るキーワードがありません"};
 }
 
@@ -903,8 +978,8 @@ function runFill(){
   else {
     var rest = S.limit - count(compose(S.body, r.picked.map(function(k){ return k.text; })));
     note = r.picked.length + " 語を入れて余り " + fmt(rest) + " 文字";
-    if(rest > 0 && r.capped) note += "（「最大何語まで」に達しました）";
-    else if(S.strategy === "priority" && rest > 0) note += "（詰め方を「余りが最小」にすると更に詰まる場合があります）";
+    if(rest > 0 && r.exhausted) note += "（使えるキーワードを全部入れました。もっと詰めるにはキーワードを増やしてください）";
+    else if(S.strategy === "priority" && rest > 0) note += "（詰め方を「余りが最小」にすると更に詰まります）";
   }
   $("searchNote").textContent = note;
   renderSingle(); save();
@@ -1123,20 +1198,29 @@ function groupLabel(grid, col){
   }
   return "";
 }
-function pickLabel(grid, r, c){
-  var row = grid[r] || [];
+/* 「最大◯文字」のセルから左へ拾う。1つめが項目名、その先の短いセルが番号(①など)。 */
+function pickLeft(grid, r, c){
+  var row = grid[r] || [], found = [];
   for(var k=c-1;k>=Math.max(0, c-4);k--){
     var v = String(row[k] || "").trim();
-    if(v && !isNumericCell(v)) return v;
+    if(v && !isNumericCell(v)) found.push(v);
   }
-  for(var up=r-1;up>=Math.max(0, r-3);up--){
-    for(var k2=Math.max(0, c-4);k2<c;k2++){
-      var v2 = String((grid[up] || [])[k2] || "").trim();
-      if(v2 && !isNumericCell(v2)) return v2;
+  if(!found.length){
+    for(var up=r-1;up>=Math.max(0, r-3);up--){
+      for(var k2=Math.max(0, c-4);k2<c;k2++){
+        var v2 = String((grid[up] || [])[k2] || "").trim();
+        if(v2 && !isNumericCell(v2)){ found.push(v2); break; }
+      }
+      if(found.length) break;
     }
   }
-  return "";
+  var label = found[0] || "", index = "";
+  for(var i=1;i<found.length;i++){
+    if(Array.from(found[i]).length <= 4){ index = found[i]; break; }
+  }
+  return {label: label, index: index};
 }
+function pickLabel(grid, r, c){ return pickLeft(grid, r, c).label; }
 function pickBody(grid, r, c){
   var row = grid[r] || [];
   for(var k=c+1;k<Math.min(row.length, c+6);k++){
@@ -1163,10 +1247,10 @@ function extractRows(grid){
     for(var c=0;c<row.length;c++){
       var m = String(row[c] || "").match(LIMIT_RE);
       if(!m) continue;
-      var label = pickLabel(grid, r, c);
+      var left = pickLeft(grid, r, c);
       var body = pickBody(grid, r, c);
       out.push({
-        id: "r" + r + "_" + c, group: "", label: label || "項目",
+        id: "r" + r + "_" + c, group: "", index: left.index, label: left.label || "項目",
         limit: parseInt(toHalfDigits(m[1]), 10), body: body.text,
         row: r, col: body.col, use: true
       });
@@ -1184,12 +1268,22 @@ function extractRows(grid){
       var b2 = pickBody(grid, r2, c2);
       if(!b2.text) continue;
       out.push({
-        id: "r" + r2 + "_" + c2, group: "", label: cellText,
+        id: "r" + r2 + "_" + c2, group: "", index: pickLeft(grid, r2, c2 + 1).index, label: cellText,
         limit: lim, body: b2.text, row: r2, col: b2.col, use: true
       });
     }
   }
   return withGroups(out, grid);
+}
+function setKeyOf(r){
+  if(S.setRule === "none") return "row:" + r.id;
+  var g = r.group || "", ix = r.index || "";
+  if(S.setRule === "group") return g ? "g:" + g : "row:" + r.id;
+  if(S.setRule === "index") return ix ? "i:" + ix : "row:" + r.id;
+  return (g || ix) ? "gi:" + g + "\u0001" + ix : "row:" + r.id;
+}
+function setLabelOf(r){
+  return [r.group || "", r.index || ""].filter(Boolean).join(" ");
 }
 function withGroups(rows, grid){
   rows.forEach(function(r){
@@ -1243,8 +1337,9 @@ function renderRows(){
     c0.appendChild(chk);
 
     var c1 = tr.insertCell();
-    if(r.group){
-      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = r.group;
+    var setLabel = setLabelOf(r);
+    if(setLabel){
+      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = setLabel;
       c1.appendChild(g);
     }
     var nameIn = document.createElement("input");
@@ -1280,19 +1375,35 @@ function runBatch(){
   if(!S.keywords.filter(function(k){ return k.on !== false; }).length){
     toast("キーワード帳が空です"); return;
   }
+  /* 参照は選択の有無に関わらず表全体から集める（キャッチだけ選んでも
+     同じセットのコピーの本文を見に行けるように） */
+  var bySet = {};
+  S.rows.forEach(function(r){
+    var k = setKeyOf(r);
+    (bySet[k] = bySet[k] || []).push(r);
+  });
+  var setsUsed = 0;
   S.results = targets.map(function(r, i){
-    var res = fillOne(r.body, r.limit, S.rotate ? i : 0);
+    var mates = (bySet[setKeyOf(r)] || []).filter(function(x){ return x !== r && x.body; });
+    if(mates.length) setsUsed++;
+    var mateText = mates.map(function(x){ return x.body; }).join("\n");
+    var res = fillOne(r.body, r.limit, S.rotate ? i : 0, mateText);
     var texts = res.picked.map(function(k){ return k.text; });
     var out = compose(r.body, texts);
     return {
-      row: r, texts: texts, text: out, capped: !!res.capped,
+      row: r, texts: texts, text: out, mates: mates.length, exhausted: !!res.exhausted,
       total: count(out), rest: r.limit - count(out), reason: res.reason || ""
     };
   });
   var filled = S.results.filter(function(x){ return x.texts.length; }).length;
-  var capped = S.results.filter(function(x){ return x.capped && x.rest > 0; }).length;
+  var short = S.results.filter(function(x){ return x.exhausted && x.rest > 0; }).length;
   var note = S.results.length + " 項目中 " + filled + " 項目に挿入しました";
-  if(capped) note += " ／ " + capped + " 項目は「最大何語まで」に達して止まりました（増やすともっと詰まります）";
+  if(short) note += " ／ " + short + " 項目はキーワードを使い切っても余りが残りました（キーワードを増やすと埋まります）";
+  if(S.useRelevance){
+    note += setsUsed
+      ? " ／ " + setsUsed + " 項目はセット内の他項目の本文も見て選びました"
+      : " ／ セットの相手が見つからないため自分の本文だけで選びました";
+  }
   $("batchNote").textContent = note;
   renderResults();
 }
@@ -1314,8 +1425,10 @@ function renderResults(){
   S.results.forEach(function(res){
     var tr = tb.insertRow();
     var c0 = tr.insertCell();
-    if(res.row.group){
-      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = res.row.group;
+    var setLabel = setLabelOf(res.row);
+    if(setLabel){
+      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = setLabel;
+      if(res.mates) g.title = "同じセットの他項目 " + res.mates + " 件の本文も見て選びました";
       c0.appendChild(g);
     }
     c0.appendChild(document.createTextNode(res.row.label));
@@ -1359,7 +1472,7 @@ function renderResults(){
   b2.className = "btn"; b2.textContent = "項目名つきでコピー（TSV）";
   b2.addEventListener("click", function(){
     copyText(S.results.map(function(r){
-      return [r.row.group, r.row.label, r.row.limit, tsvCell(r.text), fmt(r.total)].join("\t");
+      return [setLabelOf(r.row), r.row.label, r.row.limit, tsvCell(r.text), fmt(r.total)].join("\t");
     }).join("\n"));
   });
   acts.appendChild(b1); acts.appendChild(b2);
@@ -1740,7 +1853,8 @@ function openModal(mode){
   $("modalText").value = mode === "export" ? JSON.stringify({
     keywords: S.keywords, presets: S.presets, rules: S.rules,
     sep: S.sep, wrapOpen: S.wrapOpen, wrapClose: S.wrapClose, join: S.join,
-    countMode: S.countMode, strategy: S.strategy, maxCount: S.maxCount
+    countMode: S.countMode, strategy: S.strategy,
+    useRelevance: S.useRelevance, setRule: S.setRule
   }, null, 2) : "";
   $("modalBg").classList.add("show");
   $("modalText").focus();
@@ -1769,7 +1883,8 @@ $("wrapClose").value = S.wrapClose;
 $("joinSelect").value = S.join;
 $("countMode").value = S.countMode;
 $("strategy").value = S.strategy;
-$("maxCount").value = S.maxCount;
+$("useRelevance").checked = !!S.useRelevance;
+$("setRule").value = S.setRule;
 $("excludeUsed").checked = !!S.excludeUsed;
 $("rotateChk").checked = !!S.rotate;
 applyTheme();
@@ -1814,13 +1929,16 @@ function onSettingChange(){
   S.join = $("joinSelect").value;
   S.countMode = $("countMode").value;
   S.strategy = $("strategy").value;
-  var mc = parseInt($("maxCount").value, 10);
-  S.maxCount = isNaN(mc) || mc < 1 ? 1 : Math.min(30, mc);
+  S.useRelevance = $("useRelevance").checked;
+  S.setRule = $("setRule").value;
+  if(S.strategy === "relevance" && !S.useRelevance){
+    S.useRelevance = true; $("useRelevance").checked = true;
+  }
   S.excludeUsed = $("excludeUsed").checked;
   S.candidates = [];
   renderSingle(); renderRows(); renderResults(); save();
 }
-["sepInput","wrapOpen","wrapClose","joinSelect","countMode","strategy","maxCount","excludeUsed"]
+["sepInput","wrapOpen","wrapClose","joinSelect","countMode","strategy","useRelevance","setRule","excludeUsed"]
   .forEach(function(id){ $(id).addEventListener("input", onSettingChange); $(id).addEventListener("change", onSettingChange); });
 
 $("addKwBtn").addEventListener("click", function(){
@@ -1866,10 +1984,10 @@ $("modalAction").addEventListener("click", function(){
   ["sep","wrapOpen","wrapClose","join","countMode","strategy"].forEach(function(k){
     if(typeof data[k] === "string") S[k] = data[k];
   });
-  if(typeof data.maxCount === "number") S.maxCount = data.maxCount;
   $("sepInput").value = S.sep; $("wrapOpen").value = S.wrapOpen; $("wrapClose").value = S.wrapClose;
   $("joinSelect").value = S.join; $("countMode").value = S.countMode;
-  $("strategy").value = S.strategy; $("maxCount").value = S.maxCount;
+  $("strategy").value = S.strategy; $("useRelevance").checked = !!S.useRelevance;
+$("setRule").value = S.setRule;
   closeModal(); renderSingle(); renderRules(); renderRows(); save(); toast("読み込みました");
 });
 
