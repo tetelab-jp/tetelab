@@ -11,8 +11,13 @@ import {
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, getFooterTextAndSeparatorForSalon, stripTrailingFooterBlock } from '../lib/blog-footer'
 import { formatJstDateCompact, formatJstDateTimeCompact, compactDate } from '../lib/date-format'
-import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
-import { formatCustomerRatioText } from '../lib/ranking-parse'
+import {
+  fetchSalonProfileFromHpb,
+  fetchHpbBlogArticles,
+  fetchHpbBlogDetailHtml,
+  fetchHpbBlogImageBuffer
+} from '../lib/ranking-scraper'
+import { formatCustomerRatioText, parseHpbBlogDetailPage, type HpbBlogDetailResult } from '../lib/ranking-parse'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -233,13 +238,7 @@ blog.get('/blog/salon', async (c) => {
               {referenceArticles.map((a) => (
                 <li class="flex items-start gap-3 p-3">
                   <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox mt-1 w-4 h-4 accent-pink-500 flex-shrink-0" />
-                  <button
-                    type="button"
-                    class="blog-ref-view-btn min-w-0 flex-1 text-left"
-                    data-title={a.title || '（無題）'}
-                    data-date={a.posted_date ? compactDate(a.posted_date) : ''}
-                    data-content={a.excerpt}
-                  >
+                  <a href={`/blog/salon/reference/${a.id}/preview`} class="min-w-0 flex-1 text-left">
                     <p class="text-sm font-medium text-gray-700 truncate">{a.title || '（無題）'}</p>
                     <p class="text-xs text-gray-400 mt-0.5">
                       {a.posted_date ? `${compactDate(a.posted_date)} ・ ` : ''}
@@ -251,7 +250,7 @@ blog.get('/blog/salon', async (c) => {
                         {a.stylist_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{a.stylist_name}</span>}
                       </p>
                     )}
-                  </button>
+                  </a>
                 </li>
               ))}
             </ul>
@@ -261,19 +260,6 @@ blog.get('/blog/salon', async (c) => {
           </form>
         </div>
       )}
-
-      <div id="blog-ref-view-modal" class="hidden fixed inset-0 z-50 items-center justify-center bg-black/50 p-4">
-        <div class="bg-white rounded-xl p-6 max-w-lg w-full max-h-[80vh] overflow-y-auto space-y-3">
-          <div class="flex items-start justify-between gap-2">
-            <p id="blog-ref-view-title" class="font-semibold"></p>
-            <button type="button" id="blog-ref-view-close-btn" class="text-gray-400 hover:text-gray-600 flex-shrink-0">
-              <i class="fas fa-xmark text-lg"></i>
-            </button>
-          </div>
-          <p id="blog-ref-view-date" class="text-xs text-gray-400"></p>
-          <p id="blog-ref-view-content" class="text-sm text-gray-700 whitespace-pre-line"></p>
-        </div>
-      </div>
 
       <p class="text-xs text-gray-400">
         住所・営業時間などの基本情報とフッター設定は
@@ -287,10 +273,83 @@ blog.get('/blog/salon', async (c) => {
   )
 })
 
+// 2026-08-21追記(ユーザー指定): 取り込んだ過去記事のタイトルをタップすると、
+// 一覧の抜粋ではなく個別記事ページ(source_url)を都度取得し、全文・画像を
+// 表示する。選択した数件だけ取り込む/確認するために都度アクセスする方式
+// なので、一覧の巡回(mark-synced、最大100件)とは違い低負荷。
+blog.get('/blog/salon/reference/:id/preview', async (c) => {
+  const user = c.get('user')
+  const id = Number(c.req.param('id'))
+  if (!Number.isInteger(id) || id <= 0) return c.notFound()
+
+  const row = await c.env.DB.prepare(
+    `SELECT title, excerpt, posted_date, source_url, category_name, stylist_name
+     FROM blog_reference_articles WHERE id = ? AND user_id = ? AND salon_id = ?`
+  )
+    .bind(id, user.id, user.active_salon_id)
+    .first<{
+      title: string | null
+      excerpt: string
+      posted_date: string | null
+      source_url: string | null
+      category_name: string | null
+      stylist_name: string | null
+    }>()
+  if (!row) return c.notFound()
+
+  let detail: HpbBlogDetailResult | null = null
+  let fetchError: string | null = null
+  if (row.source_url) {
+    try {
+      const html = await fetchHpbBlogDetailHtml(row.source_url)
+      detail = parseHpbBlogDetailPage(html)
+    } catch {
+      fetchError = '元記事の取得に失敗しました。時間をおいて再度お試しください。'
+    }
+  }
+
+  return c.render(
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="記事プレビュー" styleEnabled={user.style_enabled !== 0}>
+      <a href="/blog/salon" class="text-sm text-pink-600 hover:underline">
+        <i class="fas fa-arrow-left mr-1"></i>取り込んだ過去の記事一覧に戻る
+      </a>
+
+      <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
+        <div>
+          <p class="text-lg font-semibold text-gray-800">{detail?.title || row.title || '（無題）'}</p>
+          <p class="text-xs text-gray-400 mt-1">{row.posted_date ? compactDate(row.posted_date) : ''}</p>
+        </div>
+
+        {(detail?.categoryName || row.category_name || detail?.stylistName || row.stylist_name) && (
+          <p class="text-xs text-gray-400">
+            {(detail?.categoryName || row.category_name) && (
+              <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 mr-1">{detail?.categoryName || row.category_name}</span>
+            )}
+            {(detail?.stylistName || row.stylist_name) && (
+              <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{detail?.stylistName || row.stylist_name}</span>
+            )}
+          </p>
+        )}
+
+        {fetchError && <p class="text-sm text-red-600">{fetchError}</p>}
+
+        {detail?.imageUrl && <img src={detail.imageUrl} alt="" class="rounded-lg max-w-full max-h-[400px] object-contain" />}
+
+        <p class="text-sm text-gray-700 whitespace-pre-line">{detail?.body || row.excerpt}</p>
+
+        {detail?.couponSalonboardKey && (
+          <p class="text-xs text-gray-400">おすすめクーポンあり(取り込み時に自動反映されます)</p>
+        )}
+      </div>
+    </PageLayout>,
+    { title: '記事プレビュー' }
+  )
+})
+
 // 2026-08-21追記(ユーザー指定): 「取り込んだ過去の記事」から選択した分を
 // 投稿記事一覧(blog_articles)へ追加する(既存スタイル取り込みの「登録スタイルへ
-// 追加」と同じ位置づけ)。本文は一覧の抜粋をそのまま使う(全文は取得していない
-// ため)。自動投稿は既に公開済みの記事の再投稿を防ぐためOFFで追加する。
+// 追加」と同じ位置づけ)。自動投稿は既に公開済みの記事の再投稿を防ぐためOFFで
+// 追加する。
 blog.post('/blog/salon/import-references', async (c) => {
   const user = c.get('user')
   // 2026-08-21追記(ユーザー指摘によるバグ修正): { all: true }を付けずに
@@ -306,7 +365,7 @@ blog.post('/blog/salon/import-references', async (c) => {
   if (ids.length === 0) return c.redirect('/blog/salon')
 
   const { results: rows } = await c.env.DB.prepare(
-    `SELECT id, title, excerpt, posted_date, category_name, stylist_name, stylist_salonboard_key
+    `SELECT id, title, excerpt, posted_date, source_url, category_name, stylist_name, stylist_salonboard_key
      FROM blog_reference_articles
      WHERE id IN (${ids.map(() => '?').join(',')}) AND user_id = ? AND salon_id = ?`
   )
@@ -316,6 +375,7 @@ blog.post('/blog/salon/import-references', async (c) => {
       title: string | null
       excerpt: string
       posted_date: string | null
+      source_url: string | null
       category_name: string | null
       stylist_name: string | null
       stylist_salonboard_key: string | null
@@ -339,25 +399,71 @@ blog.post('/blog/salon/import-references', async (c) => {
   // (存在しなければ生成テンプレートと同じ仕組みで自動作成)、投稿者は
   // stylists.salonboard_stylist_key(Tコード)との完全一致でstylist_idへ変換する
   // (曖昧一致はしない。一致しなければ未設定のまま、編集画面で手動設定できる)。
+  // 2026-08-21追記(ユーザー指定): 画像・クーポンが取り込み時に反映されて
+  // いなかったため、選択された記事「だけ」個別ページ(source_url)へ都度
+  // アクセスして全文・埋め込み画像・おすすめクーポンを取得する(一覧の
+  // 巡回・mark-syncedとは別に、選択数件のみの軽量な追加アクセス)。
+  // 個別ページの取得に失敗しても取り込み自体は継続し、その記事だけ
+  // 一覧の抜粋・画像/クーポン無しのまま追加する。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
-    const categoryId = row.category_name ? await resolveArticleCategoryId(c, user, row.category_name) : null
-    const stylistRow = row.stylist_salonboard_key
+
+    let articleBody = row.excerpt
+    let imageKey: string | null = null
+    let imageFileName: string | null = null
+    let couponSalonboardKey: string | null = null
+    let categoryName = row.category_name
+    let stylistSalonboardKey = row.stylist_salonboard_key
+
+    if (row.source_url) {
+      try {
+        const html = await fetchHpbBlogDetailHtml(row.source_url)
+        const detail = parseHpbBlogDetailPage(html)
+        if (detail.body) articleBody = detail.body
+        if (detail.categoryName) categoryName = detail.categoryName
+        if (detail.stylistSalonboardKey) stylistSalonboardKey = detail.stylistSalonboardKey
+        couponSalonboardKey = detail.couponSalonboardKey
+
+        if (detail.imageUrl) {
+          const arrayBuffer = await fetchHpbBlogImageBuffer(detail.imageUrl)
+          const { buffer, contentType } = await processBlogArticleImage(arrayBuffer)
+          const key = `blog/${user.id}/${Date.now()}-${crypto.randomUUID()}.jpg`
+          await c.env.STYLE_IMAGES.put(key, buffer, { httpMetadata: { contentType } })
+          imageKey = key
+          imageFileName = `${(row.title || 'blog').replace(/[\\/]/g, '')}.jpg`
+        }
+      } catch {
+        // 個別ページ・画像の取得に失敗しても、一覧の抜粋のみで取り込みを継続する
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+
+    const categoryId = categoryName ? await resolveArticleCategoryId(c, user, categoryName) : null
+    const stylistRow = stylistSalonboardKey
       ? await c.env.DB.prepare(
           'SELECT id FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key = ?'
         )
-          .bind(user.id, user.active_salon_id, row.stylist_salonboard_key)
+          .bind(user.id, user.active_salon_id, stylistSalonboardKey)
+          .first<{ id: number }>()
+      : null
+    const couponRow = couponSalonboardKey
+      ? await c.env.DB.prepare(
+          'SELECT id FROM coupons WHERE user_id = ? AND salon_id = ? AND salonboard_coupon_key = ?'
+        )
+          .bind(user.id, user.active_salon_id, couponSalonboardKey)
           .first<{ id: number }>()
       : null
 
     await c.env.DB.prepare(
       `INSERT INTO blog_articles (
-         user_id, salon_id, category_id, stylist_id, title, body, month_tags_json,
+         user_id, salon_id, category_id, stylist_id, coupon_id, image_r2_key, image_file_name,
+         title, body, month_tags_json,
          footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
-        user.id, user.active_salon_id, categoryId, stylistRow?.id ?? null, row.title, row.excerpt,
+        user.id, user.active_salon_id, categoryId, stylistRow?.id ?? null, couponRow?.id ?? null,
+        imageKey, imageFileName, row.title, articleBody,
         sortOrder, lastPostedAt, lastPostedAt ? 1 : 0
       )
       .run()

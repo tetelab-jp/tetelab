@@ -262,3 +262,45 @@ export async function fetchHpbBlogArticles(
 
   return { items: items.slice(0, maxArticles), pagesScanned }
 }
+
+/**
+ * HPB公開ブログ個別記事ページ(blog_reference_articles.source_url)のHTMLを
+ * そのまま取得する(パースはranking-parse.tsのparseHpbBlogDetailPageで行う)。
+ * 一覧の巡回とは異なり、呼び出し側が「選択された数件だけ」都度呼び出す想定。
+ */
+export async function fetchHpbBlogDetailHtml(sourceUrl: string, options: ScrapeOptions = {}): Promise<string> {
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+  return fetchHtml(sourceUrl, dispatcher, options.signal)
+}
+
+/**
+ * HPB公開ブログの本文埋め込み画像(imageUrl)をダウンロードし、バイト列で返す。
+ * サムネと同じCDNパスで、クエリのw/hだけがサイズ違い(一覧=119、個別=349)。
+ * より大きいサイズを狙ってw/hを引き上げて取得を試み、失敗した場合は元のURLに
+ * フォールバックする(それでも失敗すれば呼び出し側で画像なしとして扱う)。
+ */
+export async function fetchHpbBlogImageBuffer(
+  imageUrl: string,
+  options: ScrapeOptions = {}
+): Promise<ArrayBuffer> {
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+  const fetchOnce = async (url: string): Promise<ArrayBuffer> => {
+    const res = await fetch(url, {
+      headers: { 'User-Agent': USER_AGENT, Accept: 'image/avif,image/webp,image/*,*/*;q=0.8' },
+      signal: options.signal,
+      ...(dispatcher ? ({ dispatcher } as Record<string, unknown>) : {})
+    })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    return await res.arrayBuffer()
+  }
+
+  const largerUrl = imageUrl.replace(/([?&])w=\d+&h=\d+/, '$1w=750&h=750')
+  if (largerUrl !== imageUrl) {
+    try {
+      return await fetchOnce(largerUrl)
+    } catch {
+      // フォールバックして元URLで再試行
+    }
+  }
+  return fetchOnce(imageUrl)
+}
