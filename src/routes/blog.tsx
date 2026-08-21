@@ -185,7 +185,7 @@ blog.get('/blog/salon', async (c) => {
   const imported = c.req.query('imported')
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログ取込" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログ追加" styleEnabled={user.style_enabled !== 0}>
       {imported && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を登録ブログへ追加しました
@@ -283,7 +283,7 @@ blog.get('/blog/salon', async (c) => {
 
       <script src="/static/blog-salon.js"></script>
     </PageLayout>,
-    { title: 'HPBからブログ取込' }
+    { title: 'HPBからブログ追加' }
   )
 })
 
