@@ -248,9 +248,14 @@ function currentJstMonth(): number {
 /**
  * 自動投稿ON・進行中ジョブなし・月タグが今月に合う(または未設定)、
  * という共通の投稿対象条件。バインド順は (userId, salonId, currentMonth)。
+ * 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
+ * たびに必ず失敗するため(blog.tsxの一覧表示時にauto_post_enabled_flagを
+ * 自動でOFFにする保護を入れているが)、万一ONのまま選ばれてしまう競合を
+ * 避ける保険として、選定条件自体にも実効HPBブログカテゴリの有無を含める。
  */
 const ELIGIBLE_ARTICLE_WHERE = `
   a.user_id = ? AND a.salon_id = ? AND a.auto_post_enabled_flag = 1
+  AND EXISTS (SELECT 1 FROM blog_categories bc WHERE bc.id = a.category_id AND bc.hpb_category_value IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
   AND (
     a.month_tags_json = '[]'

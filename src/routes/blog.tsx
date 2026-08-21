@@ -1774,6 +1774,23 @@ blog.get('/blog/articles', async (c) => {
 
   const articles = rows || []
 
+  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリが未設定のまま自動投稿ONに
+  // なっている記事は、設定を直すまで投稿するたびに必ず同じ理由で失敗し続ける
+  // (プロキシ不調等の一過性の失敗とは異なる)。この一覧を開いた時点で検知し、
+  // 実際に投稿(Fargateタスク起動)されてしまう前に自動投稿をOFFへ倒す
+  // (automation.tsx側の投稿失敗時の自動OFFは、この一覧を開く前に投稿タイミングが
+  // 来てしまった場合の保険として引き続き残す)。
+  const needsAutoPostOff = articles.filter((a) => a.auto_post_enabled_flag === 1 && !a.hpb_category_value)
+  if (needsAutoPostOff.length > 0) {
+    await c.env.DB.prepare(
+      `UPDATE blog_articles SET auto_post_enabled_flag = 0, updated_at = CURRENT_TIMESTAMP
+       WHERE user_id = ? AND salon_id = ? AND id IN (${needsAutoPostOff.map(() => '?').join(',')})`
+    )
+      .bind(user.id, user.active_salon_id, ...needsAutoPostOff.map((a) => a.id))
+      .run()
+    for (const a of needsAutoPostOff) a.auto_post_enabled_flag = 0
+  }
+
   const now = jstNow()
 
   // 投稿順(生成順=sort_order)を1日1本で巡回した場合の簡易シミュレーション
