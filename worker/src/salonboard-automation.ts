@@ -1715,12 +1715,15 @@ export async function fetchReviewList(
 // (フォーム#replySend、reviewId隠しフィールド、replyFrom任意入力(全角20文字
 // 以内)、replyContents必須テキストエリア(全角500文字以内・改行80回以内)、
 // 確認トリガー#replyConfirmはJS駆動のリンク(submitボタンではない))。
-// ただし#replyConfirmクリック後に表示される確認画面の実HTML、および最終的な
-// 「返信を登録する」相当のボタンのセレクタは未確認。ユーザー指定により、
-// 実画面を確認していない操作(特に実際の口コミへの返信という取り消しが
-// 困難な操作)を推測で実装しないため、このバージョンでは入力欄への入力までを
-// 行い、#replyConfirmはクリックしない(=実際の投稿は行わない)。確認画面の
-// 実HTMLが確認でき次第、その先を実装する。
+// 2026-08-22追記(ユーザー提供の実HTMLで確認): #replyConfirmクリック後は同じ
+// #replySendフォームがreviewId/replyFrom/replyContents等を隠しフィールドで
+// 引き継いだまま「口コミ返信確認」画面として再描画される(confirmOk=true・
+// storeIdForMultipleTabCheckが追加される)。この確認画面には
+// 「戻る」「投稿せずに保存する」「上記に同意の上返信を投稿する」の3ボタンが
+// あり、最後のボタン(id="replyComplete")をクリックすると実際に返信が
+// 投稿され、「口コミ返信の投稿が完了しました。」という文言の完了画面に遷移する。
+// なお返信内容が未入力のまま#replyConfirmを押すとエラー画面(エラーモジュール
+// ID: BPCL035F08)になることも実機で確認済み(必須項目チェック)。
 
 export type PostReviewReplyInput = {
   managementNo: string
@@ -1755,10 +1758,43 @@ export async function postReviewReply(page: Page, input: PostReviewReplyInput, l
   }
   log('返信入力欄への入力が完了しました')
 
-  // 2026-08-17追記: #replyConfirmクリック後の確認画面・最終送信ボタンの実HTMLが
-  // 未確認のため、ここで意図的に停止する(詳細は上のコメント参照)。
-  throw new Error(
-    '返信内容の入力までは完了しましたが、確認画面(#replyConfirmクリック後)の実HTMLが未確認のため、' +
-      'このバージョンでは実際の返信投稿(登録)は行っていません。確認画面の実HTMLを確認後、実装を完了してください。'
-  )
+  log('確認画面へ遷移中...')
+  // #replyConfirmはinline onclickが無い(別JSでaddEventListenerされている)ため、
+  // 他の確認ボタンと同様にPuppeteerネイティブのpage.click()(CDP経由の本物の
+  // マウスイベント、isTrusted=true)を使う。
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+    page.click('#replyConfirm')
+  ])
+
+  const replyCompleteHandle = await page.waitForSelector('#replyComplete', { timeout: 15000 }).catch(() => null)
+  if (!replyCompleteHandle) {
+    // 返信内容が未入力のまま確認へ進むと「エラーが発生しました」画面
+    // (エラーモジュールID: BPCL035F08)になることを実機で確認済み。それ以外の
+    // 想定外の構造との切り分けのため、画面内容をそのままエラーメッセージに含める。
+    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
+    throw new Error(
+      `確認画面の投稿ボタン(#replyComplete)が見つかりませんでした(管理番号=${input.managementNo})。画面内容=${bodySnippet}`
+    )
+  }
+  log('確認画面への遷移が完了しました')
+
+  log('返信を投稿中...')
+  await Promise.all([
+    page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => null),
+    replyCompleteHandle.click()
+  ])
+
+  const completed = await page
+    .waitForFunction(() => document.body.innerText.includes('口コミ返信の投稿が完了しました'), { timeout: 20000 })
+    .then(() => true)
+    .catch(() => false)
+
+  if (!completed) {
+    const currentUrl = page.url()
+    const bodySnippet = await page.evaluate(() => document.body.innerText.slice(0, 500)).catch(() => '(取得失敗)')
+    throw new Error(`口コミ返信の投稿完了を確認できませんでした(管理番号=${input.managementNo})。url=${currentUrl} 画面内容=${bodySnippet}`)
+  }
+
+  log('口コミ返信の投稿が完了しました')
 }
