@@ -17,10 +17,16 @@ import {
   parseHpbReviewPage,
   extractSalonProfileFromSlnPage,
   parseHpbBlogListPage,
+  parseHpbKodawariPage,
+  parseHpbStylistDetailPage,
+  parseHpbCouponListPage,
   type SalonAreaInfo,
   type HpbReviewItem,
   type SalonHpbProfileInfo,
-  type HpbBlogListItem
+  type HpbBlogListItem,
+  type HpbKodawariPage,
+  type HpbStylistDetailInfo,
+  type HpbCouponListItem
 } from './ranking-parse'
 
 const USER_AGENT =
@@ -303,4 +309,99 @@ export async function fetchHpbBlogImageBuffer(
     }
   }
   return fetchOnce(imageUrl)
+}
+
+// --------------------------------------------
+// サロン情報機能(2026-08-21追記): HPB公開「こだわり」ページ・
+// スタイリスト個別ページの取得
+// --------------------------------------------
+
+const DEFAULT_KODAWARI_PAGE_DELAY_MS = 500
+const MAX_KODAWARI_PAGES = 10
+
+/**
+ * HPB公開「こだわり」ページ群(https://beauty.hotpepper.jp/sln{ID}/kodawari/、
+ * 2ページ目以降は/kodawari/2/等)を、こだわり1から辿って全ページ取得する。
+ * ページ数はサロンごとに異なる(1件のみのサロンもある)ため、各ページの
+ * ul.kodawariTabに載っている他ページへのリンクを辿って動的に発見する。
+ */
+export async function fetchHpbKodawariPages(
+  hpbSlnId: string,
+  options: ScrapeOptions = {}
+): Promise<HpbKodawariPage[]> {
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+  const delayMs = options.delayMs ?? DEFAULT_KODAWARI_PAGE_DELAY_MS
+
+  const firstUrl = `https://beauty.hotpepper.jp/${hpbSlnId}/kodawari/`
+  const visited = new Set<string>([firstUrl])
+  const queue: string[] = [firstUrl]
+  const pages: HpbKodawariPage[] = []
+
+  while (queue.length > 0 && pages.length < MAX_KODAWARI_PAGES) {
+    const url = queue.shift() as string
+    const html = await fetchHtml(url, dispatcher, options.signal)
+    const { page, otherPageUrls } = parseHpbKodawariPage(html)
+    pages.push(page)
+    for (const otherUrl of otherPageUrls) {
+      if (!visited.has(otherUrl)) {
+        visited.add(otherUrl)
+        queue.push(otherUrl)
+      }
+    }
+    if (queue.length > 0) await sleep(delayMs)
+  }
+
+  return pages
+}
+
+/**
+ * HPB公開スタイリスト個別ページ(https://beauty.hotpepper.jp/sln{ID}/stylist/{Tコード}/)
+ * を取得・パースする。呼び出し側がstylists.salonboard_stylist_key(Tコード)を
+ * 持っているスタイリストの分だけ、都度アクセスする想定。
+ */
+export async function fetchHpbStylistDetail(
+  hpbSlnId: string,
+  tCode: string,
+  options: ScrapeOptions = {}
+): Promise<HpbStylistDetailInfo> {
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+  const html = await fetchHtml(`https://beauty.hotpepper.jp/${hpbSlnId}/stylist/${tCode}/`, dispatcher, options.signal)
+  return parseHpbStylistDetailPage(html)
+}
+
+const DEFAULT_MAX_COUPON_PAGES = 20
+const DEFAULT_COUPON_PAGE_DELAY_MS = 800
+
+export type HpbCouponListResult = {
+  items: HpbCouponListItem[]
+  pagesScanned: number
+}
+
+/**
+ * HPB公開「クーポン・メニュー」ページ(https://beauty.hotpepper.jp/sln{ID}/coupon/)を
+ * <link rel="next">を辿って全ページ巡回する。ログイン不要・Puppeteer不要。
+ */
+export async function fetchHpbCouponList(
+  hpbSlnId: string,
+  options: ScrapeOptions = {}
+): Promise<HpbCouponListResult> {
+  const maxPages = options.maxPages ?? DEFAULT_MAX_COUPON_PAGES
+  const delayMs = options.delayMs ?? DEFAULT_COUPON_PAGE_DELAY_MS
+  const dispatcher = await makeDispatcher(options.proxyUrl)
+
+  const items: HpbCouponListItem[] = []
+  let url: string | null = `https://beauty.hotpepper.jp/${hpbSlnId}/coupon/`
+  let pagesScanned = 0
+
+  while (url && pagesScanned < maxPages) {
+    const html = await fetchHtml(url, dispatcher, options.signal)
+    const parsed = parseHpbCouponListPage(html)
+    pagesScanned += 1
+    items.push(...parsed.items)
+    if (!parsed.nextPageUrl) break
+    url = parsed.nextPageUrl
+    await sleep(delayMs)
+  }
+
+  return { items, pagesScanned }
 }

@@ -90,6 +90,12 @@ export async function loadSalonProfileForGeneration(
     hpb_avg_price_first: profile.hpb_avg_price_first,
     hpb_avg_price_repeat: profile.hpb_avg_price_repeat,
     hpb_customer_ratio: profile.hpb_customer_ratio,
+    // 口コミ返信文の生成には不要な材料(ブログ記事の話題づくり向け)のためnull固定
+    hpb_atmosphere_text: null,
+    hpb_salon_data_text: null,
+    hpb_specials_text: null,
+    hpb_kodawari_text: null,
+    hpb_coupons_text: null,
     reference_articles: []
   }
 }

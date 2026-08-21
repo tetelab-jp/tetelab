@@ -366,6 +366,12 @@ export type SalonHpbProfileInfo = {
   genderRatio: SalonGenderPercentages | null
   /** #jsiSalonGraphData(ld+json)内のsalonAgePercentages */
   ageRatio: SalonAgePercentages | null
+  /** 「〜の雰囲気」セクションの各写真キャプション(p.fgGray.fs10.mT10) */
+  atmosphereCaptions: string[]
+  /** 「〜のサロンデータ」テーブル(table.slnDataTbl)のラベル→値 */
+  salonData: { label: string; value: string }[]
+  /** サロントップの特集カルーセル(#jsiSpecialFeatureCarousel)。カテゴリ・見出し・説明文 */
+  specials: { category: string; headline: string; description: string }[]
 }
 
 const AGE_RATIO_BUCKET_LABELS = ['〜10代', '20代', '30代', '40代', '50代〜']
@@ -424,7 +430,128 @@ export function extractSalonProfileFromSlnPage(html: string): SalonHpbProfileInf
     }
   }
 
-  return { catchCopy, description, message, avgPriceFirstVisit, avgPriceRepeat, genderRatio, ageRatio }
+  // 2026-08-21追記(ユーザー提供の実HTMLで確認): 「〜の雰囲気」セクションは
+  // h2見出しの直後のdiv内に、写真+キャプション(p.fgGray.fs10.mT10)の
+  // リストが並ぶ構造。見出しの完全一致テキストがサロン名込みで変動するため、
+  // 「の雰囲気」で終わる見出しをテキストで判定する(こだわり等の他ページと
+  // 混同しないよう、末尾一致のみ)。
+  const atmosphereCaptions: string[] = []
+  $('h2').each((_, h2) => {
+    const heading = $(h2).text().trim()
+    if (!heading.endsWith('の雰囲気')) return
+    const container = $(h2).closest('div.mT30')
+    container.find('p.fgGray.fs10.mT10').each((__, p) => {
+      const text = $(p).text().replace(/\s+/g, ' ').trim()
+      if (text) atmosphereCaptions.push(text)
+    })
+    return false
+  })
+
+  // 「〜のサロンデータ」テーブル(table.slnDataTbl): 1行にth+td(colspan)が
+  // 1組、または2組並ぶ形式が混在するため、行内のth/tdを出現順にペアリングする。
+  const salonData: { label: string; value: string }[] = []
+  $('table.slnDataTbl').first().find('tr').each((_, tr) => {
+    const cells = $(tr).children()
+    const ths = cells.filter('th').toArray()
+    const tds = cells.filter('td').toArray()
+    for (let i = 0; i < Math.min(ths.length, tds.length); i++) {
+      const label = $(ths[i]).text().replace(/\s+/g, ' ').trim()
+      const value = $(tds[i]).text().replace(/\s+/g, ' ').trim()
+      if (label && value) salonData.push({ label, value })
+    }
+  })
+
+  // 特集カルーセル(#jsiSpecialFeatureCarousel): ナビ用の重複ブロック
+  // (.cpnTyingMainNavi)ではなく、本体(ul.cpnTyingMain > li)だけを対象にする。
+  const specials: { category: string; headline: string; description: string }[] = []
+  $('#jsiSpecialFeatureCarousel ul.cpnTyingMain > li').each((_, li) => {
+    const $li = $(li)
+    const category = $li.find('.cpnTyingTitle').first().text().replace(/\s+/g, ' ').trim()
+    const $desc = $li.find('.cpnTyingDescription').first()
+    const headline = $desc.find('p').first().text().replace(/\s+/g, ' ').trim()
+    const description = $desc.find('p').eq(1).text().replace(/\s+/g, ' ').trim()
+    if (category || headline) specials.push({ category, headline, description })
+  })
+
+  return {
+    catchCopy, description, message, avgPriceFirstVisit, avgPriceRepeat, genderRatio, ageRatio,
+    atmosphereCaptions, salonData, specials
+  }
+}
+
+export type HpbKodawariStep = {
+  title: string
+  body: string
+  imageUrl: string | null
+}
+
+export type HpbKodawariPage = {
+  catchTitle: string | null
+  catchText: string | null
+  steps: HpbKodawariStep[]
+}
+
+/**
+ * HPB公開「こだわり」ページ(https://beauty.hotpepper.jp/sln{ID}/kodawari/、
+ * 2ページ目以降は/kodawari/2/等)を1ページ分パースする。ページ上部の
+ * ul.kodawariTabに他のこだわりページへのリンクが全件載っているため、
+ * あわせて絶対URLで返す(呼び出し側でこだわり1から辿って全ページ取得する)。
+ */
+export function parseHpbKodawariPage(html: string): { page: HpbKodawariPage; otherPageUrls: string[] } {
+  const $ = cheerio.load(html)
+
+  const catchTitle = $('h2.kodawariCatch').first().text().replace(/\s+/g, ' ').trim() || null
+  const catchText = $('p.kodawariCatchTxt').first().text().replace(/\s+/g, ' ').trim() || null
+
+  const steps: HpbKodawariStep[] = []
+  $('li.kodawariStepCassette').each((_, li) => {
+    const $li = $(li)
+    const title = $li.find('.kodawariTtl').first().text().replace(/\s+/g, ' ').trim()
+    const body = $li.find('.kodawariTxt').first().text().replace(/\s+/g, ' ').trim()
+    const imageUrl = $li.find('img').first().attr('src') || null
+    if (title || body) steps.push({ title, body, imageUrl })
+  })
+
+  const otherPageUrls: string[] = []
+  $('ul.kodawariTab a.kodawariTabAnchor').each((_, a) => {
+    const href = $(a).attr('href')
+    if (href) otherPageUrls.push(href)
+  })
+
+  return { page: { catchTitle, catchText, steps }, otherPageUrls }
+}
+
+export type HpbStylistDetailInfo = {
+  /** dt.fgPink.b.fs14(スタイリストの一言キャッチ) */
+  catchTitle: string | null
+  /** dd.mT10.wbba(キャッチに続く自己紹介文) */
+  bio: string | null
+  /** dl(dt.w10em.b + dd.oh.wbba)のラベル→値。例: 得意なイメージ/得意な技術/趣味・マイブーム */
+  fields: Record<string, string>
+}
+
+/**
+ * HPB公開スタイリスト個別ページ(https://beauty.hotpepper.jp/sln{ID}/stylist/{Tコード}/)
+ * をパースする。呼び出し側はstylists.salonboard_stylist_key(Tコード)を
+ * 既に持っている前提で、そのスタイリスト分だけ都度アクセスする。
+ */
+export function parseHpbStylistDetailPage(html: string): HpbStylistDetailInfo {
+  const $ = cheerio.load(html)
+
+  const catchTitle = $('dt.fgPink.b.fs14').first().text().replace(/\s+/g, ' ').trim() || null
+  const bio = $('dd.mT10.wbba').first().text().replace(/\s+/g, ' ').trim() || null
+
+  const fields: Record<string, string> = {}
+  $('dl').each((_, dl) => {
+    const $dt = $(dl).children('dt.w10em')
+    const $dd = $(dl).children('dd.oh')
+    if ($dt.length === 0 || $dd.length === 0) return
+    const label = $dt.text().replace(/\s+/g, ' ').trim()
+    const value = $dd.text().replace(/\s+/g, ' ').trim()
+    if (label && value) fields[label] = value
+  })
+
+  return { catchTitle, bio, fields }
 }
 
 /**
@@ -454,6 +581,108 @@ export function formatCustomerRatioText(genderRatio: SalonGenderPercentages | nu
     }
   }
   return parts.length > 0 ? parts.join('。') : null
+}
+
+/** 「〜の雰囲気」セクションの写真キャプション群を、AI参考材料用の1テキストに整形する */
+export function formatAtmosphereText(captions: string[]): string | null {
+  return captions.length > 0 ? captions.join('／') : null
+}
+
+/** 「〜のサロンデータ」テーブルを、AI参考材料用の1テキストに整形する */
+export function formatSalonDataText(salonData: { label: string; value: string }[]): string | null {
+  return salonData.length > 0 ? salonData.map((row) => `${row.label}: ${row.value}`).join('\n') : null
+}
+
+/** サロントップの特集カルーセルを、AI参考材料用の1テキストに整形する */
+export function formatSpecialsText(
+  specials: { category: string; headline: string; description: string }[]
+): string | null {
+  if (specials.length === 0) return null
+  return specials
+    .map((s) => [s.category, s.headline, s.description].filter(Boolean).join(' / '))
+    .join('\n')
+}
+
+/** こだわりページ群を、AI参考材料用の1テキストに整形する(全ステップ本文は長大なため見出しのみ) */
+export function formatKodawariText(pages: HpbKodawariPage[]): string | null {
+  if (pages.length === 0) return null
+  return pages
+    .map((page) => {
+      const lines = [page.catchTitle, page.catchText].filter((l): l is string => !!l)
+      if (page.steps.length > 0) {
+        lines.push(`見どころ: ${page.steps.map((s) => s.title).filter(Boolean).join('／')}`)
+      }
+      return lines.join('\n')
+    })
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+/** スタイリスト個別ページのプロフィールを、stylists.hpb_bio_text用の1テキストに整形する */
+export function formatStylistBioText(info: HpbStylistDetailInfo): string | null {
+  const lines: string[] = []
+  if (info.catchTitle) lines.push(info.catchTitle)
+  if (info.bio) lines.push(info.bio)
+  for (const [label, value] of Object.entries(info.fields)) {
+    if (label === 'スタイリスト歴') continue
+    lines.push(`${label}: ${value}`)
+  }
+  return lines.length > 0 ? lines.join('\n') : null
+}
+
+export type HpbCouponListItem = {
+  /** coupons.salonboard_coupon_keyと同じ形式(例: CP00000007918355)。予約リンクのcouponIdクエリから抽出 */
+  couponSalonboardKey: string | null
+  name: string
+  description: string
+}
+
+export type HpbCouponListPageResult = {
+  items: HpbCouponListItem[]
+  nextPageUrl: string | null
+}
+
+/**
+ * HPB公開「クーポン・メニュー」ページ(https://beauty.hotpepper.jp/sln{ID}/coupon/、
+ * 2ページ目以降は<link rel="next">を辿る)を1ページ分パースする。
+ * table.couponTable単位がクーポン(table.menuTblはクーポン無しの単なるメニューの
+ * ため対象外)。個々のクーポンIDはdata属性ではなく予約リンクのcouponId=クエリに
+ * しか無い(2026-08-21追記(ユーザー提供の実HTMLで確認))。
+ */
+export function parseHpbCouponListPage(html: string): HpbCouponListPageResult {
+  const $ = cheerio.load(html)
+
+  const items: HpbCouponListItem[] = []
+  $('table.couponTable').each((_, table) => {
+    const $table = $(table)
+    const name = $table.find('.couponMenuName').first().text().replace(/\s+/g, ' ').trim()
+    const description = $table.find('.couponDescription').first().text().replace(/\s+/g, ' ').trim()
+
+    let couponSalonboardKey: string | null = null
+    $table.find('a[href*="couponId="]').each((_, a) => {
+      const href = $(a).attr('href') || ''
+      const match = href.match(/couponId=(CP\d+)/)
+      if (!match) return
+      couponSalonboardKey = match[1]
+      return false
+    })
+
+    if (name || description) items.push({ couponSalonboardKey, name, description })
+  })
+
+  const nextPageUrl = $('link[rel="next"]').attr('href') || null
+
+  return { items, nextPageUrl }
+}
+
+/** HPB公開クーポン一覧を、AI参考材料用の1テキストに整形する(件数が多いため上限を設ける) */
+const MAX_COUPONS_IN_TEXT = 15
+export function formatCouponsText(items: HpbCouponListItem[]): string | null {
+  if (items.length === 0) return null
+  return items
+    .slice(0, MAX_COUPONS_IN_TEXT)
+    .map((c) => [c.name, c.description].filter(Boolean).join(' / '))
+    .join('\n')
 }
 
 export type HpbBlogListItem = {

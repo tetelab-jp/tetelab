@@ -15,9 +15,22 @@ import {
   fetchSalonProfileFromHpb,
   fetchHpbBlogArticles,
   fetchHpbBlogDetailHtml,
-  fetchHpbBlogImageBuffer
+  fetchHpbBlogImageBuffer,
+  fetchHpbKodawariPages,
+  fetchHpbStylistDetail,
+  fetchHpbCouponList
 } from '../lib/ranking-scraper'
-import { formatCustomerRatioText, parseHpbBlogDetailPage, type HpbBlogDetailResult } from '../lib/ranking-parse'
+import {
+  formatCustomerRatioText,
+  formatAtmosphereText,
+  formatSalonDataText,
+  formatSpecialsText,
+  formatKodawariText,
+  formatStylistBioText,
+  formatCouponsText,
+  parseHpbBlogDetailPage,
+  type HpbBlogDetailResult
+} from '../lib/ranking-parse'
 import type { Bindings, AppUser } from '../types'
 
 const blog = new Hono<{ Bindings: Bindings; Variables: { user: AppUser } }>()
@@ -84,6 +97,11 @@ type SalonProfileRow = {
   hpb_avg_price_first: string | null
   hpb_avg_price_repeat: string | null
   hpb_customer_ratio: string | null
+  hpb_atmosphere_text: string | null
+  hpb_salon_data_text: string | null
+  hpb_specials_text: string | null
+  hpb_kodawari_text: string | null
+  hpb_coupons_text: string | null
 }
 
 async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfileRow | null> {
@@ -91,7 +109,8 @@ async function getSalonProfile(c: AppContext, user: AppUser): Promise<SalonProfi
     `SELECT concept, target_customer, writing_tone, ng_words, address, nearest_station, walk_minutes,
             business_hours, closing_days, strengths, price_range, reference_text, first_person,
             sentence_ending, footer_separator, footer_keywords_json, footer_override_text, salonboard_synced_at,
-            hpb_catch, hpb_copy, hpb_message, hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio
+            hpb_catch, hpb_copy, hpb_message, hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio,
+            hpb_atmosphere_text, hpb_salon_data_text, hpb_specials_text, hpb_kodawari_text, hpb_coupons_text
      FROM salon_profiles WHERE user_id = ? AND salon_id = ?`
   )
     .bind(user.id, user.active_salon_id)
@@ -177,6 +196,11 @@ async function getSalonProfileForGeneration(c: AppContext, user: AppUser): Promi
     hpb_avg_price_first: profile.hpb_avg_price_first,
     hpb_avg_price_repeat: profile.hpb_avg_price_repeat,
     hpb_customer_ratio: profile.hpb_customer_ratio,
+    hpb_atmosphere_text: profile.hpb_atmosphere_text,
+    hpb_salon_data_text: profile.hpb_salon_data_text,
+    hpb_specials_text: profile.hpb_specials_text,
+    hpb_kodawari_text: profile.hpb_kodawari_text,
+    hpb_coupons_text: profile.hpb_coupons_text,
     reference_articles: referenceArticles.results || []
   }
 }
@@ -495,6 +519,11 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   let hpbAvgPriceFirst: string | null = null
   let hpbAvgPriceRepeat: string | null = null
   let hpbCustomerRatio: string | null = null
+  let hpbAtmosphereText: string | null = null
+  let hpbSalonDataText: string | null = null
+  let hpbSpecialsText: string | null = null
+  let hpbKodawariText: string | null = null
+  let hpbCouponsText: string | null = null
   let articleCount = 0
   let hpbError: string | null = null
 
@@ -502,9 +531,11 @@ blog.post('/blog/salon/mark-synced', async (c) => {
     hpbError = 'HPB公開ページのサロンIDが未検出のため、キャッチ・コピー・メッセージ・ブログ記事の取得はスキップされました'
   } else {
     try {
-      const [profileInfo, blogResult] = await Promise.all([
+      const [profileInfo, blogResult, kodawariPages, couponResult] = await Promise.all([
         fetchSalonProfileFromHpb(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }),
-        fetchHpbBlogArticles(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL })
+        fetchHpbBlogArticles(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }),
+        fetchHpbKodawariPages(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch(() => []),
+        fetchHpbCouponList(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch(() => ({ items: [], pagesScanned: 0 }))
       ])
       hpbCatch = profileInfo.catchCopy
       hpbCopy = profileInfo.description
@@ -512,6 +543,24 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       hpbAvgPriceFirst = profileInfo.avgPriceFirstVisit
       hpbAvgPriceRepeat = profileInfo.avgPriceRepeat
       hpbCustomerRatio = formatCustomerRatioText(profileInfo.genderRatio, profileInfo.ageRatio)
+      hpbAtmosphereText = formatAtmosphereText(profileInfo.atmosphereCaptions)
+      hpbSalonDataText = formatSalonDataText(profileInfo.salonData)
+      hpbSpecialsText = formatSpecialsText(profileInfo.specials)
+      hpbKodawariText = formatKodawariText(kodawariPages)
+      hpbCouponsText = formatCouponsText(couponResult.items)
+
+      // 2026-08-21追記(ユーザー指定): 「サロン情報」機能のクーポン部分。
+      // 一覧巡回で既に全件メモリ上にあるため追加アクセス無しで、
+      // salonboard_coupon_key(予約リンクのcouponId=から抽出)が一致する
+      // 既存のcouponsマスタへ「クーポン内容」(couponDescription)を保存する。
+      for (const couponItem of couponResult.items) {
+        if (!couponItem.couponSalonboardKey || !couponItem.description) continue
+        await c.env.DB.prepare(
+          'UPDATE coupons SET hpb_description_text = ? WHERE user_id = ? AND salon_id = ? AND salonboard_coupon_key = ?'
+        )
+          .bind(couponItem.description, user.id, user.active_salon_id, couponItem.couponSalonboardKey)
+          .run()
+      }
 
       // 毎回全置き換え(差分更新ではなく、HPB側の最新一覧をそのまま反映する)
       await c.env.DB.prepare('DELETE FROM blog_reference_articles WHERE user_id = ? AND salon_id = ?')
@@ -533,6 +582,32 @@ blog.post('/blog/salon/mark-synced', async (c) => {
         sortOrder += 1
       }
       articleCount = blogResult.items.length
+
+      // 2026-08-21追記(ユーザー指定): 「サロン情報」機能。既に
+      // salonboard_stylist_key(Tコード)を持っている(＝サロンボード同期
+      // 済みの)スタイリストの分だけ、HPB公開の個別ページへ都度アクセスし
+      // 「得意なイメージ・得意な技術・趣味/マイブーム」等をstylists.
+      // hpb_bio_textへ保存する。1件失敗しても他のスタイリストの取得は続行する
+      // (ベストエフォート。全体をhpbErrorで止めない)。
+      const { results: stylistRows } = await c.env.DB.prepare(
+        'SELECT id, salonboard_stylist_key FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key IS NOT NULL'
+      )
+        .bind(user.id, user.active_salon_id)
+        .all<{ id: number; salonboard_stylist_key: string }>()
+      for (const stylistRow of stylistRows || []) {
+        try {
+          const info = await fetchHpbStylistDetail(salon.hpb_sln_id, stylistRow.salonboard_stylist_key, {
+            proxyUrl: c.env.RANKING_PROXY_URL
+          })
+          const bioText = formatStylistBioText(info)
+          if (bioText) {
+            await c.env.DB.prepare('UPDATE stylists SET hpb_bio_text = ? WHERE id = ?').bind(bioText, stylistRow.id).run()
+          }
+        } catch {
+          // このスタイリスト分だけスキップ(全体は継続)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 500))
+      }
     } catch (err: any) {
       hpbError = `HPBからの参考情報取得に失敗しました: ${err?.message || String(err)}`
     }
@@ -543,18 +618,29 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       `UPDATE salon_profiles SET salonboard_synced_at = CURRENT_TIMESTAMP,
          hpb_catch = COALESCE(?, hpb_catch), hpb_copy = COALESCE(?, hpb_copy), hpb_message = COALESCE(?, hpb_message),
          hpb_avg_price_first = COALESCE(?, hpb_avg_price_first), hpb_avg_price_repeat = COALESCE(?, hpb_avg_price_repeat),
-         hpb_customer_ratio = COALESCE(?, hpb_customer_ratio)
+         hpb_customer_ratio = COALESCE(?, hpb_customer_ratio),
+         hpb_atmosphere_text = COALESCE(?, hpb_atmosphere_text), hpb_salon_data_text = COALESCE(?, hpb_salon_data_text),
+         hpb_specials_text = COALESCE(?, hpb_specials_text), hpb_kodawari_text = COALESCE(?, hpb_kodawari_text),
+         hpb_coupons_text = COALESCE(?, hpb_coupons_text)
        WHERE user_id = ? AND salon_id = ?`
     )
-      .bind(hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio, user.id, user.active_salon_id)
+      .bind(
+        hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio,
+        hpbAtmosphereText, hpbSalonDataText, hpbSpecialsText, hpbKodawariText, hpbCouponsText,
+        user.id, user.active_salon_id
+      )
       .run()
   } else {
     await c.env.DB.prepare(
       `INSERT INTO salon_profiles (user_id, salon_id, salonboard_synced_at, hpb_catch, hpb_copy, hpb_message,
-         hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio)
-       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?)`
+         hpb_avg_price_first, hpb_avg_price_repeat, hpb_customer_ratio,
+         hpb_atmosphere_text, hpb_salon_data_text, hpb_specials_text, hpb_kodawari_text, hpb_coupons_text)
+       VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     )
-      .bind(user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio)
+      .bind(
+        user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio,
+        hpbAtmosphereText, hpbSalonDataText, hpbSpecialsText, hpbKodawariText
+      )
       .run()
   }
 
@@ -1093,9 +1179,9 @@ async function generateOneArticle(
   const bodyMaxChars = await computeBodyMaxChars(c, user)
 
   const stylistRow = category.default_stylist_id
-    ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+    ? await c.env.DB.prepare('SELECT name, hpb_bio_text FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
         .bind(category.default_stylist_id, user.id, user.active_salon_id)
-        .first<{ name: string }>()
+        .first<{ name: string; hpb_bio_text: string | null }>()
     : null
 
   const seasonMonths = parseSeasonMonths(category.season_months_json)
@@ -1106,6 +1192,7 @@ async function generateOneArticle(
     bodyPrompt: category.body_prompt,
     imageDescription: article.image_description,
     stylistName: stylistRow?.name || null,
+    stylistBio: stylistRow?.hpb_bio_text || null,
     couponName: null,
     bodyMaxChars,
     profile,
@@ -1845,9 +1932,9 @@ blog.post('/blog/generate', async (c) => {
     const profile = await getSalonProfileForGeneration(c, user)
     const bodyMaxChars = await computeBodyMaxChars(c, user)
     const stylistRow = category.default_stylist_id
-      ? await c.env.DB.prepare('SELECT name FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
+      ? await c.env.DB.prepare('SELECT name, hpb_bio_text FROM stylists WHERE id = ? AND user_id = ? AND salon_id = ?')
           .bind(category.default_stylist_id, user.id, user.active_salon_id)
-          .first<{ name: string }>()
+          .first<{ name: string; hpb_bio_text: string | null }>()
       : null
     const seasonMonths = parseSeasonMonths(category.season_months_json)
 
@@ -1857,6 +1944,7 @@ blog.post('/blog/generate', async (c) => {
       bodyPrompt: category.body_prompt,
       imageDescription,
       stylistName: stylistRow?.name || null,
+      stylistBio: stylistRow?.hpb_bio_text || null,
       couponName: null,
       bodyMaxChars,
       profile,

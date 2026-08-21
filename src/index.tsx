@@ -1080,6 +1080,32 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(blog_articles承認済みバックフィル)に失敗しました:', err)
   }
+  try {
+    // 2026-08-21追記(ユーザー指定): 「サロン情報」機能。HPB公開ページの
+    // 「〜の雰囲気」「〜のサロンデータ」「特集」「こだわり」を、既存の
+    // hpb_catch/copy/message等と同じくAI記事生成の参考材料として追加する
+    // (詳細はmigrations-pg/0037_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_atmosphere_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_salon_data_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_specials_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_kodawari_text TEXT`).run()
+    // スタイリスト個別ページの「得意なイメージ/得意な技術/趣味・マイブーム」等の
+    // プロフィールは、スタイリスト単位の材料のためstylists側に持たせる。
+    await bindings.DB.prepare(`ALTER TABLE stylists ADD COLUMN IF NOT EXISTS hpb_bio_text TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(サロン情報機能)に失敗しました:', err)
+  }
+  try {
+    // 2026-08-21追記(ユーザー指定): 「サロン情報」機能のクーポン部分。
+    // HPB公開のクーポン・メニューページから「クーポン内容」(既存の
+    // coupons.nameだけでは無かった、説明文)を取得しcouponsへ追加保存する。
+    // salon_profiles側には、参考材料として使いやすいよう上位数件をまとめた
+    // テキストも持たせる(詳細はmigrations-pg/0038_*.sql参照)。
+    await bindings.DB.prepare(`ALTER TABLE coupons ADD COLUMN IF NOT EXISTS hpb_description_text TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_coupons_text TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(サロン情報機能・クーポン)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。
