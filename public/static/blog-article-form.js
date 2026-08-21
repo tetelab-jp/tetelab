@@ -60,9 +60,9 @@ document.addEventListener('DOMContentLoaded', () => {
     syncFooterInBody()
   }
 
-  // 2026-08-21追記(ユーザー指定): 必須項目(タイトル・本文・HPBブログカテゴリ)が
-  // 未設定のまま、または本文がフッター込みで950文字を超えたまま「投稿一覧に
-  // 追加」/「保存する」を押せないようにする。未設定の項目は赤く表示する。
+  // 2026-08-21追記(ユーザー指定): 必須項目(タイトル・本文・HPBブログカテゴリ・
+  // 投稿者)が未設定のまま、または本文がフッター込みで950文字を超えたまま
+  // 「投稿一覧に追加」/「保存する」を押せないようにする。未設定の項目は赤く表示する。
   var BODY_MAX_CHARS = 950
   var titleInput = document.getElementById('article-title-input')
   var titleLabel = document.getElementById('article-title-label')
@@ -70,6 +70,8 @@ document.addEventListener('DOMContentLoaded', () => {
   var bodyCharCount = document.getElementById('article-body-charcount')
   var categorySelect = document.getElementById('article-category-select')
   var categoryLabel = document.getElementById('article-category-label')
+  var stylistSelect = document.getElementById('article-stylist-select')
+  var stylistLabel = document.getElementById('article-stylist-label')
   var submitBtn = document.getElementById('article-submit-btn')
   var requiredErrorEl = document.getElementById('article-required-error')
   var charLimitErrorEl = document.getElementById('article-charlimit-error')
@@ -86,11 +88,13 @@ document.addEventListener('DOMContentLoaded', () => {
     var titleMissing = !!titleInput && titleInput.value.trim() === ''
     var bodyMissing = getBodyWithoutFooter().trim() === ''
     var categoryMissing = !!categorySelect && categorySelect.value === ''
-    var requiredMissing = titleMissing || bodyMissing || categoryMissing
+    var stylistMissing = !!stylistSelect && stylistSelect.value === ''
+    var requiredMissing = titleMissing || bodyMissing || categoryMissing || stylistMissing
 
     setLabelInvalid(titleLabel, titleMissing)
     setLabelInvalid(bodyLabel, bodyMissing)
     setLabelInvalid(categoryLabel, categoryMissing)
+    setLabelInvalid(stylistLabel, stylistMissing)
 
     var charCount = bodyTextarea.value.length
     var overLimit = charCount > BODY_MAX_CHARS
@@ -109,6 +113,7 @@ document.addEventListener('DOMContentLoaded', () => {
     bodyTextarea.addEventListener('input', validateArticleForm)
     if (titleInput) titleInput.addEventListener('input', validateArticleForm)
     if (categorySelect) categorySelect.addEventListener('change', validateArticleForm)
+    if (stylistSelect) stylistSelect.addEventListener('change', validateArticleForm)
     validateArticleForm()
   }
 
