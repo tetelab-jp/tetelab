@@ -986,6 +986,34 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(口コミ自動返信テーブル)に失敗しました:', err)
   }
+  try {
+    // 2026-08-21追記(ユーザー報告のバグ修正): src/lib/review-sync-runner.tsに
+    // 追加した「SALON BOARD/HPBで既に返信済みの口コミもreplied_atを確定させる」
+    // 修正は、以後の同期(review_sync)実行時にしか効かない。既にreviewsテーブルに
+    // 記録済みの過去分は、reply_status(SALON BOARD一覧の返信列テキスト)や
+    // salon_reply_content(HPB側の返信文)が既に過去の同期で正しく保存済み
+    // だったにもかかわらず、replied_atだけが今まで一度も確定していなかった。
+    // これは「次にその口コミが同期対象になるまで直らない」問題(通常運用は
+    // incremental syncで新着のみ再走査するため、過去分は事実上直らないまま)
+    // のため、既存データだけで判定できる一度限りのバックフィルとして直接補正する。
+    const reviewRepliedAtBackfillDone = await bindings.DB.prepare(
+      `SELECT 1 FROM schema_migration_flags WHERE flag_key = 'review_replied_at_backfill_v1'`
+    ).first()
+    if (!reviewRepliedAtBackfillDone) {
+      await bindings.DB.prepare(
+        `UPDATE reviews SET
+           replied_at = CURRENT_TIMESTAMP,
+           reply_content = COALESCE(reply_content, salon_reply_content),
+           reply_method = COALESCE(reply_method, 'external')
+         WHERE replied_at IS NULL AND (reply_status LIKE '%返信済%' OR salon_reply_content IS NOT NULL)`
+      ).run()
+      await bindings.DB.prepare(
+        `INSERT INTO schema_migration_flags (flag_key) VALUES ('review_replied_at_backfill_v1') ON CONFLICT (flag_key) DO NOTHING RETURNING flag_key`
+      ).run()
+    }
+  } catch (err) {
+    console.error('起動時マイグレーション(reviews.replied_atバックフィル)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。
