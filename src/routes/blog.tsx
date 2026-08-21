@@ -429,6 +429,14 @@ blog.post('/blog/salon/import-references', async (c) => {
   // 巡回・mark-syncedとは別に、選択数件のみの軽量な追加アクセス)。
   // 個別ページの取得に失敗しても取り込み自体は継続し、その記事だけ
   // 一覧の抜粋・画像/クーポン無しのまま追加する。
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 取り込んだ本文には元々
+  // サロン(スタイリスト)自身がSalonBoard上で手打ちしていた署名・アクセス
+  // 情報のブロックがそのまま含まれていることが多く、これはアプリの
+  // フッター機能とは無関係な本文の一部である。footer_enabled_flagを
+  // ONで取り込むと、編集画面を開いた時点でこのアプリ独自のフッターが
+  // さらに本文末尾へ追加され、結果的に似た構成のフッターが本文中に
+  // 二重・三重に存在してしまっていた。取り込み時はOFFで作成し、
+  // ユーザーがフッターを追加したい場合のみ編集画面でチェックを入れる。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
 
@@ -483,7 +491,7 @@ blog.post('/blog/salon/import-references', async (c) => {
          user_id, salon_id, category_id, stylist_id, coupon_id, image_r2_key, image_file_name,
          title, body, month_tags_json,
          footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '[]', 0, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
         user.id, user.active_salon_id, categoryId, stylistRow?.id ?? null, couponRow?.id ?? null,
