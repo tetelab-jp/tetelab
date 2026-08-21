@@ -389,11 +389,14 @@ export async function dispatchManualReviewReply(
   if (await hasInFlightReplyJob(env, salonId)) {
     throw new Error('このサロンは既に返信処理が進行中です。完了してからもう一度お試しください')
   }
-  const review = await env.DB.prepare(`SELECT id, replied_at FROM reviews WHERE id = ? AND user_id = ? AND salon_id = ?`)
+  // 2026-08-22追記(ユーザー指定): 「返信済み口コミ」画面から、既に返信済みの
+  // 内容を編集して再投稿できるようにするため、返信済みかどうかによる
+  // ブロックは行わない(SALON BOARD側のフローは未返信の口コミへの返信と
+  // 同じ画面・同じ操作で、既存の返信内容を上書きする)。
+  const review = await env.DB.prepare(`SELECT id FROM reviews WHERE id = ? AND user_id = ? AND salon_id = ?`)
     .bind(reviewId, userId, salonId)
-    .first<{ id: number; replied_at: string | null }>()
+    .first<{ id: number }>()
   if (!review) throw new Error('対象の口コミが見つかりません')
-  if (review.replied_at) throw new Error('この口コミは既に返信済みです')
 
   const trimmed = replyContent.trim()
   if (!trimmed) throw new Error('返信文が空です')
