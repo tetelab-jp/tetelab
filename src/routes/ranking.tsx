@@ -668,7 +668,7 @@ ranking.get('/seo', requireAuth, requireSeoEnabled, async (c) => {
     <PageLayout
       active="ranking-measure"
       salonName={user.salon_name}
-      title="順位測定"
+      title="エリア順位測定"
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
       seoEnabled={user.seo_enabled !== 0}

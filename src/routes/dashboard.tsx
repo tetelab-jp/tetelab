@@ -214,7 +214,7 @@ dashboard.get('/dashboard', async (c) => {
             カテゴリ別テンプレートで画像から記事をAI生成し、自動投稿できます。
           </p>
           <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
-            投稿記事一覧を開く <i class="fas fa-arrow-right ml-1"></i>
+            登録ブログを開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">

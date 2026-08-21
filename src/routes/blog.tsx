@@ -179,7 +179,7 @@ blog.get('/blog/salon', async (c) => {
   const imported = c.req.query('imported')
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="既存ブログの読み込み" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログを取り込む" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -187,7 +187,7 @@ blog.get('/blog/salon', async (c) => {
       )}
       {imported && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
-          <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を投稿記事一覧へ追加しました
+          <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を登録ブログへ追加しました
         </div>
       )}
 
@@ -222,7 +222,7 @@ blog.get('/blog/salon', async (c) => {
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
-            選択した記事を投稿記事一覧へ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。
+            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。
           </p>
           <form method="post" action="/blog/salon/import-references">
             <ul class="max-h-80 overflow-y-auto divide-y divide-gray-100 border border-gray-100 rounded-lg">
@@ -240,7 +240,7 @@ blog.get('/blog/salon', async (c) => {
               ))}
             </ul>
             <button type="submit" class="mt-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
-              投稿記事一覧へ追加
+              登録ブログへ追加
             </button>
           </form>
         </div>
@@ -291,7 +291,7 @@ blog.get('/blog/salon', async (c) => {
 
       <script src="/static/blog-salon.js"></script>
     </PageLayout>,
-    { title: '既存ブログの読み込み' }
+    { title: 'HPBからブログを取り込む' }
   )
 })
 
@@ -1763,7 +1763,7 @@ blog.get('/blog/articles', async (c) => {
     .sort((a, b) => (a.last_posted_at! < b.last_posted_at! ? 1 : a.last_posted_at! > b.last_posted_at! ? -1 : 0))
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-articles" salonName={user.salon_name} title="投稿記事一覧" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-articles" salonName={user.salon_name} title="登録ブログ" styleEnabled={user.style_enabled !== 0}>
       <div class="flex gap-2 border-b border-gray-100">
         <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-pink-500 text-pink-600" data-tab="list">一覧</button>
         <button type="button" class="blog-tab-btn px-4 py-2 text-sm font-semibold border-b-2 border-transparent text-gray-400" data-tab="calendar">投稿予定</button>
@@ -1935,7 +1935,7 @@ blog.get('/blog/articles', async (c) => {
 
       <script src="/static/blog-articles.js"></script>
     </PageLayout>,
-    { title: '投稿記事一覧' }
+    { title: '登録ブログ' }
   )
 })
 
