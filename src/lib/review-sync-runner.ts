@@ -153,6 +153,18 @@ export async function processReviewSyncResult(
     if (r.matched) matchedCount += 1
     else unmatchedCount += 1
 
+    // 2026-08-20追記(ユーザー指摘のバグ修正): replied_atはこれまで自アプリ経由の
+    // 返信投稿(automation.tsxのジョブ結果コールバック)でのみセットしていたため、
+    // サロン担当者がSALON BOARD/HPBへ直接返信した口コミはreplied_atが永遠にNULLの
+    // ままとなり、「未返信」一覧(reviews.tsx)に返信済みの口コミが残り続けていた。
+    // HPB公開ページには既にsalonReplyContent(サロン返信文)が取得できているため、
+    // これが存在する時点でreplied_atも合わせて確定させる。ただし既にreplied_atが
+    // 記録済みの行(自アプリ経由の返信含む)は、再同期のたびに上書きしないよう
+    // 「まだreplied_atが無い行に限り、今回HPBで返信を検知したら初めて記録する」
+    // という条件をON CONFLICT側でも保つ(reviews.replied_at IS NULL AND
+    // EXCLUDED.replied_at IS NOT NULLの場合のみ反映)。
+    const externallyRepliedAt = hpb?.salonReplyContent ? new Date().toISOString() : null
+
     await env.DB.prepare(
       `INSERT INTO reviews (
          user_id, salon_id, salonboard_review_key, posted_at, visited_at,
@@ -160,8 +172,8 @@ export async function processReviewSyncResult(
          hpb_nickname, gender, age_group, attribute, menu_used, coupon_used,
          content, salon_reply_content,
          score_atmosphere, score_service, score_technique, score_menu_price, score_overall,
-         matched_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         matched_at, replied_at, reply_content, reply_method, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT (salon_id, salonboard_review_key) DO UPDATE SET
          posted_at = EXCLUDED.posted_at,
          visited_at = EXCLUDED.visited_at,
@@ -183,6 +195,9 @@ export async function processReviewSyncResult(
          score_menu_price = EXCLUDED.score_menu_price,
          score_overall = EXCLUDED.score_overall,
          matched_at = EXCLUDED.matched_at,
+         replied_at = CASE WHEN reviews.replied_at IS NULL AND EXCLUDED.replied_at IS NOT NULL THEN EXCLUDED.replied_at ELSE reviews.replied_at END,
+         reply_content = CASE WHEN reviews.replied_at IS NULL AND EXCLUDED.replied_at IS NOT NULL THEN EXCLUDED.reply_content ELSE reviews.reply_content END,
+         reply_method = CASE WHEN reviews.replied_at IS NULL AND EXCLUDED.replied_at IS NOT NULL THEN EXCLUDED.reply_method ELSE reviews.reply_method END,
          updated_at = CURRENT_TIMESTAMP`
     )
       .bind(
@@ -208,7 +223,10 @@ export async function processReviewSyncResult(
         hpb?.scoreTechnique ?? null,
         hpb?.scoreMenuPrice ?? null,
         hpb?.scoreOverall ?? null,
-        r.matched ? new Date().toISOString() : null
+        r.matched ? new Date().toISOString() : null,
+        externallyRepliedAt,
+        hpb?.salonReplyContent || null,
+        externallyRepliedAt ? 'external' : null
       )
       .run()
   }
