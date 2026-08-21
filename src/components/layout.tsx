@@ -19,6 +19,7 @@ export type NavKey =
   | 'review-by-stylist'
   | 'review-list'
   | 'auto-update'
+  | 'salon-info'
 
 const NAV_ITEMS: {
   key: NavKey
@@ -41,6 +42,7 @@ const NAV_ITEMS: {
   { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価', group: 'review' },
   { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
+  { key: 'salon-info', href: '/settings/salon-info', icon: 'fa-shop', label: 'サロン情報', group: 'settings' },
   { key: 'auto-update', href: '/settings/auto-update', icon: 'fa-clock', label: '自動更新設定', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' },
   { key: 'settings-account', href: '/settings/account', icon: 'fa-user-gear', label: 'アカウント設定', group: 'settings' }
