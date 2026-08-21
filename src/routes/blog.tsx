@@ -1002,10 +1002,13 @@ blog.get('/blog/article/:id/image', async (c) => {
   })
 })
 
+// 2026-08-21追記(ユーザー指定): 本文の文字数上限はフッター込みで950文字
+// (SALON BOARD側の実際の上限1000文字より少し余裕を持たせた値)。この関数は
+// AI生成が使う「本文だけの」上限なので、950からフッター分の文字数を引く。
 async function computeBodyMaxChars(c: AppContext, user: AppUser): Promise<number> {
   const [profile, salon] = await Promise.all([getSalonProfile(c, user), getSalonForProfile(c, user)])
   const footerText = buildFooterText(salon?.salon_name || null, profile)
-  return Math.max(300, 1000 - footerText.length)
+  return Math.max(300, 950 - footerText.length)
 }
 
 async function generateOneArticle(
@@ -1151,17 +1154,21 @@ function ArticleForm({
 
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-4">
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
+            <label id="article-title-label" class="block text-sm font-medium text-gray-700 mb-1">タイトル</label>
             <input
               type="text"
               name="title"
+              id="article-title-input"
               value={detail?.title || ''}
               maxlength={25}
               class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
             />
           </div>
           <div>
-            <label class="block text-sm font-medium text-gray-700 mb-1">本文</label>
+            <div class="flex items-center justify-between mb-1">
+              <label id="article-body-label" class="block text-sm font-medium text-gray-700">本文</label>
+              <span id="article-body-charcount" class="text-xs text-gray-400"></span>
+            </div>
             <textarea name="body" id="article-body-textarea" rows={10} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
               {initialBody}
             </textarea>
@@ -1178,8 +1185,8 @@ function ArticleForm({
           </div>
           <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">カテゴリ（HPBブログカテゴリ）</label>
-              <select name="hpb_category_value" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <label id="article-category-label" class="block text-sm font-medium text-gray-700 mb-1">カテゴリ（HPBブログカテゴリ）</label>
+              <select name="hpb_category_value" id="article-category-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {HPB_BLOG_CATEGORY_OPTIONS.map((opt) => (
                   <option value={opt} selected={selectedCategoryHpbValue === opt}>{opt}</option>
@@ -1248,16 +1255,21 @@ function ArticleForm({
           </div>
         </div>
 
-        <div class="flex items-center gap-3">
-          <button
-            type="submit"
-            class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm"
-          >
-            {submitLabel}
-          </button>
-          <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
-            一覧に戻る
-          </a>
+        <div>
+          <p id="article-required-error" class="hidden text-sm text-red-600 mb-2">必須項目が設定されていません</p>
+          <p id="article-charlimit-error" class="hidden text-sm text-red-600 mb-2">文字数制限(950文字)を超えています。</p>
+          <div class="flex items-center gap-3">
+            <button
+              type="submit"
+              id="article-submit-btn"
+              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {submitLabel}
+            </button>
+            <a href="/blog/articles" class="text-sm text-gray-500 hover:underline">
+              一覧に戻る
+            </a>
+          </div>
         </div>
       </form>
     </div>
