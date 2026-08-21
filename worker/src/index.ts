@@ -413,6 +413,7 @@ type ReviewReplyJobPayload = {
   targetStoreId?: string | null
   managementNo: string
   replyContent: string
+  replyFrom?: string | null
 }
 
 type ReviewReplyJobStep = 'login' | 'navigate' | 'input' | 'confirm' | 'done'
@@ -454,7 +455,11 @@ async function runReviewReplyJob(
   const candidates = (payload.proxySessionCandidates || []).slice(0, 5)
   const loginAttempts: LoginAttempt[] = []
 
-  const replyInput: PostReviewReplyInput = { managementNo: payload.managementNo, replyContent: payload.replyContent }
+  const replyInput: PostReviewReplyInput = {
+    managementNo: payload.managementNo,
+    replyContent: payload.replyContent,
+    replyFrom: payload.replyFrom
+  }
   const styleLikePayload = { loginId: payload.loginId, password: payload.password, targetStoreId: payload.targetStoreId }
 
   let attempt = await attemptLogin(styleLikePayload, log, candidates[0])

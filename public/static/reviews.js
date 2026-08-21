@@ -348,8 +348,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (sendBtn) {
         const reviewId = sendBtn.dataset.reviewId
         const textarea = listContainer.querySelector(`.review-reply-textarea[data-review-id="${reviewId}"]`)
+        const fromInput = listContainer.querySelector(`.review-reply-from-input[data-review-id="${reviewId}"]`)
         const statusEl = listContainer.querySelector(`.review-reply-status[data-review-id="${reviewId}"]`)
         const replyContent = textarea ? textarea.value.trim() : ''
+        const replyFrom = fromInput ? fromInput.value.trim() : ''
         if (!replyContent) {
           if (statusEl) statusEl.textContent = '返信文を入力してください'
           return
@@ -361,7 +363,7 @@ document.addEventListener('DOMContentLoaded', () => {
           const res = await fetch(`/api/reviews/${reviewId}/send-reply`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ replyContent })
+            body: JSON.stringify({ replyContent, replyFrom })
           })
           const data = await res.json()
           if (!data.success) {

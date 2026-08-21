@@ -1106,6 +1106,15 @@ const bindings: Bindings = {
   } catch (err) {
     console.error('起動時マイグレーション(サロン情報機能・クーポン)に失敗しました:', err)
   }
+  try {
+    // 2026-08-22追記(ユーザー指定): 口コミ返信フォームに「返信者」欄
+    // (SALON BOARD側のreplyFrom、HOT PEPPER Beauty上には非表示の内部メモ欄)
+    // を追加し、口コミの担当スタイリスト名を自動で入れられるようにする。
+    // 実際に投稿した値をジョブ単位で記録する。
+    await bindings.DB.prepare(`ALTER TABLE review_reply_jobs ADD COLUMN IF NOT EXISTS reply_from TEXT`).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(口コミ返信・返信者欄)に失敗しました:', err)
+  }
 })().then(() => {
   // 起動時マイグレーション(compressed_at列の追加を含む)完了後、非同期・
   // 非ブロッキングで未圧縮の既存スタイル画像を一度だけ再圧縮する。
