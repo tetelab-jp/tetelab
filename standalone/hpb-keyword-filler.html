@@ -1372,18 +1372,29 @@ function renderResults(){
     acts.appendChild(b3);
 
     var b4 = document.createElement("button");
-    b4.className = "btn primary"; b4.textContent = "xlsxで書き出す";
-    b4.title = S.zipEntries
-      ? "取り込んだxlsxの該当セルだけ差し替えて保存します。書式・結合・列幅・他シートはそのままです。"
-      : "取り込んだ表と同じ配置のxlsxを作って保存します。";
-    b4.addEventListener("click", exportXlsx);
+    b4.className = "btn primary";
+    if(IN_FRAME){
+      b4.textContent = "CSVで保存";
+      b4.title = "この画面ではxlsxを保存できないため、同じ配置のCSVで保存します。";
+      b4.addEventListener("click", saveCsvViaHost);
+    } else {
+      b4.textContent = "xlsxで書き出す";
+      b4.title = S.zipEntries
+        ? "取り込んだxlsxの該当セルだけ差し替えて保存します。書式・結合・列幅・他シートはそのままです。"
+        : "取り込んだ表と同じ配置のxlsxを作って保存します。";
+      b4.addEventListener("click", exportXlsx);
+    }
     acts.appendChild(b4);
   }
   var note = document.createElement("span");
   note.className = "hint";
-  note.textContent = S.zipEntries
-    ? "xlsxは元ファイルの該当セルだけを差し替えて書き出します（書式・結合・列幅・数式はそのまま）。"
-    : "貼り付け先のセルを選んでから貼り付けてください。";
+  if(IN_FRAME){
+    note.textContent = "xlsxで書き出すには、このページのHTMLをパソコンに保存して開いてください（元ファイルの書式のまま差し替えられます）。";
+  } else {
+    note.textContent = S.zipEntries
+      ? "xlsxは元ファイルの該当セルだけを差し替えて書き出します（書式・結合・列幅・数式はそのまま）。"
+      : "貼り付け先のセルを選んでから貼り付けてください。";
+  }
   acts.appendChild(note);
 }
 function tsvCell(v){
@@ -1608,12 +1619,63 @@ async function buildXlsxFromGrid(){
   return makeZip(entries);
 }
 
-function outputName(){
+/* 埋め込み表示(claude.ai のアーティファクト)では、ページ自身のダウンロードが
+   止められる代わりに downloads capability が使える。ただし保存できる拡張子に
+   xlsx は含まれないため、その場合はCSVで保存する。 */
+var DOWNLOADS = null;
+async function getDownloads(){
+  if(DOWNLOADS) return DOWNLOADS;
+  try{
+    if(window.claude && typeof window.claude.use === "function"){
+      DOWNLOADS = await window.claude.use("downloads");
+    }
+  }catch(e){ DOWNLOADS = null; }
+  return DOWNLOADS;
+}
+getDownloads();
+
+function csvCell(v){
+  var t = String(v == null ? "" : v);
+  return /[",\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+function exportCsvText(){
+  var g = resultGrid(), width = 0;
+  g.forEach(function(row){ width = Math.max(width, (row || []).length); });
+  return "\uFEFF" + g.map(function(row){
+    var cells = [];
+    for(var i=0;i<width;i++) cells.push(csvCell((row || [])[i] || ""));
+    return cells.join(",");
+  }).join("\r\n");
+}
+async function saveCsvViaHost(){
+  if(!S.results.length){ toast("先に「一括で埋める」を実行してください"); return; }
+  var dl = await getDownloads();
+  if(!dl){ openModal("nodl"); return; }
+  try{
+    await dl.save({filename: outputBase() + "_filled.csv", data: exportCsvText()});
+    toast("保存しました");
+  }catch(err){
+    var code = err && err.code;
+    if(code === "declined") return;
+    if(code === "extension_not_enabled" || code === "rejected_extension"){
+      toast("この画面ではCSVを保存できません。表としてコピーしてください");
+    } else if(code === "too_large"){
+      toast("データが大きすぎて保存できません");
+    } else if(code === "rate_limited"){
+      toast("少し待ってからもう一度お試しください");
+    } else {
+      toast("保存できませんでした。表としてコピーしてください");
+    }
+    openModal("nodl");
+  }
+}
+
+function outputBase(){
   /* 一部の環境では非ASCIIのファイル名がブラウザ側で落とされるため、
      付け足す接尾辞はASCIIにしておく（元のファイル名はそのまま残す）。 */
-  var base = (S.fileName || "keyword-filler").replace(/\.(xlsx|csv|tsv|txt)$/i, "");
-  return base + "_filled.xlsx";
+  return (S.fileName || "keyword-filler").replace(/\.(xlsx|csv|tsv|txt)$/i, "");
 }
+function outputName(){ return outputBase() + "_filled.xlsx"; }
 async function exportXlsx(){
   if(!S.results.length){ toast("先に「一括で埋める」を実行してください"); return; }
   if(IN_FRAME){
@@ -1662,9 +1724,9 @@ function openModal(mode){
   modalMode = mode;
   if(mode === "nodl"){
     $("modalTitle").textContent = "この画面ではxlsxを保存できません";
-    $("modalHint").textContent = "ブラウザの制限で、埋め込み表示の中からはファイルのダウンロードが行えません。"
-      + "このページのHTMLをパソコンに保存して直接開くと、xlsxの書き出しが使えます。"
-      + "この画面のままなら「元の表の形のままコピー（TSV）」でスプレッドシートに貼り戻せます。";
+    $("modalHint").textContent = "埋め込み表示から保存できるファイル形式にxlsxが含まれていません。"
+      + "このページのHTMLをパソコンに保存して直接開けば、元ファイルの書式のままxlsxで書き出せます。"
+      + "この画面のままなら、下の内容をスプレッドシートに貼り付けても同じ結果になります。";
     $("modalAction").textContent = "元の表の形のままコピー";
     $("modalText").value = exportGrid();
     $("modalBg").classList.add("show");
