@@ -1728,6 +1728,8 @@ export async function fetchReviewList(
 export type PostReviewReplyInput = {
   managementNo: string
   replyContent: string
+  /** 返信者(SALON BOARD側のreplyFrom、HOT PEPPER Beauty上には非表示の内部メモ欄)。任意。 */
+  replyFrom?: string | null
 }
 
 export async function postReviewReply(page: Page, input: PostReviewReplyInput, log: AutomationLogger): Promise<void> {
@@ -1755,6 +1757,16 @@ export async function postReviewReply(page: Page, input: PostReviewReplyInput, l
   }, input.replyContent)
   if (!filled) {
     throw new Error(`返信本文の入力欄(replyContents)が見つかりませんでした(管理番号=${input.managementNo})`)
+  }
+
+  if (input.replyFrom) {
+    await page.evaluate((text: string) => {
+      const el = document.querySelector('#replySend input[name="replyFrom"]') as HTMLInputElement | null
+      if (!el) return
+      el.value = text
+      el.dispatchEvent(new Event('input', { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }, input.replyFrom)
   }
   log('返信入力欄への入力が完了しました')
 

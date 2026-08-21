@@ -449,6 +449,19 @@ reviews.get('/reviews/list', async (c) => {
                           </button>
                         </div>
                       </div>
+                      <div>
+                        <p class="text-xs font-semibold text-gray-400 mb-1">
+                          返信者<span class="font-normal">(HOT PEPPER Beauty上には表示されません。空欄でも投稿できます)</span>
+                        </p>
+                        <input
+                          type="text"
+                          class="review-reply-from-input w-full border border-gray-200 rounded-lg p-2 text-sm"
+                          maxlength={20}
+                          placeholder="例: オーナー"
+                          value={r.stylist_name_raw || ''}
+                          data-review-id={r.id}
+                        />
+                      </div>
                       <textarea
                         class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
                         rows={4}
@@ -586,6 +599,19 @@ reviews.get('/reviews/replied', async (c) => {
                           </button>
                         </div>
                       </div>
+                      <div>
+                        <p class="text-xs font-semibold text-gray-400 mb-1">
+                          返信者<span class="font-normal">(HOT PEPPER Beauty上には表示されません。空欄でも投稿できます)</span>
+                        </p>
+                        <input
+                          type="text"
+                          class="review-reply-from-input w-full border border-gray-200 rounded-lg p-2 text-sm"
+                          maxlength={20}
+                          placeholder="例: オーナー"
+                          value={r.stylist_name_raw || ''}
+                          data-review-id={r.id}
+                        />
+                      </div>
                       <textarea
                         class="review-reply-textarea w-full border border-gray-200 rounded-lg p-3 text-sm"
                         rows={4}
@@ -706,13 +732,15 @@ reviews.post('/api/reviews/:id/generate-reply', async (c) => {
 reviews.post('/api/reviews/:id/send-reply', async (c) => {
   const user = c.get('user')
   const reviewId = Number(c.req.param('id'))
-  const { replyContent } = await c.req.json<{ replyContent: string }>().catch(() => ({ replyContent: '' }))
+  const { replyContent, replyFrom } = await c.req
+    .json<{ replyContent: string; replyFrom?: string }>()
+    .catch(() => ({ replyContent: '', replyFrom: '' }))
   if (!replyContent || !replyContent.trim()) {
     return c.json({ success: false, error: '返信文を入力してください' }, 400)
   }
 
   try {
-    await dispatchManualReviewReply(c.env, user.id, user.active_salon_id, reviewId, replyContent)
+    await dispatchManualReviewReply(c.env, user.id, user.active_salon_id, reviewId, replyContent, replyFrom || null)
     return c.json({ success: true })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err).slice(0, 500) }, 400)

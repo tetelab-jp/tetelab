@@ -1313,7 +1313,7 @@ automation.get('/api/review-reply-automation/jobs/:id', async (c) => {
   const authHeader = c.req.header('Authorization') || ''
 
   const job = await c.env.DB.prepare(
-    `SELECT id, review_id, user_id, salon_id, job_token, reply_content, status FROM review_reply_jobs WHERE id = ?`
+    `SELECT id, review_id, user_id, salon_id, job_token, reply_content, reply_from, status FROM review_reply_jobs WHERE id = ?`
   )
     .bind(jobId)
     .first<{
@@ -1323,6 +1323,7 @@ automation.get('/api/review-reply-automation/jobs/:id', async (c) => {
       salon_id: number | null
       job_token: string
       reply_content: string
+      reply_from: string | null
       status: string
     }>()
 
@@ -1385,7 +1386,8 @@ automation.get('/api/review-reply-automation/jobs/:id', async (c) => {
     proxySessionCandidates,
     targetStoreId,
     managementNo: review.salonboard_review_key,
-    replyContent: job.reply_content
+    replyContent: job.reply_content,
+    replyFrom: job.reply_from
   })
 })
 

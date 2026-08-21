@@ -216,7 +216,8 @@ async function dispatchReviewReplyJob(
   salonId: number | null,
   reviewId: number,
   replyContent: string,
-  trigger: 'auto' | 'manual'
+  trigger: 'auto' | 'manual',
+  replyFrom: string | null
 ): Promise<number> {
   if (!env.APP_BASE_URL) throw new Error('APP_BASE_URLが未設定です')
   if (!env.AWS_REGION) throw new Error('AWS_REGIONが未設定です')
@@ -232,10 +233,10 @@ async function dispatchReviewReplyJob(
 
   const jobToken = randomJobToken()
   const jobInsert = await env.DB.prepare(
-    `INSERT INTO review_reply_jobs (review_id, user_id, salon_id, job_token, trigger, reply_content, status)
-     VALUES (?, ?, ?, ?, ?, ?, 'pending')`
+    `INSERT INTO review_reply_jobs (review_id, user_id, salon_id, job_token, trigger, reply_content, reply_from, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')`
   )
-    .bind(reviewId, userId, salonId, jobToken, trigger, replyContent)
+    .bind(reviewId, userId, salonId, jobToken, trigger, replyContent, replyFrom)
     .run()
   const jobId = Number(jobInsert.meta.last_row_id)
 
@@ -328,7 +329,9 @@ async function dispatchNextReviewReply(
   try {
     const replyContent = await generateReviewReply(env, reviewInput, profile, pastReplies)
     if (!replyContent) throw new Error('AI返信文の生成結果が空でした')
-    const jobId = await dispatchReviewReplyJob(env, userId, salonId, review.id, replyContent, 'auto')
+    // 2026-08-22追記(ユーザー指定): 返信者欄(SALON BOARD側replyFrom)に
+    // 口コミの担当スタイリスト名を自動で入れる(自動返信バッチでも同様)。
+    const jobId = await dispatchReviewReplyJob(env, userId, salonId, review.id, replyContent, 'auto', review.stylist_name_raw)
     return { dispatched: true, jobId, reviewId: review.id }
   } catch (err: any) {
     await updateReviewReplyConsecutiveFailureAndNotify(env, userId, salonId, false)
@@ -383,7 +386,8 @@ export async function dispatchManualReviewReply(
   userId: number,
   salonId: number | null,
   reviewId: number,
-  replyContent: string
+  replyContent: string,
+  replyFrom: string | null
 ): Promise<number> {
   await requireCredentialsConfigured(env, userId)
   if (await hasInFlightReplyJob(env, salonId)) {
@@ -401,7 +405,7 @@ export async function dispatchManualReviewReply(
   const trimmed = replyContent.trim()
   if (!trimmed) throw new Error('返信文が空です')
 
-  return dispatchReviewReplyJob(env, userId, salonId, reviewId, trimmed, 'manual')
+  return dispatchReviewReplyJob(env, userId, salonId, reviewId, trimmed, 'manual', replyFrom?.trim() || null)
 }
 
 type StaleReviewReplyJobRow = { id: number; review_id: number; user_id: number; salon_id: number | null; ecs_task_arn: string | null }
