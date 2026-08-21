@@ -1204,8 +1204,8 @@ function ArticleForm({
               </select>
             </div>
             <div>
-              <label class="block text-sm font-medium text-gray-700 mb-1">投稿者</label>
-              <select name="stylist_id" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
+              <label id="article-stylist-label" class="block text-sm font-medium text-gray-700 mb-1">投稿者</label>
+              <select name="stylist_id" id="article-stylist-select" class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
                 <option value="">選択しない</option>
                 {stylists.map((st) => (
                   <option value={st.id} selected={detail?.stylist_id === st.id}>{st.name}</option>
