@@ -157,13 +157,21 @@ export async function processReviewSyncResult(
     // 返信投稿(automation.tsxのジョブ結果コールバック)でのみセットしていたため、
     // サロン担当者がSALON BOARD/HPBへ直接返信した口コミはreplied_atが永遠にNULLの
     // ままとなり、「未返信」一覧(reviews.tsx)に返信済みの口コミが残り続けていた。
-    // HPB公開ページには既にsalonReplyContent(サロン返信文)が取得できているため、
-    // これが存在する時点でreplied_atも合わせて確定させる。ただし既にreplied_atが
+    // 判定材料は2つ:
+    //   (1) SALON BOARD口コミ一覧の返信列(実HTML確認済み: <a class="mod_btn_henshinzumi">
+    //       返信済</a> / <a class="mod_btn_mihenshin">未返信</a>)。reply_statusとして
+    //       既に取得済みで、HPB側のマッチング可否に関わらず全行で判定できる、最も
+    //       直接的な情報源。
+    //   (2) HPB公開ページのsalonReplyContent(サロン返信文)。HPB側に掲載されるまでの
+    //       審査期間があるため(1)より遅れて反映される場合があるが、実際の返信文まで
+    //       取得できる。
+    // どちらか一方でも「返信済」を示せばreplied_atを確定させる。ただし既にreplied_atが
     // 記録済みの行(自アプリ経由の返信含む)は、再同期のたびに上書きしないよう
-    // 「まだreplied_atが無い行に限り、今回HPBで返信を検知したら初めて記録する」
-    // という条件をON CONFLICT側でも保つ(reviews.replied_at IS NULL AND
-    // EXCLUDED.replied_at IS NOT NULLの場合のみ反映)。
-    const externallyRepliedAt = hpb?.salonReplyContent ? new Date().toISOString() : null
+    // 「まだreplied_atが無い行に限り、今回返信済を検知したら初めて記録する」という
+    // 条件をON CONFLICT側でも保つ(reviews.replied_at IS NULL AND EXCLUDED.replied_at
+    // IS NOT NULLの場合のみ反映)。
+    const repliedOnSalonBoard = (r.replyStatus || '').includes('返信済')
+    const externallyRepliedAt = repliedOnSalonBoard || hpb?.salonReplyContent ? new Date().toISOString() : null
 
     await env.DB.prepare(
       `INSERT INTO reviews (
