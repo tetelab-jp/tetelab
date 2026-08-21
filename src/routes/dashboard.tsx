@@ -1061,7 +1061,7 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
                 <span class="text-sm font-medium text-gray-700">
-                  自動返信を有効にする（HPB掲載済み・星4以上の口コミにAIが返信文を作成し自動投稿。星3以下は「口コミ一覧」から手動またはAI生成→手動投稿）
+                  自動返信を有効にする（HPB掲載済み・星4以上の口コミにAIが返信文を作成し自動投稿。星3以下は「未返信口コミ」から手動またはAI生成→手動投稿）
                 </span>
               </label>
             </form>
