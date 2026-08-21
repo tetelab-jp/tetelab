@@ -231,6 +231,17 @@ type StyleListRow = {
   front_style_image_id: number | null
 }
 
+// 2026-08-21追記: 登録済みスタイル(自動スタイル投稿の対象)は
+// サロンあたり300件までに制限する(要望対応)。
+const MAX_REGISTERED_STYLES = 300
+
+async function countRegisteredStyles(c: AppContext, userId: number, salonId: number | null): Promise<number> {
+  const row = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ?')
+    .bind(userId, salonId)
+    .first<{ cnt: number }>()
+  return row?.cnt ?? 0
+}
+
 async function loadStyleListForUser(c: AppContext, user: AppUser): Promise<StyleListRow[]> {
   const { results } = await c.env.DB.prepare(
     `SELECT
@@ -551,7 +562,7 @@ style.get('/style/import', async (c) => {
       isImpersonated={user.is_impersonated === 1}
       active="style-import"
       salonName={user.salon_name}
-      title="既存スタイルの取り込み"
+      title="HPBからスタイルを取り込む"
       blogEnabled={user.blog_enabled !== 0}
     >
       {!cred && (
@@ -643,7 +654,7 @@ style.get('/style/import', async (c) => {
 
       <script src="/static/style-import.js"></script>
     </PageLayout>,
-    { title: '既存スタイルの取り込み' }
+    { title: 'HPBからスタイルを取り込む' }
   )
 })
 
@@ -751,6 +762,18 @@ style.post('/api/style/import/execute', async (c) => {
     return c.json({ success: false, error: '取り込むスタイルを選択してください' }, 400)
   }
 
+  const currentCount = await countRegisteredStyles(c, user.id, user.active_salon_id)
+  if (currentCount + styleIds.length > MAX_REGISTERED_STYLES) {
+    const remaining = Math.max(0, MAX_REGISTERED_STYLES - currentCount)
+    return c.json(
+      {
+        success: false,
+        error: `登録できるスタイルは${MAX_REGISTERED_STYLES}件までです。あと${remaining}件まで取り込めます。選択数を減らしてください。`
+      },
+      400
+    )
+  }
+
   const cred = await c.env.DB.prepare(
     'SELECT salonboard_login_id_enc, salonboard_password_enc, target_store_id FROM salon_credentials WHERE user_id = ?'
   )
@@ -847,7 +870,8 @@ function StyleForm({
   stylists,
   coupons,
   templates,
-  imageError
+  imageError,
+  limitError
 }: {
   mode: 'new' | 'edit'
   detail: StyleDetailRow | null
@@ -855,6 +879,7 @@ function StyleForm({
   coupons: { id: number; name: string }[]
   templates: TemplateForAutofill[]
   imageError?: boolean
+  limitError?: boolean
 }) {
   const category = detail?.category_value || 'SG01'
   const menuCodes: string[] = detail ? JSON.parse(detail.menu_values_json || '[]') : []
@@ -874,6 +899,12 @@ function StyleForm({
         <div class="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
           <i class="fas fa-circle-exclamation mr-2"></i>
           画像の処理に失敗しました。別の画像でもう一度お試しください。
+        </div>
+      )}
+      {limitError && (
+        <div class="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          登録できるスタイルは{MAX_REGISTERED_STYLES}件までです。これ以上追加するには、不要なスタイルを削除してください。
         </div>
       )}
       {mode === 'new' && templates.length > 0 && (
@@ -1087,7 +1118,14 @@ style.get('/style/new', async (c) => {
       title="スタイル新規作成"
       blogEnabled={user.blog_enabled !== 0}
     >
-      <StyleForm mode="new" detail={null} stylists={stylists} coupons={coupons} templates={templates} />
+      <StyleForm
+        mode="new"
+        detail={null}
+        stylists={stylists}
+        coupons={coupons}
+        templates={templates}
+        limitError={c.req.query('limitError') === '1'}
+      />
     </PageLayout>,
     { title: 'スタイル新規作成' }
   )
@@ -1182,6 +1220,12 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
 
 style.post('/style/new', async (c) => {
   const user = c.get('user')
+
+  const currentCount = await countRegisteredStyles(c, user.id, user.active_salon_id)
+  if (currentCount >= MAX_REGISTERED_STYLES) {
+    return c.redirect('/style/new?limitError=1')
+  }
+
   const body = await c.req.parseBody()
   const parsed = parseStyleForm(body)
 

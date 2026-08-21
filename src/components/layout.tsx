@@ -29,14 +29,14 @@ const NAV_ITEMS: {
 }[] = [
   { key: 'dashboard', href: '/dashboard', icon: 'fa-gauge-high', label: 'ダッシュボード', group: 'main' },
   { key: 'style-library', href: '/style/library', icon: 'fa-images', label: '登録スタイル', group: 'style' },
-  { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: '既存スタイル取り込み', group: 'style' },
+  { key: 'style-import', href: '/style/import', icon: 'fa-cloud-arrow-down', label: 'HPBからスタイルを取り込む', group: 'style' },
   { key: 'style-template', href: '/style/template', icon: 'fa-sliders', label: 'テンプレート作成・適用', group: 'style' },
-  { key: 'blog-articles', href: '/blog/articles', icon: 'fa-newspaper', label: '投稿記事一覧', group: 'blog' },
+  { key: 'blog-articles', href: '/blog/articles', icon: 'fa-newspaper', label: '登録ブログ', group: 'blog' },
   { key: 'blog-generate', href: '/blog/generate', icon: 'fa-robot', label: 'AI記事生成', group: 'blog' },
   { key: 'blog-template', href: '/blog/template', icon: 'fa-wand-magic-sparkles', label: '生成テンプレート', group: 'blog' },
-  { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: '既存ブログの読み込み', group: 'blog' },
+  { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'HPBからブログを取り込む', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
-  { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: '順位測定', group: 'ranking' },
+  { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: 'エリア順位測定', group: 'ranking' },
   { key: 'review-list', href: '/reviews/list', icon: 'fa-comments', label: '口コミ返信', group: 'review' },
   { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価', group: 'review' },
   { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
@@ -50,8 +50,8 @@ const NAV_GROUPS: { title: string; key: 'main' | 'style' | 'blog' | 'settings' |
   { title: '', key: 'main' },
   { title: 'スタイル投稿', key: 'style' },
   { title: 'ブログ投稿', key: 'blog' },
-  { title: 'SEO', key: 'ranking' },
   { title: '口コミ管理', key: 'review' },
+  { title: 'SEO', key: 'ranking' },
   { title: '設定・確認', key: 'settings' }
 ]
 
@@ -177,14 +177,14 @@ function MobileNavPanel({
       <div class="p-4">
         <div id="salon-switcher-area-mobile" class="mb-2"></div>
         <div class="space-y-4">
-          {NAV_GROUPS.filter((group) => group.key !== 'main').map((group) => {
+          {NAV_GROUPS.map((group) => {
             const items = NAV_ITEMS.filter(
               (item) => item.group === group.key && isNavItemVisible(item, styleEnabled, blogEnabled, seoEnabled, reviewEnabled, isImpersonated)
             )
             if (items.length === 0 && group.key !== 'settings') return null
             return (
               <div>
-                <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>
+                {group.title && <p class="text-[11px] font-semibold text-gray-400 px-2 mb-1">{group.title}</p>}
                 <nav class="space-y-1">
                   {items.map((item) => (
                     <a
