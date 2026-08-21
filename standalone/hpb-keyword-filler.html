@@ -519,6 +519,10 @@ var S = {
   rows:[],
   results:[],
   grid:null,
+  sheet:null,
+  sheets:null,
+  zipEntries:null,
+  fileName:"",
   theme:"auto",
   candidates:[],
   candShown:8
@@ -910,7 +914,9 @@ function runFill(){
 /* xlsx は ZIP。ブラウザの DecompressionStream('deflate-raw') で展開して XML を読む。 */
 var WANTED = /^xl\/(worksheets\/sheet[0-9]+\.xml|sharedStrings\.xml|workbook\.xml|_rels\/workbook\.xml\.rels)$/;
 
-async function unzipXml(buf){
+/* ZIPの全エントリを圧縮されたまま保持する。書き出すときは触っていないエントリの
+   バイト列をそのまま詰め直すので、書式・結合・列幅・画像などが完全に残る。 */
+function readZipEntries(buf){
   var u8 = new Uint8Array(buf), dv = new DataView(buf);
   var eocd = -1, min = Math.max(0, u8.length - 66000);
   for(var i = u8.length - 22; i >= min; i--){
@@ -920,35 +926,93 @@ async function unzipXml(buf){
   var total = dv.getUint16(eocd + 10, true);
   var off = dv.getUint32(eocd + 16, true);
   var dec = new TextDecoder("utf-8");
-  var files = {}, jobs = [];
+  var entries = [];
   for(var n = 0; n < total; n++){
     if(off + 46 > u8.length || dv.getUint32(off, true) !== 0x02014b50) break;
     var method = dv.getUint16(off + 10, true);
+    var crc = dv.getUint32(off + 16, true);
     var compSize = dv.getUint32(off + 20, true);
+    var rawSize = dv.getUint32(off + 24, true);
     var nameLen = dv.getUint16(off + 28, true);
     var extraLen = dv.getUint16(off + 30, true);
     var cmtLen = dv.getUint16(off + 32, true);
     var localOff = dv.getUint32(off + 42, true);
     var name = dec.decode(u8.subarray(off + 46, off + 46 + nameLen));
     off += 46 + nameLen + extraLen + cmtLen;
-    if(!WANTED.test(name)) continue;
     var lNameLen = dv.getUint16(localOff + 26, true);
     var lExtraLen = dv.getUint16(localOff + 28, true);
-    var start = localOff + 30 + lNameLen + lExtraLen;
-    var data = u8.subarray(start, start + compSize);
-    jobs.push(inflate(name, data, method, files));
+    var dataStart = localOff + 30 + lNameLen + lExtraLen;
+    entries.push({
+      name: name, method: method, crc: crc, compSize: compSize, rawSize: rawSize,
+      data: u8.slice(dataStart, dataStart + compSize)
+    });
   }
-  await Promise.all(jobs);
-  return files;
+  return entries;
 }
-async function inflate(name, data, method, files){
-  if(method === 0){ files[name] = new TextDecoder("utf-8").decode(data); return; }
-  if(method !== 8) return;
+async function inflateText(entry){
+  if(entry.method === 0) return new TextDecoder("utf-8").decode(entry.data);
+  if(entry.method !== 8) return "";
   if(typeof DecompressionStream === "undefined"){
     throw new Error("このブラウザではxlsxを展開できません。CSVか貼り付けをお使いください");
   }
-  var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  files[name] = await new Response(stream).text();
+  var stream = new Blob([entry.data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  return await new Response(stream).text();
+}
+
+var CRC_TABLE = (function(){
+  var t = new Uint32Array(256);
+  for(var n=0;n<256;n++){
+    var c = n;
+    for(var k=0;k<8;k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+function crc32(u8){
+  var c = 0xFFFFFFFF;
+  for(var i=0;i<u8.length;i++) c = CRC_TABLE[(c ^ u8[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+async function packBytes(raw){
+  if(typeof CompressionStream === "undefined") return {method: 0, data: raw};
+  var stream = new Blob([raw]).stream().pipeThrough(new CompressionStream("deflate-raw"));
+  return {method: 8, data: new Uint8Array(await new Response(stream).arrayBuffer())};
+}
+function makeZip(entries){
+  var enc = new TextEncoder();
+  var locals = [], centrals = [], offset = 0;
+  entries.forEach(function(e){
+    var nameBytes = enc.encode(e.name);
+    var lh = new Uint8Array(30 + nameBytes.length), lv = new DataView(lh.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true); lv.setUint16(6, 0x0800, true); lv.setUint16(8, e.method, true);
+    lv.setUint16(10, 0, true); lv.setUint16(12, 0x21, true);
+    lv.setUint32(14, e.crc, true); lv.setUint32(18, e.compSize, true); lv.setUint32(22, e.rawSize, true);
+    lv.setUint16(26, nameBytes.length, true); lv.setUint16(28, 0, true);
+    lh.set(nameBytes, 30);
+    locals.push(lh, e.data);
+
+    var ch = new Uint8Array(46 + nameBytes.length), cv = new DataView(ch.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true); cv.setUint16(6, 20, true); cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, e.method, true); cv.setUint16(12, 0, true); cv.setUint16(14, 0x21, true);
+    cv.setUint32(16, e.crc, true); cv.setUint32(20, e.compSize, true); cv.setUint32(24, e.rawSize, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint32(42, offset, true);
+    ch.set(nameBytes, 46);
+    centrals.push(ch);
+    offset += lh.length + e.data.length;
+  });
+  var cdSize = centrals.reduce(function(a, b){ return a + b.length; }, 0);
+  var eocd = new Uint8Array(22), ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, entries.length, true); ev.setUint16(10, entries.length, true);
+  ev.setUint32(12, cdSize, true); ev.setUint32(16, offset, true);
+  var all = locals.concat(centrals, [eocd]);
+  var size = all.reduce(function(a, b){ return a + b.length; }, 0);
+  var out = new Uint8Array(size), pos = 0;
+  all.forEach(function(part){ out.set(part, pos); pos += part.length; });
+  return out;
 }
 
 function xmlDoc(text){ return new DOMParser().parseFromString(text, "application/xml"); }
@@ -1306,25 +1370,38 @@ function renderResults(){
     b3.title = "取り込んだ表の本文セルだけ置き換えて書き出します。スプレッドシートに貼り戻せます。";
     b3.addEventListener("click", function(){ copyText(exportGrid()); });
     acts.appendChild(b3);
+
+    var b4 = document.createElement("button");
+    b4.className = "btn primary"; b4.textContent = "xlsxで書き出す";
+    b4.title = S.zipEntries
+      ? "取り込んだxlsxの該当セルだけ差し替えて保存します。書式・結合・列幅・他シートはそのままです。"
+      : "取り込んだ表と同じ配置のxlsxを作って保存します。";
+    b4.addEventListener("click", exportXlsx);
+    acts.appendChild(b4);
   }
   var note = document.createElement("span");
   note.className = "hint";
-  note.textContent = "貼り付け先のセルを選んでから貼り付けてください。";
+  note.textContent = S.zipEntries
+    ? "xlsxは元ファイルの該当セルだけを差し替えて書き出します（書式・結合・列幅・数式はそのまま）。"
+    : "貼り付け先のセルを選んでから貼り付けてください。";
   acts.appendChild(note);
 }
 function tsvCell(v){
   var s = String(v == null ? "" : v);
   return /[\t\n"]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
-function exportGrid(){
-  var g = S.grid.map(function(row){ return (row || []).slice(); });
+function resultGrid(){
+  var g = (S.grid || []).map(function(row){ return (row || []).slice(); });
   S.results.forEach(function(res){
     var r = res.row.row, c = res.row.col;
     if(r == null || c == null) return;
     if(!g[r]) g[r] = [];
     g[r][c] = res.text;
   });
-  var width = 0;
+  return g;
+}
+function exportGrid(){
+  var g = resultGrid(), width = 0;
   g.forEach(function(row){ width = Math.max(width, (row || []).length); });
   return g.map(function(row){
     var cells = [];
@@ -1333,8 +1410,9 @@ function exportGrid(){
   }).join("\n");
 }
 
-function loadGrid(grid, sourceNote){
+function loadGrid(grid, sourceNote, sheet){
   S.grid = grid;
+  S.sheet = sheet || null;   /* xlsx由来のときだけ入る（書き戻し先） */
   S.rows = extractRows(grid);
   S.results = [];
   $("batchNote").textContent = "";
@@ -1343,34 +1421,216 @@ function loadGrid(grid, sourceNote){
     : "「最大◯文字」の記載が見つかりませんでした。ルール表の項目名でも探しましたが該当なしです");
   renderRows(); renderResults();
 }
-
 async function importFile(file){
   if(!file) return;
   $("importNote").textContent = "読み込み中…";
   try{
+    S.fileName = file.name;
     if(/\.xlsx$/i.test(file.name)){
-      var files = await unzipXml(await file.arrayBuffer());
+      var entries = readZipEntries(await file.arrayBuffer());
+      var files = {};
+      for(var i=0;i<entries.length;i++){
+        if(WANTED.test(entries[i].name)) files[entries[i].name] = await inflateText(entries[i]);
+      }
       var shared = parseShared(files["xl/sharedStrings.xml"]);
       var sheets = listSheets(files);
       if(!sheets.length) throw new Error("シートが見つかりませんでした");
-      S.sheets = sheets.map(function(s){
-        return {name: s.name, grid: parseSheet(files[s.path], shared)};
+      S.zipEntries = entries;
+      S.sheets = sheets.map(function(sh){
+        return {name: sh.name, path: sh.path, xml: files[sh.path], grid: parseSheet(files[sh.path], shared)};
       });
       var pick = $("sheetPick");
       pick.innerHTML = "";
-      S.sheets.forEach(function(s, i){
-        var o = document.createElement("option"); o.value = i; o.textContent = s.name;
+      S.sheets.forEach(function(sh, i){
+        var o = document.createElement("option"); o.value = i; o.textContent = sh.name;
         pick.appendChild(o);
       });
       $("sheetPickWrap").classList.toggle("hidden", S.sheets.length < 2);
-      loadGrid(S.sheets[0].grid, file.name + "（" + S.sheets[0].name + "）");
+      loadGrid(S.sheets[0].grid, file.name + "（" + S.sheets[0].name + "）", S.sheets[0]);
     } else {
+      S.zipEntries = null; S.sheets = null;
       var text = await file.text();
       $("sheetPickWrap").classList.add("hidden");
-      loadGrid(parseTable(text), file.name);
+      loadGrid(parseTable(text), file.name, null);
     }
   }catch(e){
     $("importNote").textContent = "読み込めませんでした: " + (e && e.message ? e.message : e);
+  }
+}
+
+/* ==================== xlsx で書き出す ==================== */
+var SHEET_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
+var XML_NS = "http://www.w3.org/XML/1998/namespace";
+var XML_HEAD = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n';
+var IN_FRAME = (function(){ try{ return window.self !== window.top; }catch(e){ return true; } })();
+
+function colName(n){
+  var s = "", v = n + 1;
+  while(v > 0){ var m = (v - 1) % 26; s = String.fromCharCode(65 + m) + s; v = Math.floor((v - 1) / 26); }
+  return s;
+}
+function xmlEsc(v){
+  return String(v)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/* 元シートのXMLの該当セルだけを差し替える。書式(s属性)は残し、数式は消す。 */
+function patchSheetXml(xmlText, edits){
+  var doc = new DOMParser().parseFromString(xmlText, "application/xml");
+  if(doc.getElementsByTagName("parsererror").length) throw new Error("シートを解析できませんでした");
+  var root = doc.documentElement;
+  var ns = root.namespaceURI || SHEET_NS;
+  var sheetData = root.getElementsByTagName("sheetData")[0];
+  if(!sheetData){ sheetData = doc.createElementNS(ns, "sheetData"); root.appendChild(sheetData); }
+
+  function findRow(r){
+    var rows = sheetData.getElementsByTagName("row"), before = null;
+    for(var i=0;i<rows.length;i++){
+      var rr = parseInt(rows[i].getAttribute("r"), 10);
+      if(rr === r + 1) return rows[i];
+      if(rr > r + 1){ before = rows[i]; break; }
+    }
+    var el = doc.createElementNS(ns, "row");
+    el.setAttribute("r", String(r + 1));
+    sheetData.insertBefore(el, before);
+    return el;
+  }
+  function findCell(rowEl, r, c){
+    var cells = rowEl.getElementsByTagName("c"), before = null;
+    for(var i=0;i<cells.length;i++){
+      var ci = colOf(cells[i].getAttribute("r") || "");
+      if(ci === c) return cells[i];
+      if(ci > c){ before = cells[i]; break; }
+    }
+    var el = doc.createElementNS(ns, "c");
+    el.setAttribute("r", colName(c) + (r + 1));
+    rowEl.insertBefore(el, before);
+    return el;
+  }
+
+  edits.forEach(function(ed){
+    var cell = findCell(findRow(ed.row), ed.row, ed.col);
+    while(cell.firstChild) cell.removeChild(cell.firstChild);
+    if(!ed.text){ cell.removeAttribute("t"); return; }
+    cell.setAttribute("t", "inlineStr");
+    var is = doc.createElementNS(ns, "is");
+    var t = doc.createElementNS(ns, "t");
+    t.setAttributeNS(XML_NS, "xml:space", "preserve");
+    t.appendChild(doc.createTextNode(ed.text));
+    is.appendChild(t);
+    cell.appendChild(is);
+  });
+  return XML_HEAD + new XMLSerializer().serializeToString(doc);
+}
+
+/* 取り込んだ元のxlsxを土台に、本文セルだけ差し替えて詰め直す */
+async function rebuildXlsx(){
+  var edits = S.results
+    .filter(function(r){ return r.row.row != null && r.row.col != null; })
+    .map(function(r){ return {row: r.row.row, col: r.row.col, text: r.text}; });
+  var xml = patchSheetXml(S.sheet.xml, edits);
+  var raw = new TextEncoder().encode(xml);
+  var packed = await packBytes(raw);
+  var out = [];
+  for(var i=0;i<S.zipEntries.length;i++){
+    var e = S.zipEntries[i];
+    if(e.name === "xl/calcChain.xml") continue;   /* 数式を消したので作り直させる */
+    if(e.name === S.sheet.path){
+      out.push({name: e.name, method: packed.method, crc: crc32(raw),
+                compSize: packed.data.length, rawSize: raw.length, data: packed.data});
+    } else out.push(e);
+  }
+  return makeZip(out);
+}
+
+/* csv・貼り付け由来のときは、同じ配置のxlsxを新規に組み立てる */
+async function buildXlsxFromGrid(){
+  var g = resultGrid();
+  var width = 0;
+  g.forEach(function(row){ width = Math.max(width, (row || []).length); });
+  var rows = g.map(function(row, r){
+    var cells = "";
+    for(var c=0;c<width;c++){
+      var v = (row || [])[c];
+      if(v === undefined || v === null || v === "") continue;
+      var ref = colName(c) + (r + 1);
+      if(typeof v === "number" || (/^-?[0-9]+(\.[0-9]+)?$/.test(String(v).trim()) && String(v).trim() !== "")){
+        cells += '<c r="' + ref + '"><v>' + xmlEsc(String(v).trim()) + '</v></c>';
+      } else {
+        cells += '<c r="' + ref + '" t="inlineStr"><is><t xml:space="preserve">' + xmlEsc(v) + '</t></is></c>';
+      }
+    }
+    return '<row r="' + (r + 1) + '">' + cells + '</row>';
+  }).join("");
+
+  var parts = [
+    ["[Content_Types].xml",
+     XML_HEAD + '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
+     '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+     '<Default Extension="xml" ContentType="application/xml"/>' +
+     '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+     '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+     '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>' +
+     '</Types>'],
+    ["_rels/.rels",
+     XML_HEAD + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>' +
+     '</Relationships>'],
+    ["xl/workbook.xml",
+     XML_HEAD + '<workbook xmlns="' + SHEET_NS + '" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+     '<sheets><sheet name="出力" sheetId="1" r:id="rId1"/></sheets></workbook>'],
+    ["xl/_rels/workbook.xml.rels",
+     XML_HEAD + '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
+     '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>' +
+     '<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
+     '</Relationships>'],
+    ["xl/styles.xml",
+     XML_HEAD + '<styleSheet xmlns="' + SHEET_NS + '">' +
+     '<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>' +
+     '<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>' +
+     '<borders count="1"><border/></borders>' +
+     '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>' +
+     '<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>' +
+     '<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>' +
+     '</styleSheet>'],
+    ["xl/worksheets/sheet1.xml",
+     XML_HEAD + '<worksheet xmlns="' + SHEET_NS + '"><sheetData>' + rows + '</sheetData></worksheet>']
+  ];
+
+  var entries = [];
+  for(var i=0;i<parts.length;i++){
+    var raw = new TextEncoder().encode(parts[i][1]);
+    var packed = await packBytes(raw);
+    entries.push({name: parts[i][0], method: packed.method, crc: crc32(raw),
+                  compSize: packed.data.length, rawSize: raw.length, data: packed.data});
+  }
+  return makeZip(entries);
+}
+
+function outputName(){
+  /* 一部の環境では非ASCIIのファイル名がブラウザ側で落とされるため、
+     付け足す接尾辞はASCIIにしておく（元のファイル名はそのまま残す）。 */
+  var base = (S.fileName || "keyword-filler").replace(/\.(xlsx|csv|tsv|txt)$/i, "");
+  return base + "_filled.xlsx";
+}
+async function exportXlsx(){
+  if(!S.results.length){ toast("先に「一括で埋める」を実行してください"); return; }
+  if(IN_FRAME){
+    openModal("nodl");
+    return;
+  }
+  try{
+    var bytes = (S.zipEntries && S.sheet) ? await rebuildXlsx() : await buildXlsxFromGrid();
+    var blob = new Blob([bytes], {type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = outputName();
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 2000);
+    toast(outputName() + " を書き出しました");
+  }catch(e){
+    toast("書き出せませんでした: " + (e && e.message ? e.message : e));
   }
 }
 
@@ -1400,6 +1660,16 @@ function copyText(text){
 var modalMode = "export";
 function openModal(mode){
   modalMode = mode;
+  if(mode === "nodl"){
+    $("modalTitle").textContent = "この画面ではxlsxを保存できません";
+    $("modalHint").textContent = "ブラウザの制限で、埋め込み表示の中からはファイルのダウンロードが行えません。"
+      + "このページのHTMLをパソコンに保存して直接開くと、xlsxの書き出しが使えます。"
+      + "この画面のままなら「元の表の形のままコピー（TSV）」でスプレッドシートに貼り戻せます。";
+    $("modalAction").textContent = "元の表の形のままコピー";
+    $("modalText").value = exportGrid();
+    $("modalBg").classList.add("show");
+    return;
+  }
   $("modalTitle").textContent = mode === "export" ? "書き出し" : "読み込み";
   $("modalHint").textContent = mode === "export"
     ? "この内容をコピーして保存しておいてください。別の端末やブラウザで「読み込み」に貼れば復元できます。"
@@ -1519,7 +1789,7 @@ $("modalClose").addEventListener("click", closeModal);
 $("modalBg").addEventListener("click", function(e){ if(e.target === this) closeModal(); });
 document.addEventListener("keydown", function(e){ if(e.key === "Escape") closeModal(); });
 $("modalAction").addEventListener("click", function(){
-  if(modalMode === "export"){ copyText($("modalText").value); return; }
+  if(modalMode === "export" || modalMode === "nodl"){ copyText($("modalText").value); return; }
   var data;
   try{ data = JSON.parse($("modalText").value); }
   catch(e){ toast("読み込めませんでした。書き出したテキストをそのまま貼り付けてください"); return; }
@@ -1546,11 +1816,12 @@ $("importPasteBtn").addEventListener("click", function(){
   var text = $("pasteInput").value || "";
   if(!text.trim()){ toast("表を貼り付けてください"); return; }
   $("sheetPickWrap").classList.add("hidden");
-  loadGrid(parseTable(text), "貼り付けた表");
+  S.zipEntries = null; S.sheets = null; S.fileName = "";
+  loadGrid(parseTable(text), "貼り付けた表", null);
 });
 $("sheetPick").addEventListener("change", function(){
   var i = parseInt(this.value, 10) || 0;
-  if(S.sheets && S.sheets[i]) loadGrid(S.sheets[i].grid, "シート: " + S.sheets[i].name);
+  if(S.sheets && S.sheets[i]) loadGrid(S.sheets[i].grid, "シート: " + S.sheets[i].name, S.sheets[i]);
 });
 var dz = $("dropzone");
 ["dragenter","dragover"].forEach(function(ev){
@@ -1584,6 +1855,7 @@ $("selectNoneBtn").addEventListener("click", function(){
 });
 $("clearRowsBtn").addEventListener("click", function(){
   S.rows = []; S.results = []; S.grid = null; S.sheets = null;
+  S.sheet = null; S.zipEntries = null; S.fileName = "";
   $("importNote").textContent = ""; $("batchNote").textContent = "";
   $("sheetPickWrap").classList.add("hidden");
   renderRows(); renderResults();
