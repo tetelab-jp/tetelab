@@ -42,6 +42,13 @@ export type SalonProfileForGeneration = {
   hpb_avg_price_first: string | null
   hpb_avg_price_repeat: string | null
   hpb_customer_ratio: string | null
+  // 2026-08-21追記(ユーザー指定): 「サロン情報」機能。HPB公開ページの
+  // 「〜の雰囲気」「〜のサロンデータ」「特集」「こだわり」も、hpb_catch等と
+  // 同じくAI記事生成の参考材料として使う。
+  hpb_atmosphere_text: string | null
+  hpb_salon_data_text: string | null
+  hpb_specials_text: string | null
+  hpb_kodawari_text: string | null
   reference_articles: BlogReferenceArticle[]
 } | null
 
@@ -74,6 +81,10 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
     lines.push(`平均予約金額（HPB実績）: ${[first, repeat].filter(Boolean).join(' / ')}`)
   }
   if (profile?.hpb_customer_ratio) lines.push(`来店者の性別・年代比率（HPB実績）: ${profile.hpb_customer_ratio}`)
+  if (profile?.hpb_atmosphere_text) lines.push(`サロンの雰囲気: ${profile.hpb_atmosphere_text}`)
+  if (profile?.hpb_salon_data_text) lines.push(`サロンデータ: ${profile.hpb_salon_data_text}`)
+  if (profile?.hpb_specials_text) lines.push(`サロンの特集・強み: ${profile.hpb_specials_text}`)
+  if (profile?.hpb_kodawari_text) lines.push(`サロンのこだわり: ${profile.hpb_kodawari_text}`)
   return lines
 }
 
@@ -166,6 +177,11 @@ export type ArticleGenerationInput = {
   bodyPrompt: string | null
   imageDescription: string | null
   stylistName: string | null
+  // 2026-08-21追記(ユーザー指定): 「サロン情報」機能。HPB公開のスタイリスト
+  // 個別ページから取得した「得意なイメージ・得意な技術・趣味/マイブーム」等
+  // (stylists.hpb_bio_text)。担当スタイリストが選ばれていて、かつ取得済み
+  // の場合のみ渡される。
+  stylistBio: string | null
   couponName: string | null
   bodyMaxChars: number
   profile: SalonProfileForGeneration
@@ -255,6 +271,9 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
       '季節感は、本文の一部を割いて説明する話題ではありません。言葉選びや情景描写など、文章全体にさりげなく' +
         '色をつける「味付け」として扱ってください。'
     )
+  }
+  if (input.stylistBio) {
+    systemLines.push(`担当スタイリストの得意分野・人柄: ${input.stylistBio}`)
   }
 
   if (input.useReferenceArticles) {
