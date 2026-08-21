@@ -240,16 +240,41 @@ export async function processReviewSyncResult(
   }
 
   const newestManagementNo = sbRows[0]?.managementNo ?? null
+
+  // 2026-08-21追記(ユーザー報告のバグ修正): stopAtManagementNo(前回同期済みの
+  // 管理番号)はこれまで「今回見えた最新の管理番号」を無条件に採用していたため、
+  // まだ返信していない口コミがあっても、次回以降のincremental syncはそれより
+  // 古い行を二度とSALON BOARDへ取りに行かなくなり、後日サロン側が返信しても
+  // 永久にreplied_atが確定しない構造的な欠陥があった(review-sync-runner.ts側の
+  // 返信検知ロジック自体を直しても、そもそも該当行がsbRowsに含まれなければ
+  // 効果が無い)。未返信の口コミが1件でも残っている間は、stopAtManagementNoを
+  // 送らない(=次回は先頭ページから全件を再走査し、返信状況の変化を確実に
+  // 拾う)ようにする。全て返信済みになれば、通常どおり最新の管理番号で
+  // 打ち切る高速incrementalに戻る。
+  const hasUnrepliedRow = await env.DB.prepare(`SELECT 1 FROM reviews WHERE salon_id = ? AND replied_at IS NULL LIMIT 1`)
+    .bind(job.salon_id)
+    .first()
+
   await env.DB.prepare(
     `INSERT INTO review_sync_state (user_id, salon_id, backfill_completed_at, last_synced_review_key, last_sync_run_at)
      VALUES (?, ?, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END, ?, CURRENT_TIMESTAMP)
      ON CONFLICT (salon_id) DO UPDATE SET
        backfill_completed_at = COALESCE(review_sync_state.backfill_completed_at, CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE NULL END),
-       last_synced_review_key = COALESCE(EXCLUDED.last_synced_review_key, review_sync_state.last_synced_review_key),
+       last_synced_review_key = CASE
+         WHEN ? THEN NULL
+         ELSE COALESCE(EXCLUDED.last_synced_review_key, review_sync_state.last_synced_review_key)
+       END,
        last_sync_run_at = CURRENT_TIMESTAMP,
        updated_at = CURRENT_TIMESTAMP`
   )
-    .bind(job.user_id, job.salon_id, job.mode === 'full_backfill', newestManagementNo, job.mode === 'full_backfill')
+    .bind(
+      job.user_id,
+      job.salon_id,
+      job.mode === 'full_backfill',
+      newestManagementNo,
+      job.mode === 'full_backfill',
+      Boolean(hasUnrepliedRow)
+    )
     .run()
 
   // 口コミ評価推移(/reviews/trend)用に、この同期(計測)時点でのスナップショットを
