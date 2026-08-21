@@ -12,7 +12,7 @@
 import type { Bindings } from '../types'
 import { runBlogPostTask, stopStylePostTask } from './aws-ecs'
 import { publishAlert } from './sns-alert'
-import { getFooterTextForSalon } from './blog-footer'
+import { getFooterTextForSalon, stripAllTrailingFooterText } from './blog-footer'
 import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
 const CONSECUTIVE_FAILURE_ALERT_THRESHOLD = 2
@@ -134,7 +134,16 @@ export async function getArticleRowForJob(env: Bindings, articleId: number): Pro
   if (!row) return null
   if (row.footer_enabled_flag === 1 && row.body) {
     const footerText = await getFooterTextForSalon(env, row.user_id, row.salon_id)
-    if (footerText) row.body = `${row.body}\n\n${footerText}`
+    if (footerText) {
+      // 2026-08-21追記(重大バグ修正): row.bodyに既にフッターが焼き込まれている
+      // ケース(下記/blog/articles/:id/editのバグ、または過去の不具合で保存された
+      // データ)があると、ここで無条件に付け足すとフッターが二重になり、
+      // 全角1000文字制限を超えてSALON BOARD側の確認画面へ進めず投稿失敗する
+      // (実機ログで確認済み)。付ける前に末尾の既存フッターを取り除いておく
+      // ことで、何重に焼き込まれていても常に1つだけになるようにする。
+      const cleanBody = stripAllTrailingFooterText(row.body, footerText)
+      row.body = `${cleanBody}\n\n${footerText}`
+    }
   }
   return row
 }

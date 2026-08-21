@@ -65,6 +65,26 @@ export function stripTrailingFooterText(body: string, footerText: string): strin
   return body.slice(0, idx).replace(/\s+$/, '')
 }
 
+/**
+ * stripTrailingFooterTextを末尾に何も無くなるまで繰り返す版。
+ * 2026-08-21追記(バグ調査): POST /blog/articles/:id/editがこのstripを
+ * 呼んでいなかったため、フッター付き本文をそのまま再保存すると、投稿時
+ * (getArticleRowForJob)にさらにもう1つフッターが付き、フッターが二重に
+ * なって全角1000文字制限を超え投稿失敗する不具合があった。既に二重・
+ * 三重に焼き込まれてしまった既存記事も自己修復できるよう、1回のstripでは
+ * なく末尾から繰り返し取り除く。
+ */
+export function stripAllTrailingFooterText(body: string, footerText: string): string {
+  if (!footerText) return body
+  let current = body
+  for (let i = 0; i < 10; i++) {
+    const next = stripTrailingFooterText(current, footerText)
+    if (next === current) return next
+    current = next
+  }
+  return current
+}
+
 /** user_id/salon_idから、投稿本文に付けるフッター文字列を組み立てる(salon_profiles + salonboard_salons.salon_name を参照)。 */
 export async function getFooterTextForSalon(env: Bindings, userId: number, salonId: number | null): Promise<string> {
   const [profile, salon] = await Promise.all([

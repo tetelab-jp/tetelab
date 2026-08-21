@@ -10,7 +10,7 @@ import {
   type SalonProfileForGeneration
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
-import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
+import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripAllTrailingFooterText } from '../lib/blog-footer'
 import { formatJstDateCompact, formatJstDateTimeCompact, compactDate } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
@@ -1396,7 +1396,7 @@ blog.post('/blog/articles/new', async (c) => {
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
   if (parsed.footerEnabled) {
     const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
-    parsed.body = stripTrailingFooterText(parsed.body, footerText)
+    parsed.body = stripAllTrailingFooterText(parsed.body, footerText)
   }
 
   const nextOrderRow = await c.env.DB.prepare(
@@ -1483,6 +1483,17 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
+
+  // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
+  // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
+  // ブラウザ側JS(blog-article-form.js)が本文欄末尾へフッターを差し込むため、
+  // それをそのまま保存するとDBのbodyにフッターが焼き込まれ、投稿時
+  // (getArticleRowForJob)にもう1つ付いて二重になり、全角1000文字制限を
+  // 超えて投稿に失敗していた(実機ログで確認)。
+  if (parsed.footerEnabled) {
+    const footerText = await getFooterTextForSalon(c.env, user.id, user.active_salon_id)
+    parsed.body = stripAllTrailingFooterText(parsed.body, footerText)
+  }
 
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
