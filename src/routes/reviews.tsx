@@ -90,7 +90,7 @@ function ReviewAutoSyncInfo({ backfillDone, lastSyncRunAt }: { backfillDone: boo
       ) : (
         <p class="text-sm text-gray-600 mt-1">
           まだ初回データ取り込みが完了していません。
-          <a href="/reviews/list" class="text-pink-600 hover:underline">口コミ返信</a>
+          <a href="/reviews/list" class="text-pink-600 hover:underline">未返信口コミ</a>
           画面から取り込みを開始してください。
         </p>
       )}
@@ -112,7 +112,7 @@ reviews.get('/reviews/trend', async (c) => {
   const trendByNewest = [...trend].reverse()
 
   return c.render(
-    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
+    <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価推移" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <ReviewAutoSyncInfo backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
@@ -176,7 +176,7 @@ reviews.get('/reviews/trend', async (c) => {
       ></script>
       <script src="/static/reviews.js"></script>
     </PageLayout>,
-    { title: '口コミ評価' }
+    { title: '口コミ評価推移' }
   )
 })
 
@@ -362,7 +362,7 @@ reviews.get('/reviews/list', async (c) => {
     : { results: [] as ReviewListRowForUi[] }
 
   return c.render(
-    <PageLayout active="review-list" salonName={user.salon_name} title="口コミ返信" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
+    <PageLayout active="review-list" salonName={user.salon_name} title="未返信口コミ" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -492,7 +492,7 @@ reviews.get('/reviews/list', async (c) => {
 
       <script src="/static/reviews.js"></script>
     </PageLayout>,
-    { title: '口コミ返信' }
+    { title: '未返信口コミ' }
   )
 })
 
