@@ -67,11 +67,10 @@ function isNavItemVisible(
   reviewEnabled: boolean,
   isImpersonated: boolean
 ) {
-  // 2026-08-19追記(ユーザー指定): 個別実行ログ(実行履歴ページ)はサロン間の
-  // 投稿内容・エラーメッセージが具体的に見えてしまうため、通常のサロン
-  // ログインでは一切表示せず、管理者サイトからの「なりすましログイン」
-  // (検証用)経由でのみ表示・利用できるようにする。
-  if (item.key === 'style-test-run') return isImpersonated
+  // 2026-08-21追記(ユーザー指定): 実行履歴ページ自体は通常のサロンログインでも
+  // 表示する(以前の「なりすましログイン限定」への変更は指示の意図と異なって
+  // いたため戻す)。サロン間で見えてはいけない詳細(投稿ログ列)は
+  // ページ内側(automation.tsx)でisImpersonated判定して隠す。
   if (item.group === 'style') return styleEnabled
   if (item.group === 'blog') return blogEnabled
   if (item.group === 'ranking') return seoEnabled
