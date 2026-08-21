@@ -11,7 +11,7 @@ import { Hono, type Context } from 'hono'
 import { requireAuth, requireReviewEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
 import { getTrendSnapshots, getAvailableReviewMonths, getStylistBreakdown } from '../lib/review-aggregation'
-import { compactDate } from '../lib/date-format'
+import { compactDate, formatJstDateTimeCompact } from '../lib/date-format'
 import { generateReviewReply } from '../lib/ai-generate'
 import { dispatchManualReviewReply, loadSalonProfileForGeneration, loadRecentReviewReplies } from '../lib/review-reply-runner'
 import type { Bindings, AppUser } from '../types'
@@ -37,7 +37,7 @@ async function getBackfillState(c: AppContext, salonId: number) {
     .first<{ backfill_completed_at: string | null; last_sync_run_at: string | null }>()
 }
 
-function SyncStatusPanel({ backfillDone }: { backfillDone: boolean }) {
+function SyncStatusPanel({ backfillDone, lastSyncRunAt }: { backfillDone: boolean; lastSyncRunAt: string | null }) {
   return (
     <div id="review-sync-panel" class="bg-white rounded-xl border border-gray-100 p-6">
       <div class="flex items-center justify-between flex-wrap gap-3">
@@ -51,13 +51,16 @@ function SyncStatusPanel({ backfillDone }: { backfillDone: boolean }) {
               ? 'サロンボードとHPBから最新の口コミを取得します(通常1〜2分程度で完了します)。'
               : 'サロンボードの口コミ一覧とHPBの公開口コミ一覧を突き合わせて、過去全件を取り込みます(通常1〜2分程度で完了します)。'}
           </p>
+          {backfillDone && lastSyncRunAt && (
+            <p class="text-xs text-gray-400 mt-1">最終同期: {formatJstDateTimeCompact(lastSyncRunAt)}</p>
+          )}
         </div>
         <button
           id="review-sync-start-btn"
           type="button"
           class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap disabled:opacity-50"
         >
-          {backfillDone ? '今すぐ同期' : '取り込みを開始'}
+          {backfillDone ? 'サロンボードから口コミを同期' : '取り込みを開始'}
         </button>
       </div>
       <p id="review-sync-status-text" class="text-sm text-gray-500 mt-3"></p>
@@ -80,7 +83,7 @@ reviews.get('/reviews/trend', async (c) => {
 
   return c.render(
     <PageLayout active="review-trend" salonName={user.salon_name} title="口コミ評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
-      <SyncStatusPanel backfillDone={backfillDone} />
+      <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
         <>
@@ -167,7 +170,7 @@ reviews.get('/reviews/by-stylist', async (c) => {
 
   return c.render(
     <PageLayout active="review-by-stylist" salonName={user.salon_name} title="スタイリスト別評価" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
-      <SyncStatusPanel backfillDone={backfillDone} />
+      <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
         <>
@@ -323,7 +326,7 @@ reviews.get('/reviews/list', async (c) => {
 
   return c.render(
     <PageLayout active="review-list" salonName={user.salon_name} title="口コミ返信" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
-      <SyncStatusPanel backfillDone={backfillDone} />
+      <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
 
       {backfillDone && (
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">

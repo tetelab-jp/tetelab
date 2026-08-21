@@ -215,12 +215,25 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  // 2026-08-21追記(ユーザー指定): 同期系ボタンの「最終取得」表示は
+  // "26-08-20 20:21"形式(年下2桁・ゼロ埋め・ハイフン区切り+時刻)に統一する。
+  // このボタンはサーバー側に取得日時を保存しない(取得結果はlocalStorageの
+  // 一時キャッシュのみ)ため、クライアント側で同じ形式に整形する。
+  function formatFetchedAt(epochMs) {
+    var d = new Date(epochMs)
+    var yy = String(d.getFullYear()).slice(2)
+    var mm = String(d.getMonth() + 1).padStart(2, '0')
+    var dd = String(d.getDate()).padStart(2, '0')
+    var hh = String(d.getHours()).padStart(2, '0')
+    var mi = String(d.getMinutes()).padStart(2, '0')
+    return yy + '-' + mm + '-' + dd + ' ' + hh + ':' + mi
+  }
+
   const cached = loadCache()
   if (cached && cached.styles.length > 0) {
     setStyles(cached.styles)
-    const minutesAgo = Math.floor((Date.now() - cached.fetchedAt) / 60000)
     statusEl.textContent =
-      cached.styles.length + '件のスタイル（' + minutesAgo + '分前に取得したもの）を表示しています。最新の状態にするには再取得してください。'
+      cached.styles.length + '件のスタイル（最終取得: ' + formatFetchedAt(cached.fetchedAt) + '）を表示しています。最新の状態にするには再取得してください。'
   }
 
   if (fetchBtn) {
@@ -228,6 +241,9 @@ document.addEventListener('DOMContentLoaded', () => {
       fetchBtn.disabled = true
       if (fetchBtnLabel) fetchBtnLabel.textContent = '取得中'
       statusEl.textContent = 'サロンボードからデータを取得中\n少しお待ちください'
+      // 2026-08-21追記(ユーザー指定): 取得中はページ遷移させないよう、
+      // 操作不能の待機ポップアップを表示する(public/static/sync-modal.js)。
+      if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードからスタイルを取得しています…')
       try {
         const res = await fetch('/api/style/import/fetch-list', { method: 'POST' })
         const data = await res.json()
@@ -241,9 +257,12 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         setStyles(data.styles)
         saveCache(data.styles)
+        statusEl.textContent =
+          data.styles.length + '件のスタイル（最終取得: ' + formatFetchedAt(Date.now()) + '）が見つかりました'
       } catch (e) {
         statusEl.textContent = '通信エラーが発生しました'
       } finally {
+        if (window.SalonSyncModal) window.SalonSyncModal.hide()
         fetchBtn.disabled = false
         if (fetchBtnLabel) fetchBtnLabel.textContent = 'サロンボードからスタイル取得'
       }

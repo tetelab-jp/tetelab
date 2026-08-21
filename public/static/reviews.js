@@ -220,12 +220,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const res = await fetch('/api/reviews/sync/status')
       const data = await res.json()
       if (statusText) statusText.textContent = describeStatus(data)
+      if (window.SalonSyncModal) window.SalonSyncModal.update(describeStatus(data) || '処理中...')
       if (data.status === 'success') {
         stopPolling()
         setTimeout(() => location.reload(), 1200)
       } else if (data.status === 'failed' || data.status === 'timeout') {
         stopPolling()
         if (startBtn) startBtn.disabled = false
+        if (window.SalonSyncModal) window.SalonSyncModal.hide()
       }
     } catch (e) {
       // 一時的な通信エラーはポーリング継続(次回成功すれば復帰する)
@@ -236,12 +238,14 @@ document.addEventListener('DOMContentLoaded', () => {
     startBtn.addEventListener('click', async () => {
       startBtn.disabled = true
       if (statusText) statusText.textContent = '同期ジョブを投入中...'
+      if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードから口コミを同期しています...')
       try {
         const res = await fetch('/api/reviews/sync/start', { method: 'POST' })
         const data = await res.json()
         if (!data.success) {
           if (statusText) statusText.textContent = 'エラー: ' + (data.error || '不明なエラー')
           startBtn.disabled = false
+          if (window.SalonSyncModal) window.SalonSyncModal.hide()
           return
         }
         pollStatus()
@@ -249,6 +253,7 @@ document.addEventListener('DOMContentLoaded', () => {
       } catch (e) {
         if (statusText) statusText.textContent = '通信エラーが発生しました'
         startBtn.disabled = false
+        if (window.SalonSyncModal) window.SalonSyncModal.hide()
       }
     })
 
@@ -260,6 +265,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (data.status === 'pending' || data.status === 'running') {
           startBtn.disabled = true
           if (statusText) statusText.textContent = describeStatus(data)
+          if (window.SalonSyncModal) window.SalonSyncModal.show(describeStatus(data) || '処理中...')
           pollTimer = setInterval(pollStatus, 4000)
         }
       })

@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
   btn.addEventListener('click', async function () {
     btn.disabled = true
     status.textContent = 'サロンボードから読み込み中...(数十秒かかることがあります)'
+    if (window.SalonSyncModal) window.SalonSyncModal.show('サロンボードからブログを読み込んでいます...')
     try {
       var res = await fetch('/api/settings/sync-stylists-coupons', { method: 'POST' })
       var data = await res.json()
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (e) {
       status.textContent = '通信エラーが発生しました'
     } finally {
+      if (window.SalonSyncModal) window.SalonSyncModal.hide()
       btn.disabled = false
     }
   })

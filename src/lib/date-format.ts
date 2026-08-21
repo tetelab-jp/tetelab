@@ -47,3 +47,15 @@ export function compactDate(yyyyMmDd: string | null | undefined): string {
 export function formatJstDateCompact(sqliteTimestamp: string | null | undefined): string {
   return compactDate(formatJstDateOnly(sqliteTimestamp))
 }
+
+/**
+ * サロンボード連携の同期系ボタン(ダッシュボード・既存スタイル取り込み・
+ * ブログ・順位測定・口コミ同期)の「最終同期」表示専用(2026-08-21追記・
+ * ユーザー指定)。年は下2桁・月日はゼロ埋め・ハイフン区切り+時刻(分まで)。
+ * 例: "2026-08-20 20:21:00" → "26-08-20 20:21"。他のcompactDate系(スラッシュ・
+ * 日付のみ)とは別の用途のため、既存箇所には流用しない。
+ */
+export function formatJstDateTimeCompact(sqliteTimestamp: string | null | undefined): string {
+  const full = formatJstDate(sqliteTimestamp)
+  return full ? full.slice(2) : ''
+}

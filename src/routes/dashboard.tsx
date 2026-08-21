@@ -11,7 +11,7 @@ import {
   type SalonListEntry
 } from '../lib/salonboard-automation'
 import { syncStylists, syncCoupons, syncSalonInfo, syncSalonArea, upsertSalonInfo } from '../lib/salonboard-sync'
-import { formatJstDateTime, formatJstDate } from '../lib/date-format'
+import { formatJstDateTime, formatJstDateTimeCompact } from '../lib/date-format'
 import { BLACKOUT_START_LABEL, BLACKOUT_END_LABEL, POST_INTERVAL_MINUTES_LABEL } from './style'
 import type { Bindings, AppUser } from '../types'
 
@@ -136,7 +136,7 @@ dashboard.get('/dashboard', async (c) => {
               <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
               <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
                 <span>最終同期:</span>
-                <span class="whitespace-nowrap">{cred.last_stylist_synced_at ? formatJstDate(cred.last_stylist_synced_at) : '未実施'}</span>
+                <span class="whitespace-nowrap">{cred.last_stylist_synced_at ? formatJstDateTimeCompact(cred.last_stylist_synced_at) : '未実施'}</span>
               </p>
             </div>
             <div class="bg-gray-50 rounded-lg p-3">
@@ -144,7 +144,7 @@ dashboard.get('/dashboard', async (c) => {
               <p class="font-bold text-gray-800">{couponCountRow?.cnt ?? 0} 件</p>
               <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
                 <span>最終同期:</span>
-                <span class="whitespace-nowrap">{cred.last_coupon_synced_at ? formatJstDate(cred.last_coupon_synced_at) : '未実施'}</span>
+                <span class="whitespace-nowrap">{cred.last_coupon_synced_at ? formatJstDateTimeCompact(cred.last_coupon_synced_at) : '未実施'}</span>
               </p>
             </div>
           </div>

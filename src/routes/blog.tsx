@@ -11,7 +11,7 @@ import {
 } from '../lib/ai-generate'
 import { resetStuckBlogJobsForUser } from '../lib/blog-post-runner'
 import { buildFooterText, buildAutoFooterText, getFooterTextForSalon, stripTrailingFooterText } from '../lib/blog-footer'
-import { formatJstDateCompact } from '../lib/date-format'
+import { formatJstDateCompact, formatJstDateTimeCompact } from '../lib/date-format'
 import { fetchSalonProfileFromHpb, fetchHpbBlogArticles } from '../lib/ranking-scraper'
 import { formatCustomerRatioText } from '../lib/ranking-parse'
 import type { Bindings, AppUser } from '../types'
@@ -175,11 +175,11 @@ blog.get('/blog/salon', async (c) => {
             スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件)を取得し、AI記事生成の参考材料にします
           </p>
           <p class="text-xs text-gray-400 mt-1">
-            最終取得: {profile?.salonboard_synced_at ? formatJstDateCompact(profile.salonboard_synced_at) : '未取得'}（参考記事{referenceArticleCount}件）
+            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}（参考記事{referenceArticleCount}件）
           </p>
         </div>
         <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-          読み込む
+          サロンボードからブログ読み込み
         </button>
         <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
       </div>
