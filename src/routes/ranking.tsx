@@ -433,12 +433,17 @@ type TableVariant = {
   bodyText: string
 }
 
+// 2026-08-21追記(ユーザー指定): 対策キーワード列だけを横スクロールでも
+// 固定表示にし、最新列(●最新)はキーワード列のすぐ右から通常どおり
+// スクロールで流れていくようにする(以前はPCのみ最新列もキーワード列と
+// 一緒に固定していたが、それだと「最新の順位からスライドできる」という
+// 挙動にならないため、固定対象はキーワード列のみに統一する)。
 const MOBILE_TABLE_VARIANT: TableVariant = {
   size: 'sm',
   keywordPx: 116,
   latestGroupPx: 88,
   oldColPx: 56,
-  keywordColClass: '',
+  keywordColClass: 'sticky left-0 z-10',
   latestCol1Class: '',
   latestCol2Class: '',
   headText: 'text-xs',
@@ -452,8 +457,8 @@ const DESKTOP_TABLE_VARIANT: TableVariant = {
   latestGroupPx: 132,
   oldColPx: 88,
   keywordColClass: 'sticky left-0 z-10',
-  latestCol1Class: 'sticky left-[168px] z-10',
-  latestCol2Class: 'sticky left-[300px] z-10',
+  latestCol1Class: '',
+  latestCol2Class: '',
   headText: 'text-sm',
   subHeadText: 'text-xs',
   bodyText: 'text-sm'

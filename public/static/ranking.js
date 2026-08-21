@@ -74,7 +74,10 @@
     if (editAddBtn) editAddBtn.addEventListener('click', addEditKeyword)
     if (editInput) {
       editInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
+        // IME(かな漢字変換)の変換確定Enterでも発火してしまい、変換途中の
+        // 文字列のまま追加されてしまうバグがあった(ユーザー報告)。
+        // isComposing / keyCode===229(Safari等)で変換確定中のEnterを除外する。
+        if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
           e.preventDefault()
           addEditKeyword()
         }
@@ -187,7 +190,8 @@
     if (kwAddBtn) kwAddBtn.addEventListener('click', addAjaxKeyword)
     if (kwInput) {
       kwInput.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') {
+        // IME変換確定Enterでも発火してしまうバグの修正(editInputと同じ対策)
+        if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
           e.preventDefault()
           addAjaxKeyword()
         }

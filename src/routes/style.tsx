@@ -7,6 +7,7 @@ import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-imp
 import { fetchSalonInfoFromSalonBoard } from '../lib/salonboard-sync'
 import { processStyleImage } from '../lib/image-process'
 import { INITIAL_BURST_COUNT, resetStuckJobsForUser } from '../lib/style-post-runner'
+import { formatJstDateTimeCompact } from '../lib/date-format'
 import type { Bindings, AppUser } from '../types'
 
 type AppContext = Context<{ Bindings: Bindings; Variables: { user: AppUser } }>
@@ -537,9 +538,9 @@ style.get('/style/image/:id', async (c) => {
 
 style.get('/style/import', async (c) => {
   const user = c.get('user')
-  const cred = await c.env.DB.prepare('SELECT id FROM salon_credentials WHERE user_id = ?')
+  const cred = await c.env.DB.prepare('SELECT id, last_style_fetch_at FROM salon_credentials WHERE user_id = ?')
     .bind(user.id)
-    .first<{ id: number }>()
+    .first<{ id: number; last_style_fetch_at: string | null }>()
 
   return c.render(
     <PageLayout
@@ -569,6 +570,9 @@ style.get('/style/import', async (c) => {
           <i class="fas fa-cloud-arrow-down mr-2"></i>
           <span id="fetch-list-btn-label">サロンボードからスタイル取得</span>
         </button>
+        <p id="style-fetch-last-at" class="text-xs text-gray-400 mt-2">
+          最終取得: {cred?.last_style_fetch_at ? formatJstDateTimeCompact(cred.last_style_fetch_at) : '未実施'}
+        </p>
         <p id="import-status" class="text-sm text-gray-500 mt-3 whitespace-pre-line"></p>
       </div>
 
@@ -728,6 +732,9 @@ style.post('/api/style/import/fetch-list', async (c) => {
     await verifyLoggedInSalonMatches(c, page, user, () => {})
 
     const list = await fetchExistingStyles(page, () => {})
+    await c.env.DB.prepare('UPDATE salon_credentials SET last_style_fetch_at = CURRENT_TIMESTAMP WHERE user_id = ?')
+      .bind(user.id)
+      .run()
     return c.json({ success: true, styles: list })
   } catch (err: any) {
     return c.json({ success: false, error: String(err?.message || err) }, 400)

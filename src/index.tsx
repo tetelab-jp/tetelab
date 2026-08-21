@@ -68,6 +68,13 @@ const bindings: Bindings = {
     await bindings.DB.prepare(
       `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_successful_proxy_session_at TIMESTAMP`
     ).run()
+    // 2026-08-21追記(ユーザー指定): 「サロンボードからスタイル取得」ボタンの
+    // 最終取得時刻はこれまでクライアント側localStorageのみに保持していたため、
+    // 別端末や24時間経過後は表示が消えていた。サーバー側にも保存し、他の
+    // 同期ボタン(最終同期/最終取得)と同じくページ表示時に必ず出せるようにする。
+    await bindings.DB.prepare(
+      `ALTER TABLE salon_credentials ADD COLUMN IF NOT EXISTS last_style_fetch_at TIMESTAMP`
+    ).run()
   } catch (err) {
     console.error('起動時マイグレーション(salon_credentials拡張列)に失敗しました:', err)
   }
@@ -793,6 +800,12 @@ const bindings: Bindings = {
     ).run()
 
     await bindings.DB.prepare(`ALTER TABLE users ADD COLUMN IF NOT EXISTS review_enabled INTEGER NOT NULL DEFAULT 0`).run()
+    // 2026-08-21追記(ユーザー指定): 口コミデータの自動同期を月次から毎週
+    // 月曜21時(JST)固定に変更するため、月次判定用のlast_incremental_sync_month
+    // とは別に週次判定用の列を追加する(review-sync-runner.ts参照)。
+    await bindings.DB.prepare(
+      `ALTER TABLE review_sync_state ADD COLUMN IF NOT EXISTS last_incremental_sync_week TEXT`
+    ).run()
   } catch (err) {
     console.error('起動時マイグレーション(口コミ管理ツール)に失敗しました:', err)
   }

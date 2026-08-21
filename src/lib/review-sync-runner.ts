@@ -349,36 +349,42 @@ async function waitForSyncJobTerminal(env: Bindings, jobId: number): Promise<voi
 }
 
 /**
- * 2026-08-19追記(ユーザー指定): review-pipeline-runner.tsの日次パイプライン
- * (毎朝09:00に口コミ同期→完了次第口コミ返信)から、1サロン分の同期ステップ
- * として呼ばれる。月1回、既に初回バックフィルが完了しているサロンについて
- * のみ差分同期ジョブを投入し、完了を待ってから返す(初回バックフィルは
- * ユーザー自身が/reviews画面から手動で開始する、スコープ外)。今月分は
- * 同期済みなら何もせず即座に返る。
+ * 2026-08-21追記(ユーザー指定): 口コミ評価推移・スタイリスト別評価の2画面から
+ * 手動同期ボタンを削除したため、自動同期の頻度を月1回から毎週月曜21時(JST)
+ * 固定に変更する(SEOの定期測定と同じ「毎週月曜日固定」パターンを踏襲)。
+ * review-pipeline-runner.tsの日次パイプライン(毎朝09:00〜10分毎に呼ばれる)
+ * から、1サロン分の同期ステップとして呼ばれる。月曜21時以降・かつ今週分が
+ * まだなら差分同期ジョブを投入し、完了を待ってから返す(初回バックフィルは
+ * ユーザー自身が/reviews画面から手動で開始する、スコープ外)。
  */
 export async function runSyncStepForSalon(env: Bindings, userId: number, salonId: number): Promise<{ attempted: boolean }> {
   const state = await env.DB.prepare(
-    `SELECT backfill_completed_at, last_incremental_sync_month FROM review_sync_state WHERE salon_id = ?`
+    `SELECT backfill_completed_at, last_incremental_sync_week FROM review_sync_state WHERE salon_id = ?`
   )
     .bind(salonId)
-    .first<{ backfill_completed_at: string | null; last_incremental_sync_month: string | null }>()
+    .first<{ backfill_completed_at: string | null; last_incremental_sync_week: string | null }>()
   if (!state?.backfill_completed_at) return { attempted: false }
 
-  const nowJstMonth = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Asia/Tokyo', year: 'numeric', month: '2-digit' })
-    .format(new Date())
-    .slice(0, 7) // "YYYY-MM"
-  if (state.last_incremental_sync_month === nowJstMonth) return { attempted: false }
+  const nowUtc = new Date()
+  const jstNow = new Date(nowUtc.getTime() + 9 * 60 * 60 * 1000)
+  // 毎週月曜日固定(getUTCDay: 0=日,1=月,...)、21時以降のみ。
+  if (jstNow.getUTCDay() !== 1) return { attempted: false }
+  const jstHHMM = `${String(jstNow.getUTCHours()).padStart(2, '0')}:${String(jstNow.getUTCMinutes()).padStart(2, '0')}`
+  if (jstHHMM < '21:00') return { attempted: false }
+
+  const jstToday = `${jstNow.getUTCFullYear()}-${String(jstNow.getUTCMonth() + 1).padStart(2, '0')}-${String(jstNow.getUTCDate()).padStart(2, '0')}`
+  if (state.last_incremental_sync_week === jstToday) return { attempted: false }
 
   try {
     const { jobId } = await enqueueReviewSyncJob(env, userId, salonId)
     await env.DB.prepare(
-      `UPDATE review_sync_state SET last_incremental_sync_month = ?, updated_at = CURRENT_TIMESTAMP WHERE salon_id = ?`
+      `UPDATE review_sync_state SET last_incremental_sync_week = ?, updated_at = CURRENT_TIMESTAMP WHERE salon_id = ?`
     )
-      .bind(nowJstMonth, salonId)
+      .bind(jstToday, salonId)
       .run()
     await waitForSyncJobTerminal(env, jobId)
   } catch (err) {
-    console.error(`口コミ月次同期の投入に失敗しました(salon_id=${salonId}):`, err)
+    console.error(`口コミ週次同期の投入に失敗しました(salon_id=${salonId}):`, err)
   }
   return { attempted: true }
 }
