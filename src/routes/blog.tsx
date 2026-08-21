@@ -1287,6 +1287,21 @@ function parseArticleForm(body: Record<string, any>) {
 // category_id(blog_categoriesへのFK)で保持する設計を崩さないため、選択された
 // 固定値と同じhpb_category_valueを持つblog_categories行を探し、無ければ
 // (name=hpb_category_valueとして)自動作成してそのidを使う。
+// 2026-08-21追記(ユーザー指定): 「必須項目(HPBブログカテゴリ)が未設定の
+// 記事は自動投稿を須くOFFにする」という方針を、この画面の個別チェックに
+// 頼らず全ての書き込み経路(新規作成/編集保存/AI記事生成)で保証するための
+// 共通ヘルパー。category_idが指すカテゴリに実効HPBブログカテゴリが
+// 無ければ、ユーザーが自動投稿チェックをONにしていても強制的にOFFで保存する。
+async function categoryHasHpbValue(c: AppContext, user: AppUser, categoryId: number | null): Promise<boolean> {
+  if (!categoryId) return false
+  const row = await c.env.DB.prepare(
+    'SELECT hpb_category_value FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+  )
+    .bind(categoryId, user.id, user.active_salon_id)
+    .first<{ hpb_category_value: string | null }>()
+  return !!row?.hpb_category_value
+}
+
 async function resolveArticleCategoryId(c: AppContext, user: AppUser, hpbCategoryValue: string): Promise<number | null> {
   if (!hpbCategoryValue) return null
 
@@ -1394,6 +1409,7 @@ blog.post('/blog/articles/new', async (c) => {
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
   const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
+  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
   if (parsed.footerEnabled) {
     const { text: footerText, separator } = await getFooterTextAndSeparatorForSalon(c.env, user.id, user.active_salon_id)
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
@@ -1414,7 +1430,7 @@ blog.post('/blog/articles/new', async (c) => {
     .bind(
       user.id, user.active_salon_id, categoryId, parsed.stylistId, parsed.couponId,
       parsed.title, parsed.body, JSON.stringify(parsed.monthTags),
-      parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
+      parsed.footerEnabled ? 1 : 0, autoPostEnabled ? 1 : 0, nextOrderRow?.n ?? 0
     )
     .run()
 
@@ -1492,6 +1508,10 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   // category_idを維持し、実際に別の値を選んだ場合だけ付け替えるようにする。
   const hpbCategoryValueInput = String(body.hpb_category_value || '').trim()
   const categoryId = hpbCategoryValueInput ? await resolveArticleCategoryId(c, user, hpbCategoryValueInput) : existing.category_id
+  // 2026-08-21追記(ユーザー指定): 必須項目(HPBブログカテゴリ)が未設定の
+  // カテゴリに属したまま「自動投稿の対象にする」にチェックを入れて保存しても、
+  // 実効HPBブログカテゴリが無ければ強制的にOFFで保存する(須くOFFの方針)。
+  const autoPostEnabled = parsed.autoPostEnabled && (await categoryHasHpbValue(c, user, categoryId))
 
   // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
   // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
@@ -1512,7 +1532,7 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   )
     .bind(
       categoryId, parsed.stylistId, parsed.couponId, parsed.title, parsed.body,
-      JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, parsed.autoPostEnabled ? 1 : 0,
+      JSON.stringify(parsed.monthTags), parsed.footerEnabled ? 1 : 0, autoPostEnabled ? 1 : 0,
       id, user.id, user.active_salon_id
     )
     .run()
@@ -1625,7 +1645,7 @@ blog.post('/blog/generate', async (c) => {
 
   const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
-    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json, use_reference_articles FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
+    'SELECT id, name, key_message, title_prompt, body_prompt, default_stylist_id, season_months_json, use_reference_articles, hpb_category_value FROM blog_categories WHERE id = ? AND user_id = ? AND salon_id = ?'
   )
     .bind(categoryId, user.id, user.active_salon_id)
     .first<CategoryRow>()
@@ -1673,15 +1693,22 @@ blog.post('/blog/generate', async (c) => {
       useReferenceArticles: category.use_reference_articles !== 0
     })
 
+    // 2026-08-21追記(ユーザー指定): auto_post_enabled_flagは常に1固定で
+    // INSERTしていたため、選択したカテゴリにHPBブログカテゴリが未設定の
+    // 場合でも自動投稿ONの記事が生成され、投稿するたびに必ず失敗していた。
+    // 必須項目(HPBブログカテゴリ)が未設定の記事は自動投稿を須くOFFにする
+    // という方針に合わせ、カテゴリの実効HPBブログカテゴリが無ければ
+    // 0で作成する。
     const insert = await c.env.DB.prepare(
       `INSERT INTO blog_articles (
          user_id, salon_id, category_id, stylist_id, image_r2_key, image_file_name, image_description,
          title, body, month_tags_json, footer_enabled_flag, auto_post_enabled_flag, status, sort_order
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'unapproved', ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'unapproved', ?)`
     )
       .bind(
         user.id, user.active_salon_id, categoryId, category.default_stylist_id || null, key, fileName, imageDescription,
-        result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0, nextOrderRow?.n ?? 0
+        result.title, result.body, JSON.stringify(seasonMonths), footerEnabled ? 1 : 0,
+        category.hpb_category_value ? 1 : 0, nextOrderRow?.n ?? 0
       )
       .run()
 
