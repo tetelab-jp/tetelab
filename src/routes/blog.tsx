@@ -1474,15 +1474,24 @@ blog.post('/blog/articles/:id/edit', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
 
-  const existing = await c.env.DB.prepare('SELECT id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
+  const existing = await c.env.DB.prepare('SELECT id, category_id FROM blog_articles WHERE id = ? AND user_id = ? AND salon_id = ?')
     .bind(id, user.id, user.active_salon_id)
-    .first<{ id: number }>()
+    .first<{ id: number; category_id: number | null }>()
   if (!existing) return c.notFound()
 
   const body = await c.req.parseBody()
   const parsed = parseArticleForm(body)
   await sanitizeOwnedArticleRefs(c, user, parsed)
-  const categoryId = await resolveArticleCategoryId(c, user, String(body.hpb_category_value || '').trim())
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 「カテゴリ（HPBブログカテゴリ）」欄は
+  // 記事の現在のカテゴリがHPB_BLOG_CATEGORY_OPTIONSの固定値と一致しない場合(生成
+  // テンプレート側でHPBブログカテゴリが未設定のカテゴリに属している記事等)、初期表示が
+  // 「選択しない」になる。この状態でユーザーがこの欄に触れずタイトル・本文だけ直して
+  // 保存すると、以前はresolveArticleCategoryId('')がnullを返し、記事のcategory_idが
+  // 無条件にNULLへ上書きされてカテゴリ紐付けが失われていた(投稿は元々失敗する状態
+  // だったが、さらに元のカテゴリとの関連も失われてしまう)。未選択のままなら既存の
+  // category_idを維持し、実際に別の値を選んだ場合だけ付け替えるようにする。
+  const hpbCategoryValueInput = String(body.hpb_category_value || '').trim()
+  const categoryId = hpbCategoryValueInput ? await resolveArticleCategoryId(c, user, hpbCategoryValueInput) : existing.category_id
 
   // 2026-08-21追記(重大バグ修正): このハンドラだけ/blog/articles/newと違い
   // フッターの末尾除去を呼んでいなかった。フッター追加チェックボックスON時に
