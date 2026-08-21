@@ -1896,6 +1896,7 @@ blog.get('/blog/articles', async (c) => {
                   data-auto-post={a.auto_post_enabled_flag === 1 ? '1' : '0'}
                   data-category-id={a.category_id ?? ''}
                   data-month-tags={a.month_tags_json || '[]'}
+                  data-hpb-category-missing={a.hpb_category_value ? '0' : '1'}
                 >
                   <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
                     <input
@@ -2041,6 +2042,23 @@ blog.post('/api/blog/articles/reset-stuck-jobs', async (c) => {
 blog.post('/api/blog/articles/toggle-auto-post', async (c) => {
   const user = c.get('user')
   const { articleId, enabled } = await c.req.json<{ articleId: number; enabled: boolean }>()
+
+  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
+  // たびに必ず失敗するため、ONへの切り替え自体を拒否する(クライアント側
+  // (blog-articles.js)にも同じ判定があるが、こちらはその保険)。
+  if (enabled) {
+    const row = await c.env.DB.prepare(
+      `SELECT bc.hpb_category_value
+       FROM blog_articles a
+       LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
+       WHERE a.id = ? AND a.user_id = ? AND a.salon_id = ?`
+    )
+      .bind(articleId, user.id, user.active_salon_id)
+      .first<{ hpb_category_value: string | null }>()
+    if (!row?.hpb_category_value) {
+      return c.json({ success: false, error: '「HPBブログカテゴリ」が未設定です。設定されていないと投稿ができません。' }, 400)
+    }
+  }
 
   await c.env.DB.prepare(
     'UPDATE blog_articles SET auto_post_enabled_flag = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND user_id = ? AND salon_id = ?'

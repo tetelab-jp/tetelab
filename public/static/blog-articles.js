@@ -18,11 +18,21 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 
   // 自動投稿ON/OFFトグル
+  // 2026-08-21追記(ユーザー指定): HPBブログカテゴリ未設定の記事は投稿する
+  // たびに必ず失敗するため、ONへの切り替え自体をブロックし警告する
+  // (サーバー側/api/blog/articles/toggle-auto-postにも同じ判定があり、
+  // これはそこへ到達する前に即座に気づけるようにするためのもの)。
   document.querySelectorAll('.blog-auto-post-toggle').forEach((checkbox) => {
     checkbox.addEventListener('change', async (e) => {
       const target = e.target
       const articleId = Number(target.getAttribute('data-article-id'))
       const enabled = target.checked
+      const row = target.closest('[data-article-id][data-hpb-category-missing]')
+      if (enabled && row && row.getAttribute('data-hpb-category-missing') === '1') {
+        alert('「HPBブログカテゴリ」が未設定です。設定されていないと投稿ができません。')
+        target.checked = false
+        return
+      }
       try {
         const res = await fetch('/api/blog/articles/toggle-auto-post', {
           method: 'POST',
@@ -31,10 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
         })
         const data = await res.json()
         if (!data.success) throw new Error(data.error || '不明なエラー')
-        const row = target.closest('[data-article-id][data-auto-post]')
         if (row) row.setAttribute('data-auto-post', enabled ? '1' : '0')
       } catch (err) {
-        alert('更新に失敗しました。再度お試しください。')
+        alert(err.message === '不明なエラー' || !err.message ? '更新に失敗しました。再度お試しください。' : err.message)
         target.checked = !enabled
       }
     })
