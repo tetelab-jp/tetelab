@@ -46,67 +46,65 @@
 }
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
-body{
-  background:var(--bg); color:var(--ink); font-family:var(--ui);
-  font-size:15px; line-height:1.7; -webkit-text-size-adjust:100%;
-}
+body{background:var(--bg);color:var(--ink);font-family:var(--ui);font-size:15px;line-height:1.7;-webkit-text-size-adjust:100%}
 button,input,select,textarea{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-radius:4px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 
-.wrap{max-width:1180px;margin:0 auto;padding:28px 20px 80px}
-header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:22px}
+.wrap{max-width:1280px;margin:0 auto;padding:26px 20px 80px}
+header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:8px 16px;margin-bottom:16px}
 .brand{font-family:var(--display);font-weight:600;font-size:26px;letter-spacing:.02em;margin:0}
 .tagline{color:var(--ink-3);font-size:13px}
-.mode-toggle{margin-left:auto;display:flex;gap:6px}
+.top .right{margin-left:auto;display:flex;gap:6px}
 
-.grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:20px;align-items:start}
-@media (min-width:921px){.side{position:sticky;top:20px}}
-@media (max-width:920px){.grid{grid-template-columns:minmax(0,1fr)}}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--line);margin-bottom:18px}
+.tab{
+  border:1px solid transparent;border-bottom:none;background:transparent;padding:9px 18px;font-size:14px;
+  font-weight:500;cursor:pointer;border-radius:8px 8px 0 0;color:var(--ink-3);margin-bottom:-1px;
+}
+.tab:hover{color:var(--ink)}
+.tab[aria-selected="true"]{background:var(--surface);border-color:var(--line);color:var(--accent);font-weight:700}
+
+.grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,340px);gap:20px;align-items:start}
+@media (min-width:981px){.side{position:sticky;top:20px;max-height:calc(100vh - 40px);overflow:auto;padding-right:2px}}
+@media (max-width:980px){.grid{grid-template-columns:minmax(0,1fr)}}
 
 .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px}
 .card + .card{margin-top:16px}
-.card h2{font-size:13px;font-weight:700;letter-spacing:.09em;margin:0 0 12px;color:var(--ink-2);text-transform:none}
-.eyebrow{font-size:11px;letter-spacing:.12em;color:var(--ink-3);font-weight:500}
+.card h2{font-size:13px;font-weight:700;letter-spacing:.06em;margin:0 0 12px;color:var(--ink-2)}
 .stack{display:flex;flex-direction:column;gap:12px}
 .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .spread{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.eyebrow{font-size:11px;letter-spacing:.1em;color:var(--ink-3);font-weight:500}
+.hint{font-size:12px;color:var(--ink-3);line-height:1.65}
+.divider{height:1px;background:var(--line);margin:12px 0}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
 
-.btn{
-  border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;
-  padding:7px 13px;font-size:13px;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s;
-}
+.btn{border:1px solid var(--line-strong);background:var(--surface);border-radius:8px;padding:7px 13px;font-size:13px;font-weight:500;cursor:pointer;transition:background .12s,border-color .12s}
 .btn:hover{background:var(--surface-2)}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:var(--accent-on);font-weight:700}
 .btn.primary:hover{filter:brightness(1.06)}
 .btn.ghost{border-color:transparent;background:transparent;color:var(--ink-3);padding:5px 8px}
 .btn.ghost:hover{background:var(--surface-2);color:var(--ink)}
 .btn.sm{padding:4px 9px;font-size:12px}
-.btn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
+.btn.xs{padding:1px 6px;font-size:11px;line-height:1.5}
 .btn:disabled{opacity:.45;cursor:not-allowed}
 
-input[type=text],input[type=number],select,textarea{
-  background:var(--bg);border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;width:100%;
-}
+input[type=text],input[type=number],select,textarea{background:var(--bg);border:1px solid var(--line-strong);border-radius:8px;padding:8px 10px;width:100%}
+input[type=file]{font-size:13px;width:100%}
 textarea{resize:vertical;line-height:1.75}
 input[type=number]{font-family:var(--mono);font-variant-numeric:tabular-nums}
 label.field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--ink-2)}
 .inline-check{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--ink-2);cursor:pointer}
 
-/* preset chips */
 .presets{display:flex;flex-wrap:wrap;gap:6px}
-.preset{
-  display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line-strong);background:var(--surface);
-  border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer;
-}
+.preset{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line-strong);background:var(--surface);border-radius:999px;padding:5px 12px;font-size:12.5px;cursor:pointer}
 .preset .n{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--ink-3)}
 .preset[aria-pressed="true"]{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
 .preset[aria-pressed="true"] .n{color:var(--accent-on);opacity:.75}
-.preset .x{color:inherit;opacity:.5;font-size:14px;line-height:1}
+.preset .x{opacity:.5;font-size:14px;line-height:1}
 .preset .x:hover{opacity:1}
 
-/* gauge */
-.gauge-wrap{display:flex;flex-direction:column;gap:8px}
 .gauge{display:flex;height:22px;border-radius:6px;overflow:hidden;background:var(--surface-2);border:1px solid var(--line)}
 .seg{height:100%;transition:width .18s ease}
 .seg.body{background:var(--ink-2)}
@@ -114,71 +112,90 @@ label.field{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(
 .seg.over{background:var(--bad)}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--ink-2)}
 .legend b{font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;color:var(--ink)}
-.swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:baseline}
+.swatch{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 .rest-num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:30px;font-weight:500;line-height:1}
 .rest-box{display:flex;align-items:baseline;gap:8px}
 .rest-box .unit{font-size:12px;color:var(--ink-3)}
-.state-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:700;border:1px solid}
+.state-pill{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:3px 10px;font-size:11.5px;font-weight:700;border:1px solid;white-space:nowrap}
 .state-fit{background:var(--ok-soft);color:var(--ok);border-color:var(--ok-line)}
 .state-left{background:var(--warn-soft);color:var(--warn);border-color:var(--warn-line)}
 .state-over{background:var(--bad-soft);color:var(--bad);border-color:var(--bad-line)}
 
-/* chips */
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chip{
-  display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-strong);background:var(--surface);
-  border-radius:7px;padding:4px 9px;font-size:13px;cursor:pointer;text-align:left;
-}
-.chip:hover{border-color:var(--accent-line)}
-.chip .len{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;color:var(--ink-3);
-  background:var(--surface-2);border-radius:4px;padding:0 4px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-strong);background:var(--surface);border-radius:7px;padding:4px 9px;font-size:13px;text-align:left}
+.chip .len{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;color:var(--ink-3);background:var(--surface-2);border-radius:4px;padding:0 4px}
 .chip.on{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent)}
 .chip.on .len{background:var(--surface);color:var(--accent)}
-.chip.off{opacity:.45}
-.chip .star{color:var(--ink-3);font-size:12px}
-.chip.req .star{color:var(--accent)}
-.chip .exact{width:6px;height:6px;border-radius:50%;background:var(--ok)}
-.chip .del{color:var(--ink-3);font-size:14px;line-height:1;padding:0 2px}
+.chip .del{color:var(--ink-3);font-size:14px;line-height:1;padding:0 2px;cursor:pointer}
 .chip .del:hover{color:var(--bad)}
 .empty{color:var(--ink-3);font-size:13px;padding:10px 0}
 
-/* preview */
-.preview{
-  background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 13px;
-  min-height:64px;white-space:pre-wrap;word-break:break-word;font-size:14.5px;
-}
+/* キーワード帳（優先順リスト） */
+.kwrow{display:flex;align-items:center;gap:8px;padding:5px 8px;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+.kwrow + .kwrow{margin-top:5px}
+.kwrow .rank{font-family:var(--mono);font-size:11px;color:var(--ink-3);width:1.6em;text-align:right;flex:none}
+.kwrow .txt{flex:1;min-width:0;font-size:13.5px;word-break:break-word;cursor:pointer}
+.kwrow .len{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:11px;color:var(--ink-3);flex:none}
+.kwrow .moves{display:flex;flex-direction:column;gap:1px;flex:none}
+.kwrow .mv{border:none;background:transparent;color:var(--ink-3);cursor:pointer;line-height:.9;font-size:10px;padding:0 3px}
+.kwrow .mv:hover{color:var(--accent)}
+.kwrow.off{opacity:.45}
+.kwrow.sel{border-color:var(--accent-line);background:var(--accent-soft)}
+.kwlist{max-height:min(42vh,380px);overflow:auto;padding:2px;margin:-2px}
+
+.preview{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px 13px;min-height:64px;white-space:pre-wrap;word-break:break-word;font-size:14.5px}
 .preview .kwpart{color:var(--accent);font-weight:500}
 .preview .over{background:var(--bad-soft);color:var(--bad);text-decoration:underline wavy var(--bad)}
 
-/* candidates */
 .cand{border:1px solid var(--line);border-radius:8px;padding:11px 12px;background:var(--surface)}
 .cand + .cand{margin-top:8px}
 .cand.best{border-color:var(--ok-line);background:var(--ok-soft)}
 .cand-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px}
 .cand-text{font-size:13.5px;color:var(--ink-2);word-break:break-word;margin-bottom:8px;white-space:pre-wrap}
-.cand-kw{display:inline-block;color:var(--accent);font-weight:500}
+.cand-kw{color:var(--accent);font-weight:500}
 
-.kwlist{max-height:min(46vh,420px);overflow:auto;padding:2px;margin:-2px}
-.hint{font-size:12px;color:var(--ink-3);line-height:1.65}
-.divider{height:1px;background:var(--line);margin:14px 0}
-details.help{margin-top:20px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:12px 16px}
+/* 一括モードの表 */
+.tablewrap{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+table.data{border-collapse:collapse;width:100%;font-size:13px;min-width:720px}
+table.data th{background:var(--surface-2);text-align:left;font-weight:700;font-size:11.5px;letter-spacing:.04em;color:var(--ink-2);padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;position:sticky;top:0;z-index:1}
+table.data td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+table.data tr:last-child td{border-bottom:none}
+table.data tr.skip td{opacity:.4}
+table.data td.c{text-align:center;white-space:nowrap}
+table.data td.n{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+table.data input[type=number]{width:74px;padding:4px 6px}
+table.data input[type=text]{padding:4px 6px}
+.cellwrap{max-width:460px;word-break:break-word;white-space:pre-wrap}
+.result-kw{color:var(--accent);font-weight:500}
+#resultTable td:first-child{min-width:132px}
+#rowsTable td:first-child{width:34px}
+.grouptag{display:inline-block;font-size:10.5px;letter-spacing:.04em;background:var(--surface-3);color:var(--ink-2);border-radius:4px;padding:0 5px;margin-right:5px}
+
+.rules{display:flex;flex-direction:column;gap:6px}
+.rulerow{display:flex;gap:6px;align-items:center}
+.rulerow input[type=text]{flex:1}
+.rulerow input[type=number]{width:88px}
+
+.dropzone{border:1.5px dashed var(--line-strong);border-radius:10px;padding:18px;text-align:center;background:var(--surface-2);transition:border-color .15s,background .15s}
+.dropzone.hot{border-color:var(--accent);background:var(--accent-soft)}
+
+details.help{margin-top:16px;border:1px solid var(--line);border-radius:var(--radius);background:var(--surface);padding:12px 16px}
 details.help summary{cursor:pointer;font-size:13px;font-weight:700;color:var(--ink-2)}
-details.help ul{margin:10px 0 0;padding-left:1.2em;font-size:13px;color:var(--ink-2)}
+details.help ul{margin:10px 0 0;padding-left:1.2em;font-size:12.5px;color:var(--ink-2)}
 details.help li{margin-bottom:5px}
+details.opt{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--surface)}
+details.opt summary{cursor:pointer;font-size:12.5px;font-weight:700;color:var(--ink-2)}
+details.opt .stack{margin-top:10px}
 
-.toast{
-  position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(12px);
-  background:var(--ink);color:var(--bg);padding:9px 18px;border-radius:999px;font-size:13px;font-weight:500;
-  opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:60;
-}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(12px);background:var(--ink);color:var(--bg);padding:9px 18px;border-radius:999px;font-size:13px;font-weight:500;opacity:0;pointer-events:none;transition:opacity .18s,transform .18s;z-index:60;max-width:90vw;text-align:center}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
 
 .modal-bg{position:fixed;inset:0;background:rgba(20,12,16,.55);display:none;align-items:center;justify-content:center;padding:20px;z-index:50}
 .modal-bg.show{display:flex}
-.modal{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px;width:min(620px,100%)}
+.modal{background:var(--surface);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px;width:min(720px,100%)}
 .modal h3{margin:0 0 10px;font-size:15px}
-.modal textarea{font-family:var(--mono);font-size:12px;min-height:220px}
-.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.modal textarea{font-family:var(--mono);font-size:12px;min-height:240px}
+.hidden{display:none!important}
 </style>
 </head>
 <body>
@@ -186,16 +203,19 @@ details.help li{margin-bottom:5px}
 
 <header class="top">
   <h1 class="brand">キーワード尺合わせ</h1>
-  <span class="tagline">HPBの入力欄で余った文字数を、SEOキーワードでぴったり埋める</span>
-  <div class="mode-toggle">
-    <button class="btn sm ghost" id="themeBtn" title="表示テーマを切り替え">◐ テーマ</button>
-  </div>
+  <span class="tagline">入力欄で余った文字数を、キーワードで［ ］に詰める</span>
+  <div class="right"><button class="btn sm ghost" id="themeBtn" title="表示テーマを切り替え">◐ テーマ</button></div>
 </header>
 
-<div class="grid">
+<div class="tabs" role="tablist">
+  <button class="tab" id="tabSingle" role="tab" aria-selected="true">1件ずつ</button>
+  <button class="tab" id="tabBatch" role="tab" aria-selected="false">表からまとめて</button>
+</div>
 
-  <!-- ============ LEFT: 作業台 ============ -->
-  <div>
+<div class="grid">
+<div>
+  <!-- ==================== 1件ずつ ==================== -->
+  <div id="panelSingle">
     <section class="card">
       <h2>1. 入力欄と上限</h2>
       <div class="stack">
@@ -203,9 +223,9 @@ details.help li{margin-bottom:5px}
         <div class="row">
           <label class="field" style="width:130px">
             <span>上限文字数</span>
-            <input type="number" id="limitInput" min="1" max="10000" step="1">
+            <input type="number" id="limitInput" min="1" max="100000" step="1">
           </label>
-          <label class="field" style="flex:1;min-width:150px">
+          <label class="field" style="flex:1;min-width:180px">
             <span>この上限に名前をつけて保存</span>
             <div class="row" style="flex-wrap:nowrap">
               <input type="text" id="presetName" placeholder="例: サロンからの一言">
@@ -213,7 +233,6 @@ details.help li{margin-bottom:5px}
             </div>
           </label>
         </div>
-        <p class="hint">初期プリセットはサロンボードの実際の入力上限（実画面で確認済みの値）です。</p>
       </div>
     </section>
 
@@ -221,9 +240,8 @@ details.help li{margin-bottom:5px}
       <h2>2. 本文（キャッチ・コピー）</h2>
       <div class="stack">
         <textarea id="bodyInput" rows="4" placeholder="作成したキャッチコピーや本文を貼り付けてください"></textarea>
-
-        <div class="gauge-wrap">
-          <div class="gauge" id="gauge" role="img" aria-label="文字数の内訳">
+        <div class="stack" style="gap:8px">
+          <div class="gauge" role="img" aria-label="文字数の内訳">
             <div class="seg body" id="segBody" style="width:0%"></div>
             <div class="seg kw" id="segKw" style="width:0%"></div>
             <div class="seg over" id="segOver" style="width:0%"></div>
@@ -231,9 +249,8 @@ details.help li{margin-bottom:5px}
           <div class="spread">
             <div class="legend">
               <span><i class="swatch" style="background:var(--ink-2)"></i>本文 <b id="nBody">0</b></span>
-              <span><i class="swatch" style="background:var(--accent)"></i>キーワード <b id="nKw">0</b></span>
+              <span><i class="swatch" style="background:var(--accent)"></i>［キーワード］ <b id="nKw">0</b></span>
               <span>合計 <b id="nTotal">0</b> / <b id="nLimit">0</b></span>
-              <span>改行 <b id="nBreak">0</b></span>
             </div>
             <div class="rest-box">
               <span id="statePill" class="state-pill state-left">余り</span>
@@ -241,57 +258,16 @@ details.help li{margin-bottom:5px}
             </div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>3. 自動で埋める</h2>
-      <div class="stack">
         <div class="row">
-          <label class="field" style="width:170px">
-            <span>キーワードの区切り</span>
-            <select id="sepSelect">
-              <option value=" ">半角スペース</option>
-              <option value="　">全角スペース</option>
-              <option value="">なし（詰めて連結）</option>
-              <option value="・">・</option>
-              <option value="/">/</option>
-              <option value="｜">｜</option>
-              <option value="、">、</option>
-              <option value="__custom__">自分で指定…</option>
-            </select>
-          </label>
-          <label class="field" id="sepCustomWrap" style="width:120px;display:none">
-            <span>区切り文字</span>
-            <input type="text" id="sepCustom" maxlength="4">
-          </label>
-          <label class="field" style="width:120px">
-            <span>最大何語まで</span>
-            <input type="number" id="maxCount" min="1" max="12" step="1">
-          </label>
-          <label class="field" style="width:150px">
-            <span>同じ余りなら</span>
-            <select id="preferSelect">
-              <option value="many">語数が多い方を優先</option>
-              <option value="few">語数が少ない方を優先</option>
-            </select>
-          </label>
-        </div>
-        <div class="row">
-          <label class="inline-check"><input type="checkbox" id="excludeUsed"> 本文にすでに出ている語は使わない</label>
-          <label class="inline-check"><input type="checkbox" id="wideMode"> 全角2文字・半角1文字で数える</label>
-        </div>
-        <div class="row">
-          <button class="btn primary" id="fillBtn">余りを自動で埋める</button>
-          <button class="btn" id="clearSelBtn">選択をすべて解除</button>
+          <button class="btn primary" id="fillBtn">余りを埋める</button>
+          <button class="btn" id="clearSelBtn">選択を解除</button>
           <span class="hint" id="searchNote"></span>
         </div>
-        <div id="candidates"></div>
       </div>
     </section>
 
     <section class="card">
-      <h2>4. 完成した文章</h2>
+      <h2>3. 完成した文章</h2>
       <div class="stack">
         <div class="preview" id="preview"></div>
         <div class="spread">
@@ -300,47 +276,158 @@ details.help li{margin-bottom:5px}
         </div>
       </div>
     </section>
+
+    <section class="card hidden" id="candCard">
+      <h2>ほかの候補（余りが少ない順）</h2>
+      <div id="candidates"></div>
+    </section>
   </div>
 
-  <!-- ============ RIGHT: キーワード帳 ============ -->
-  <div class="side">
+  <!-- ==================== 表からまとめて ==================== -->
+  <div id="panelBatch" class="hidden">
     <section class="card">
-      <div class="spread" style="margin-bottom:10px">
-        <h2 style="margin:0">キーワード帳</h2>
-        <span class="eyebrow" id="kwCount"></span>
-      </div>
+      <h2>1. 表を取り込む</h2>
       <div class="stack">
-        <textarea id="kwInput" rows="4" placeholder="キーワードを入力（改行・カンマ・読点で区切って一括登録できます）&#10;例:&#10;髪質改善&#10;白髪ぼかしハイライト, 韓国レイヤー"></textarea>
-        <div class="row">
-          <button class="btn primary" id="addKwBtn">キーワード帳に追加</button>
-          <button class="btn sm ghost" id="exportBtn">書き出し</button>
-          <button class="btn sm ghost" id="importBtn">読み込み</button>
+        <div class="dropzone" id="dropzone">
+          <div class="stack" style="gap:8px;align-items:center">
+            <strong style="font-size:14px">.xlsx / .csv ファイルをここにドロップ</strong>
+            <input type="file" id="fileInput" accept=".xlsx,.csv,.tsv,.txt">
+            <span class="hint">またはスプレッドシートで範囲をコピーして、下の欄に貼り付け</span>
+          </div>
         </div>
-        <div class="divider"></div>
+        <textarea id="pasteInput" rows="4" placeholder="スプレッドシートからコピーした表をここに貼り付け（タブ区切り）"></textarea>
         <div class="row">
-          <input type="text" id="kwFilter" placeholder="絞り込み" style="flex:1;min-width:120px">
-          <select id="kwSort" style="width:140px">
-            <option value="added">追加順</option>
-            <option value="lenAsc">文字数が少ない順</option>
-            <option value="lenDesc">文字数が多い順</option>
-            <option value="kana">五十音順</option>
-          </select>
+          <button class="btn primary" id="importPasteBtn">貼り付けた表を取り込む</button>
+          <label class="field hidden" id="sheetPickWrap" style="width:220px">
+            <span>シート</span>
+            <select id="sheetPick"></select>
+          </label>
+          <span class="hint" id="importNote"></span>
         </div>
-        <p class="hint">クリックで選択／解除、★で必須指定（自動で埋めるとき必ず入ります）、×で削除。緑の点は「今の余りにちょうど収まる語」です。</p>
-        <div class="kwlist"><div class="chips" id="kwChips"></div></div>
       </div>
     </section>
 
-    <details class="help">
-      <summary>このツールについて</summary>
-      <ul>
-        <li>すべてブラウザの中だけで動きます。サーバーへの送信はありません。</li>
-        <li>キーワード帳と設定はこのブラウザに保存されます（別の端末やシークレットウィンドウには引き継がれません）。大事なデータは「書き出し」でテキストとして控えを取ってください。</li>
-        <li>初期プリセットの上限：スタイル名30／メニュー内容50／スタイリストコメント120／ブログタイトル25／口コミ返信500。</li>
-        <li>文字数は絵文字などを1文字として数えます。全角2文字換算の欄には「全角2文字・半角1文字で数える」を使ってください。</li>
-      </ul>
-    </details>
+    <section class="card">
+      <h2>2. 項目と上限</h2>
+      <div class="stack">
+        <p class="hint">「最大◯文字」と書かれたセルを探して、その左を項目名、右を本文として自動で取り出します。取れなかったところは表の中で直せます。</p>
+        <details class="opt">
+          <summary>項目名から上限を決めるルール（「最大◯文字」が無いとき／上書きに使う）</summary>
+          <div class="stack">
+            <div class="rules" id="ruleList"></div>
+            <div class="row">
+              <button class="btn sm" id="addRuleBtn">＋ ルールを追加</button>
+              <button class="btn sm" id="applyRulesBtn">ルールを表に適用（上書き）</button>
+            </div>
+          </div>
+        </details>
+        <div class="spread">
+          <span class="eyebrow" id="rowCount"></span>
+          <div class="row">
+            <button class="btn sm" id="selectAllBtn">全選択</button>
+            <button class="btn sm" id="selectNoneBtn">全解除</button>
+            <button class="btn sm ghost" id="clearRowsBtn">取り込みをクリア</button>
+          </div>
+        </div>
+        <div class="tablewrap"><table class="data" id="rowsTable"></table></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>3. まとめて埋める</h2>
+      <div class="stack">
+        <div class="row">
+          <button class="btn primary" id="runBatchBtn">選択した項目を一括で埋める</button>
+          <label class="inline-check"><input type="checkbox" id="rotateChk"> 項目ごとにキーワードの開始位置をずらす</label>
+          <span class="hint" id="batchNote"></span>
+        </div>
+        <div class="tablewrap"><table class="data" id="resultTable"></table></div>
+        <div class="row" id="resultActions"></div>
+      </div>
+    </section>
   </div>
+</div>
+
+<!-- ==================== 右カラム（共通） ==================== -->
+<div class="side">
+  <section class="card">
+    <div class="spread" style="margin-bottom:10px">
+      <h2 style="margin:0">キーワード帳（上から優先）</h2>
+      <span class="eyebrow" id="kwCount"></span>
+    </div>
+    <div class="stack">
+      <textarea id="kwInput" rows="3" placeholder="髪質改善/白髪ぼかし/韓国レイヤー&#10;（/ 区切り。改行・カンマ・読点でも区切れます）"></textarea>
+      <div class="row">
+        <button class="btn primary" id="addKwBtn">追加</button>
+        <button class="btn sm ghost" id="exportBtn">書き出し</button>
+        <button class="btn sm ghost" id="importBtn">読み込み</button>
+        <button class="btn sm ghost" id="clearKwBtn">全消去</button>
+      </div>
+      <p class="hint">上にあるものから順に詰めます。↑↓で優先順を入れ替え、文字をクリックで手動の選択／解除。</p>
+      <div class="kwlist"><div id="kwList"></div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>共通設定</h2>
+    <div class="stack">
+      <div class="row">
+        <label class="field" style="width:96px">
+          <span>区切り</span>
+          <input type="text" id="sepInput" maxlength="4">
+        </label>
+        <label class="field" style="width:76px">
+          <span>囲み 開始</span>
+          <input type="text" id="wrapOpen" maxlength="4">
+        </label>
+        <label class="field" style="width:76px">
+          <span>囲み 終了</span>
+          <input type="text" id="wrapClose" maxlength="4">
+        </label>
+      </div>
+      <label class="field">
+        <span>文字数の数え方</span>
+        <select id="countMode">
+          <option value="lenb2">=LENB(テキスト)/2（全角1・半角0.5）</option>
+          <option value="lenb">=LENB(テキスト)（全角2・半角1）</option>
+          <option value="len">=LEN(テキスト)（すべて1文字）</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>詰め方</span>
+        <select id="strategy">
+          <option value="priority">優先順に左から詰める</option>
+          <option value="best">余りが最小になる組み合わせを探す</option>
+        </select>
+      </label>
+      <div class="row">
+        <label class="field" style="width:112px">
+          <span>最大何語まで<span class="hint" title="「余りが最小」で探すときは12語までに制限されます"> ⓘ</span></span>
+          <input type="number" id="maxCount" min="1" max="30" step="1">
+        </label>
+        <label class="field" style="flex:1;min-width:120px">
+          <span>本文と囲みの間</span>
+          <select id="joinSelect">
+            <option value="">なし（詰める）</option>
+            <option value=" ">半角スペース</option>
+            <option value="　">全角スペース</option>
+          </select>
+        </label>
+      </div>
+      <label class="inline-check"><input type="checkbox" id="excludeUsed"> 本文にすでに出ている語は使わない</label>
+    </div>
+  </section>
+
+  <details class="help">
+    <summary>このツールについて</summary>
+    <ul>
+      <li>すべてブラウザの中だけで動きます。xlsxの解析も含め、ファイルはどこにも送信されません。</li>
+      <li>キーワード帳・設定・上限プリセットはこのブラウザに保存されます。控えは「書き出し」から取ってください。</li>
+      <li>文字数は既定でスプレッドシートの <code>=LENB(テキスト)/2</code> と同じ数え方（全角1・半角0.5）です。囲みの記号と区切りも文字数に含めて計算します。</li>
+      <li>絵文字（サロゲートペア）は2として数えます。Excelの実際のLENBと環境によって差が出る場合があります。</li>
+    </ul>
+  </details>
+</div>
 </div>
 </div>
 
@@ -362,87 +449,222 @@ details.help li{margin-bottom:5px}
 (function(){
 "use strict";
 
-/* ---------- 保存 ---------- */
-var KEY = "hpb-keyword-filler.v1";
-function load(){
-  try{ var raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) : null; }
-  catch(e){ return null; }
+var $ = function(id){ return document.getElementById(id); };
+
+/* ==================== 文字数 ==================== */
+/* 既定は スプレッドシートの =LENB(テキスト)/2 と同じ数え方（全角1・半角0.5）。 */
+function charWeight(ch, mode){
+  var c = ch.codePointAt(0);
+  var bytes;
+  if(c > 0xFFFF) bytes = 4;                              /* 絵文字など */
+  else if(c <= 0x7F) bytes = 1;                          /* ASCII（改行含む） */
+  else if(c >= 0xFF61 && c <= 0xFF9F) bytes = 1;         /* 半角カナ */
+  else bytes = 2;
+  if(mode === "len") return 1;
+  if(mode === "lenb") return bytes;
+  return bytes / 2;
 }
+function countWith(str, mode){
+  if(!str) return 0;
+  var n = 0, chars = Array.from(String(str));
+  for(var i=0;i<chars.length;i++) n += charWeight(chars[i], mode);
+  return n;
+}
+function count(str){ return countWith(str, S.countMode); }
+function fmt(n){
+  if(typeof n !== "number" || isNaN(n)) return "0";
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+}
+function uid(){ return "k" + Date.now().toString(36) + Math.floor(Math.random()*1e6).toString(36); }
+function toHalfDigits(s){
+  return String(s).replace(/[０-９]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); });
+}
+
+/* ==================== 状態 ==================== */
+var KEY = "hpb-keyword-filler.v2";
+var DEFAULT_PRESETS = [
+  {id:"p-catch", name:"キャッチ", limit:50},
+  {id:"p-copy", name:"コピー", limit:200},
+  {id:"p-title", name:"タイトル", limit:50},
+  {id:"p-desc", name:"説明", limit:150},
+  {id:"sb-style-name", name:"スタイル名", limit:30},
+  {id:"sb-menu", name:"メニュー内容", limit:50},
+  {id:"sb-comment", name:"スタイリストコメント", limit:120}
+];
+var DEFAULT_RULES = [
+  {name:"タイトル", limit:50},
+  {name:"説明", limit:150},
+  {name:"キャッチ", limit:50},
+  {name:"コピー", limit:200}
+];
+
+var S = {
+  mode:"single",
+  presets: DEFAULT_PRESETS.slice(),
+  activePresetId:"p-catch",
+  limit:50,
+  body:"",
+  keywords:[],
+  selected:[],
+  sep:"/",
+  wrapOpen:"[",
+  wrapClose:"]",
+  join:"",
+  countMode:"lenb2",
+  strategy:"priority",
+  maxCount:12,
+  excludeUsed:true,
+  rotate:false,
+  rules: DEFAULT_RULES.slice(),
+  rows:[],
+  results:[],
+  grid:null,
+  theme:"auto",
+  candidates:[],
+  candShown:8
+};
+(function restore(){
+  var saved = null;
+  try{ var raw = localStorage.getItem(KEY); saved = raw ? JSON.parse(raw) : null; }catch(e){}
+  if(!saved) return;
+  ["mode","activePresetId","limit","body","sep","wrapOpen","wrapClose","join","countMode",
+   "strategy","maxCount","excludeUsed","rotate","theme"].forEach(function(k){
+    if(saved[k] !== undefined && saved[k] !== null) S[k] = saved[k];
+  });
+  if(Array.isArray(saved.presets) && saved.presets.length) S.presets = saved.presets;
+  if(Array.isArray(saved.rules) && saved.rules.length) S.rules = saved.rules;
+  if(Array.isArray(saved.keywords)) S.keywords = saved.keywords;
+  if(Array.isArray(saved.selected)) S.selected = saved.selected;
+})();
 function save(){
   try{
     localStorage.setItem(KEY, JSON.stringify({
-      presets:S.presets, activePresetId:S.activePresetId, limit:S.limit, body:S.body,
-      sep:S.sep, sepChoice:S.sepChoice, maxCount:S.maxCount, prefer:S.prefer,
-      excludeUsed:S.excludeUsed, wideMode:S.wideMode, keywords:S.keywords,
-      selected:S.selected, kwSort:S.kwSort, theme:S.theme
+      mode:S.mode, presets:S.presets, activePresetId:S.activePresetId, limit:S.limit, body:S.body,
+      keywords:S.keywords, selected:S.selected, sep:S.sep, wrapOpen:S.wrapOpen, wrapClose:S.wrapClose,
+      join:S.join, countMode:S.countMode, strategy:S.strategy, maxCount:S.maxCount,
+      excludeUsed:S.excludeUsed, rotate:S.rotate, rules:S.rules, theme:S.theme
     }));
-  }catch(e){/* 保存できない環境でも動作は継続 */}
+  }catch(e){}
 }
 
-var DEFAULT_PRESETS = [
-  {id:"sb-style-name", name:"スタイル名", limit:30},
-  {id:"sb-menu", name:"メニュー内容", limit:50},
-  {id:"sb-comment", name:"スタイリストコメント", limit:120},
-  {id:"sb-blog-title", name:"ブログタイトル", limit:25},
-  {id:"sb-review", name:"口コミ返信", limit:500}
-];
-
-var S = Object.assign({
-  presets: DEFAULT_PRESETS.slice(),
-  activePresetId: "sb-style-name",
-  limit: 30,
-  body: "",
-  sep: " ",
-  sepChoice: " ",
-  maxCount: 6,
-  prefer: "many",
-  excludeUsed: true,
-  wideMode: false,
-  keywords: [],
-  selected: [],
-  kwSort: "added",
-  theme: "auto"
-}, load() || {});
-if(!Array.isArray(S.presets) || !S.presets.length) S.presets = DEFAULT_PRESETS.slice();
-if(!Array.isArray(S.keywords)) S.keywords = [];
-if(!Array.isArray(S.selected)) S.selected = [];
-
-/* ---------- 文字数 ---------- */
-function isHalfWidth(ch){
-  var c = ch.codePointAt(0);
-  return (c >= 0x20 && c <= 0x7e) || (c >= 0xff61 && c <= 0xff9f);
+/* ==================== 埋め込みエンジン ==================== */
+/* 完成形: 本文 + 連結文字 + 開き括弧 + キーワード(区切り) + 閉じ括弧
+   括弧・区切り・連結文字もすべて文字数に含めて計算する。 */
+function compose(body, texts){
+  if(!texts || !texts.length) return body;
+  var inner = S.wrapOpen + texts.join(S.sep) + S.wrapClose;
+  return body ? body + S.join + inner : inner;
 }
-function count(str){
-  if(!str) return 0;
-  var chars = Array.from(str);
-  if(!S.wideMode) return chars.length;
-  var n = 0;
-  for(var i=0;i<chars.length;i++){ n += isHalfWidth(chars[i]) ? 1 : 2; }
-  return n;
+function overhead(body){
+  return count(S.wrapOpen) + count(S.wrapClose) + (body ? count(S.join) : 0);
 }
-function uid(){ return "k" + (Date.now().toString(36)) + Math.floor(Math.random()*1e6).toString(36); }
+function usableKeywords(body){
+  var pool = S.keywords.filter(function(k){ return k.on !== false && k.text; });
+  if(S.excludeUsed && body){
+    pool = pool.filter(function(k){ return body.indexOf(k.text) === -1; });
+  }
+  return pool;
+}
 
-/* ---------- 派生値 ---------- */
+/* 優先順に左から詰める（入らない語は飛ばして次へ） */
+function fillPriority(body, limit, pool, startAt){
+  var sepLen = count(S.sep), head = overhead(body), bodyLen = count(body);
+  var picked = [], usedKw = 0;
+  var order = pool.slice();
+  if(startAt){
+    var n = order.length;
+    if(n) order = order.slice(startAt % n).concat(order.slice(0, startAt % n));
+  }
+  for(var i=0;i<order.length;i++){
+    if(picked.length >= S.maxCount) break;
+    var add = count(order[i].text) + (picked.length ? sepLen : 0);
+    if(bodyLen + head + usedKw + add <= limit){ picked.push(order[i]); usedKw += add; }
+  }
+  return picked;
+}
+
+/* 余りが最小になる組み合わせを部分和探索で選ぶ */
+var MAX_NODES = 250000;
+function subsetSearch(items, capacity, maxPick){
+  var n = items.length;
+  var sorted = items.slice().sort(function(a,b){ return b.cost - a.cost; });
+  var suffix = new Array(n + 1); suffix[n] = 0;
+  for(var i=n-1;i>=0;i--) suffix[i] = suffix[i+1] + sorted[i].cost;
+  var results = [], pick = [], nodes = 0, truncated = false, threshold = capacity;
+  function cmp(a,b){
+    if(a.slack !== b.slack) return a.slack - b.slack;
+    return b.ids.length - a.ids.length;
+  }
+  function prune(){
+    if(results.length < 4000) return;
+    results.sort(cmp); results.length = 1200;
+    threshold = results[results.length - 1].slack;
+  }
+  function dfs(start, used){
+    if(++nodes > MAX_NODES){ truncated = true; return; }
+    if(pick.length){
+      var slack = capacity - used;
+      if(slack <= threshold){ results.push({ids: pick.slice(), used: used, slack: slack}); prune(); }
+    }
+    if(pick.length >= maxPick) return;
+    if(capacity - used - suffix[start] > threshold) return;
+    for(var j=start;j<n;j++){
+      if(used + sorted[j].cost > capacity) continue;
+      pick.push(sorted[j].id);
+      dfs(j + 1, used + sorted[j].cost);
+      pick.pop();
+      if(truncated) return;
+    }
+  }
+  if(n) dfs(0, 0);
+  results.sort(cmp);
+  return {results: results, truncated: truncated};
+}
+function fillBest(body, limit, pool){
+  var sepLen = count(S.sep), head = overhead(body), bodyLen = count(body);
+  var capacity = limit - bodyLen - head + sepLen; /* 先頭語には区切りが付かない分を足す */
+  if(capacity <= 0) return {picked: [], all: [], truncated: false};
+  var items = pool.map(function(k){ return {id: k.id, cost: count(k.text) + sepLen}; });
+  var found = subsetSearch(items, capacity, Math.min(12, S.maxCount));
+  var rank = {}; pool.forEach(function(k,i){ rank[k.id] = i; });
+  var byId = {}; pool.forEach(function(k){ byId[k.id] = k; });
+  var combos = found.results.slice(0, 60).map(function(r){
+    var ids = r.ids.slice().sort(function(a,b){ return rank[a] - rank[b]; });
+    return ids.map(function(id){ return byId[id]; });
+  });
+  return {picked: combos[0] || [], all: combos, truncated: found.truncated};
+}
+
+function fillOne(body, limit, startAt){
+  var pool = usableKeywords(body);
+  if(!pool.length) return {picked: [], all: [], reason: "キーワードがありません"};
+  if(count(body) + overhead(body) > limit){
+    return {picked: [], all: [], reason: "本文だけで上限に達しています"};
+  }
+  if(S.strategy === "best"){
+    var r = fillBest(body, limit, pool);
+    if(!r.picked.length) r.reason = "余りに入るキーワードがありません";
+    return r;
+  }
+  var picked = fillPriority(body, limit, pool, startAt || 0);
+  return {picked: picked, all: picked.length ? [picked] : [],
+          capped: picked.length >= S.maxCount && picked.length < pool.length,
+          reason: picked.length ? "" : "余りに入るキーワードがありません"};
+}
+
+/* ==================== 1件モードの描画 ==================== */
 function kwById(id){
-  for(var i=0;i<S.keywords.length;i++){ if(S.keywords[i].id === id) return S.keywords[i]; }
+  for(var i=0;i<S.keywords.length;i++) if(S.keywords[i].id === id) return S.keywords[i];
   return null;
 }
 function selectedKeywords(){
   var out = [];
-  for(var i=0;i<S.selected.length;i++){ var k = kwById(S.selected[i]); if(k) out.push(k); }
+  S.selected.forEach(function(id){ var k = kwById(id); if(k) out.push(k); });
   return out;
 }
-function composeFrom(texts){
-  if(!texts.length) return S.body;
-  var joined = texts.join(S.sep);
-  return S.body ? S.body + S.sep + joined : joined;
+function currentText(){
+  return compose(S.body, selectedKeywords().map(function(k){ return k.text; }));
 }
-function composeText(){
-  return composeFrom(selectedKeywords().map(function(k){ return k.text; }));
-}
-
-/* ---------- 描画 ---------- */
-var $ = function(id){ return document.getElementById(id); };
 
 function renderPresets(){
   var box = $("presets"); box.innerHTML = "";
@@ -450,13 +672,12 @@ function renderPresets(){
     var b = document.createElement("button");
     b.className = "preset"; b.type = "button";
     b.setAttribute("aria-pressed", String(S.activePresetId === p.id));
-    b.innerHTML = '<span></span><span class="n"></span>';
-    b.firstChild.textContent = p.name;
-    b.lastChild.textContent = p.limit;
+    var name = document.createElement("span"); name.textContent = p.name;
+    var num = document.createElement("span"); num.className = "n"; num.textContent = p.limit;
+    b.appendChild(name); b.appendChild(num);
     b.addEventListener("click", function(){
-      S.activePresetId = p.id; S.limit = p.limit;
-      $("limitInput").value = p.limit;
-      S.candidates = null; renderAll(); save();
+      S.activePresetId = p.id; S.limit = p.limit; $("limitInput").value = p.limit;
+      S.candidates = []; renderSingle(); save();
     });
     var x = document.createElement("span");
     x.className = "x"; x.textContent = "×"; x.title = "このプリセットを削除";
@@ -474,31 +695,29 @@ function renderPresets(){
 
 function renderGauge(){
   var bodyLen = count(S.body);
-  var full = composeText();
-  var totalLen = count(full);
-  var kwLen = totalLen - bodyLen;
+  var full = currentText();
+  var total = count(full);
+  var kwLen = total - bodyLen;
   var limit = S.limit || 1;
-  var rest = S.limit - totalLen;
+  var rest = S.limit - total;
 
   var pctBody = Math.max(0, Math.min(100, bodyLen / limit * 100));
-  var pctKw   = Math.max(0, Math.min(100 - pctBody, (kwLen > 0 ? kwLen : 0) / limit * 100));
-  var pctOver = rest < 0 ? Math.min(100, (-rest) / limit * 100) : 0;
-  if(rest < 0){
-    var used = 100;
-    var shareBody = bodyLen / totalLen, shareKw = (kwLen > 0 ? kwLen : 0) / totalLen;
-    pctBody = shareBody * (used - pctOver);
-    pctKw = shareKw * (used - pctOver);
+  var pctKw = Math.max(0, Math.min(100 - pctBody, Math.max(0, kwLen) / limit * 100));
+  var pctOver = 0;
+  if(rest < 0 && total > 0){
+    pctOver = Math.min(100, (-rest) / limit * 100);
+    pctBody = (bodyLen / total) * (100 - pctOver);
+    pctKw = (Math.max(0, kwLen) / total) * (100 - pctOver);
   }
   $("segBody").style.width = pctBody + "%";
   $("segKw").style.width = pctKw + "%";
   $("segOver").style.width = pctOver + "%";
 
-  $("nBody").textContent = bodyLen;
-  $("nKw").textContent = kwLen > 0 ? kwLen : 0;
-  $("nTotal").textContent = totalLen;
-  $("nLimit").textContent = S.limit;
-  $("nBreak").textContent = (full.match(/\n/g) || []).length;
-  $("restNum").textContent = rest < 0 ? "+" + (-rest) : rest;
+  $("nBody").textContent = fmt(bodyLen);
+  $("nKw").textContent = fmt(Math.max(0, kwLen));
+  $("nTotal").textContent = fmt(total);
+  $("nLimit").textContent = fmt(S.limit);
+  $("restNum").textContent = rest < 0 ? "+" + fmt(-rest) : fmt(rest);
 
   var pill = $("statePill");
   pill.className = "state-pill " + (rest < 0 ? "state-over" : rest === 0 ? "state-fit" : "state-left");
@@ -510,20 +729,21 @@ function renderGauge(){
 function renderPreview(full, bodyLen){
   var box = $("preview"); box.innerHTML = "";
   if(!full){
-    box.innerHTML = '<span class="hint">ここに本文＋キーワードの完成形が表示されます。</span>';
-    return;
+    var h = document.createElement("span"); h.className = "hint";
+    h.textContent = "ここに本文＋［キーワード］の完成形が表示されます。";
+    box.appendChild(h); return;
   }
   var chars = Array.from(full);
-  // 上限を超えた分の開始位置（文字数の数え方に合わせて走査）
   var cut = chars.length, acc = 0;
   for(var i=0;i<chars.length;i++){
-    acc += S.wideMode ? (isHalfWidth(chars[i]) ? 1 : 2) : 1;
+    acc += charWeight(chars[i], S.countMode);
     if(acc > S.limit){ cut = i; break; }
   }
-  var head = chars.slice(0, Math.min(cut, bodyLen)).join("");
-  var mid  = chars.slice(Math.min(cut, bodyLen), cut).join("");
+  var bodyChars = Array.from(S.body).length;
+  var head = chars.slice(0, Math.min(cut, bodyChars)).join("");
+  var mid = chars.slice(Math.min(cut, bodyChars), cut).join("");
   var tail = chars.slice(cut).join("");
-  if(head){ box.appendChild(document.createTextNode(head)); }
+  if(head) box.appendChild(document.createTextNode(head));
   if(mid){ var m = document.createElement("span"); m.className = "kwpart"; m.textContent = mid; box.appendChild(m); }
   if(tail){ var t = document.createElement("span"); t.className = "over"; t.textContent = tail; box.appendChild(t); }
 }
@@ -532,268 +752,130 @@ function renderSelected(){
   var box = $("selectedChips"); box.innerHTML = "";
   var sel = selectedKeywords();
   if(!sel.length){
-    var e = document.createElement("span"); e.className = "hint";
-    e.textContent = "キーワード未選択";
+    var e = document.createElement("span"); e.className = "hint"; e.textContent = "キーワード未選択";
     box.appendChild(e); return;
   }
   sel.forEach(function(k){
     var c = document.createElement("button");
-    c.type = "button"; c.className = "chip on";
-    c.innerHTML = '<span></span><span class="len"></span>';
-    c.firstChild.textContent = k.text;
-    c.lastChild.textContent = count(k.text);
-    c.title = "クリックで外す";
+    c.type = "button"; c.className = "chip on"; c.title = "クリックで外す";
+    var t = document.createElement("span"); t.textContent = k.text;
+    var l = document.createElement("span"); l.className = "len"; l.textContent = fmt(count(k.text));
+    c.appendChild(t); c.appendChild(l);
     c.addEventListener("click", function(){ toggleSelect(k.id); });
     box.appendChild(c);
   });
 }
 
-function sortedKeywords(){
-  var list = S.keywords.slice();
-  var f = ($("kwFilter").value || "").trim();
-  if(f) list = list.filter(function(k){ return k.text.indexOf(f) !== -1; });
-  if(S.kwSort === "lenAsc") list.sort(function(a,b){ return count(a.text) - count(b.text); });
-  else if(S.kwSort === "lenDesc") list.sort(function(a,b){ return count(b.text) - count(a.text); });
-  else if(S.kwSort === "kana") list.sort(function(a,b){ return a.text.localeCompare(b.text, "ja"); });
-  return list;
-}
-
 function renderKeywords(){
-  var box = $("kwChips"); box.innerHTML = "";
+  var box = $("kwList"); box.innerHTML = "";
   $("kwCount").textContent = S.keywords.length ? S.keywords.length + " 語" : "";
-  var list = sortedKeywords();
-  if(!list.length){
+  if(!S.keywords.length){
     var e = document.createElement("div"); e.className = "empty";
-    e.textContent = S.keywords.length ? "該当するキーワードがありません。" : "キーワードがまだありません。上の欄から追加してください。";
+    e.textContent = "キーワードがまだありません。上の欄に / 区切りで入れて「追加」。";
     box.appendChild(e); return;
   }
-  var sepLen = count(S.sep);
-  var bodyLen = count(S.body);
-  var curLen = count(composeText());
-  var restNow = S.limit - curLen;
-  var hasContent = curLen > 0;
-
-  list.forEach(function(k){
+  S.keywords.forEach(function(k, i){
     var on = S.selected.indexOf(k.id) !== -1;
-    var c = document.createElement("div");
-    c.className = "chip" + (on ? " on" : "") + (k.on === false ? " off" : "") + (k.req ? " req" : "");
+    var row = document.createElement("div");
+    row.className = "kwrow" + (on ? " sel" : "") + (k.on === false ? " off" : "");
 
-    var star = document.createElement("span");
-    star.className = "star"; star.textContent = k.req ? "★" : "☆";
-    star.title = "必須キーワードにする";
-    star.addEventListener("click", function(ev){ ev.stopPropagation(); k.req = !k.req; renderKeywords(); save(); });
-    c.appendChild(star);
+    var moves = document.createElement("div"); moves.className = "moves";
+    var up = document.createElement("button");
+    up.className = "mv"; up.type = "button"; up.textContent = "▲"; up.title = "優先順を上げる";
+    up.disabled = i === 0;
+    up.addEventListener("click", function(){ moveKw(i, -1); });
+    var dn = document.createElement("button");
+    dn.className = "mv"; dn.type = "button"; dn.textContent = "▼"; dn.title = "優先順を下げる";
+    dn.disabled = i === S.keywords.length - 1;
+    dn.addEventListener("click", function(){ moveKw(i, 1); });
+    moves.appendChild(up); moves.appendChild(dn);
+    row.appendChild(moves);
 
-    var label = document.createElement("span");
-    label.textContent = k.text;
-    label.style.cursor = "pointer";
-    label.addEventListener("click", function(){ toggleSelect(k.id); });
-    c.appendChild(label);
+    var rank = document.createElement("span"); rank.className = "rank"; rank.textContent = (i + 1);
+    row.appendChild(rank);
 
-    var cost = count(k.text) + (hasContent ? sepLen : 0);
-    if(!on && cost === restNow && restNow > 0){
-      var dot = document.createElement("span");
-      dot.className = "exact"; dot.title = "この語だけで余りがぴったり埋まります";
-      c.appendChild(dot);
-    }
+    var txt = document.createElement("span");
+    txt.className = "txt"; txt.textContent = k.text; txt.title = "クリックで選択／解除";
+    txt.addEventListener("click", function(){ toggleSelect(k.id); });
+    row.appendChild(txt);
 
-    var len = document.createElement("span");
-    len.className = "len"; len.textContent = count(k.text);
-    c.appendChild(len);
+    var len = document.createElement("span"); len.className = "len"; len.textContent = fmt(count(k.text));
+    row.appendChild(len);
+
+    var use = document.createElement("input");
+    use.type = "checkbox"; use.checked = k.on !== false; use.title = "自動で埋めるときに使う";
+    use.addEventListener("change", function(){ k.on = use.checked; renderKeywords(); save(); });
+    row.appendChild(use);
 
     var del = document.createElement("span");
     del.className = "del"; del.textContent = "×"; del.title = "削除";
-    del.addEventListener("click", function(ev){
-      ev.stopPropagation();
+    del.addEventListener("click", function(){
       S.keywords = S.keywords.filter(function(q){ return q.id !== k.id; });
       S.selected = S.selected.filter(function(id){ return id !== k.id; });
-      renderAll(); save();
+      renderKeywords(); renderGauge(); renderSelected(); save();
     });
-    c.appendChild(del);
-    box.appendChild(c);
+    row.appendChild(del);
+    box.appendChild(row);
   });
 }
-
+function moveKw(i, d){
+  var j = i + d;
+  if(j < 0 || j >= S.keywords.length) return;
+  var tmp = S.keywords[i]; S.keywords[i] = S.keywords[j]; S.keywords[j] = tmp;
+  renderKeywords(); save();
+}
 function toggleSelect(id){
   var i = S.selected.indexOf(id);
   if(i === -1) S.selected.push(id); else S.selected.splice(i, 1);
   renderGauge(); renderSelected(); renderKeywords(); save();
 }
 
-/* ---------- 組み合わせ探索（部分和） ---------- */
-var MAX_NODES = 250000;
-
-function search(items, capacity, maxPick, prefer){
-  var n = items.length;
-  var idx = items.map(function(_, i){ return i; });
-  idx.sort(function(a,b){ return items[b].cost - items[a].cost; });
-  var sorted = idx.map(function(i){ return items[i]; });
-
-  var suffix = new Array(n + 1); suffix[n] = 0;
-  for(var i = n - 1; i >= 0; i--) suffix[i] = suffix[i+1] + sorted[i].cost;
-
-  var results = [], pick = [], nodes = 0, truncated = false;
-  var threshold = capacity;
-
-  function cmp(a, b){
-    if(a.slack !== b.slack) return a.slack - b.slack;
-    if(a.ids.length !== b.ids.length){
-      return prefer === "many" ? b.ids.length - a.ids.length : a.ids.length - b.ids.length;
-    }
-    return 0;
-  }
-  function prune(){
-    if(results.length < 4000) return;
-    results.sort(cmp);
-    results.length = 1200;
-    threshold = results[results.length - 1].slack;
-  }
-  function dfs(start, used){
-    if(++nodes > MAX_NODES){ truncated = true; return; }
-    if(pick.length){
-      var slack = capacity - used;
-      if(slack <= threshold){ results.push({ids: pick.slice(), used: used, slack: slack}); prune(); }
-    }
-    if(pick.length >= maxPick) return;
-    if(capacity - used - suffix[start] > threshold) return;
-    for(var j = start; j < n; j++){
-      if(used + sorted[j].cost > capacity) continue;
-      pick.push(sorted[j].id);
-      dfs(j + 1, used + sorted[j].cost);
-      pick.pop();
-      if(truncated) return;
-    }
-  }
-  if(n) dfs(0, 0);
-  results.sort(cmp);
-  return {results: results, truncated: truncated};
-}
-
-function runAutoFill(){
-  var sepLen = count(S.sep);
-  var bodyLen = count(S.body);
-  var capacity = S.limit - bodyLen + (bodyLen > 0 ? 0 : sepLen);
-
-  var pool = S.keywords.filter(function(k){ return k.on !== false && k.text; });
-  if(S.excludeUsed){
-    pool = pool.filter(function(k){ return S.body.indexOf(k.text) === -1; });
-  }
-  var required = pool.filter(function(k){ return k.req; });
-  var optional = pool.filter(function(k){ return !k.req; });
-
-  var reqCost = 0;
-  required.forEach(function(k){ reqCost += count(k.text) + sepLen; });
-  capacity -= reqCost;
-
-  var note = $("searchNote");
-  if(!pool.length){
-    S.candidates = []; note.textContent = "使えるキーワードがありません。";
-    renderCandidates(); return;
-  }
-  if(capacity < 0){
-    S.candidates = [];
-    note.textContent = "必須キーワード（★）だけで上限を超えています。";
-    renderCandidates(); return;
-  }
-
-  var items = optional.map(function(k){ return {id: k.id, cost: count(k.text) + sepLen}; });
-  var found = search(items, capacity, Math.max(1, S.maxCount), S.prefer);
-
-  var order = {};
-  S.keywords.forEach(function(k, i){ order[k.id] = i; });
-  var reqIds = required.map(function(k){ return k.id; });
-
-  var cands = found.results.map(function(r){
-    var ids = reqIds.concat(r.ids);
-    ids.sort(function(a,b){ return order[a] - order[b]; });
-    return {ids: ids, slack: r.slack};
-  });
-  if(required.length){
-    cands.unshift({ids: reqIds.slice(), slack: capacity});
-  }
-
-  var seen = {}, uniq = [];
-  cands.forEach(function(c){
-    var key = c.ids.slice().sort().join("|");
-    if(seen[key]) return;
-    seen[key] = 1; uniq.push(c);
-  });
-  uniq.sort(function(a,b){
-    if(a.slack !== b.slack) return a.slack - b.slack;
-    return S.prefer === "many" ? b.ids.length - a.ids.length : a.ids.length - b.ids.length;
-  });
-
-  S.candidates = uniq;
-  S.candShown = 8;
-  var msg;
-  if(!uniq.length){
-    msg = "余りに収まる組み合わせが見つかりませんでした。もっと短いキーワードを足してください。";
-  } else {
-    msg = uniq.length + " 通りの組み合わせ" + (found.truncated ? "（多すぎるため一部のみ）" : "");
-    var best = uniq[0];
-    if(best.slack > 0 && best.ids.length >= S.maxCount + required.length){
-      msg += " ／ 語数の上限に達しています。「最大何語まで」を増やすともっと埋まります。";
-    }
-  }
-  note.textContent = msg;
-  renderCandidates();
-}
-
 function renderCandidates(){
-  var box = $("candidates"); box.innerHTML = "";
+  var card = $("candCard"), box = $("candidates");
+  box.innerHTML = "";
   var list = S.candidates || [];
-  if(!list.length) return;
+  if(list.length < 2){ card.classList.add("hidden"); return; }
+  card.classList.remove("hidden");
   var shown = Math.min(S.candShown || 8, list.length);
-
-  for(var i = 0; i < shown; i++){
-    (function(c){
-      var texts = c.ids.map(function(id){ var k = kwById(id); return k ? k.text : ""; }).filter(Boolean);
-      var full = composeFrom(texts);
-      var total = count(full);
-      var rest = S.limit - total;
-
+  for(var i=0;i<shown;i++){
+    (function(picked){
+      var texts = picked.map(function(k){ return k.text; });
+      var full = compose(S.body, texts);
+      var total = count(full), rest = S.limit - total;
       var el = document.createElement("div");
       el.className = "cand" + (rest === 0 ? " best" : "");
 
-      var head = document.createElement("div");
-      head.className = "cand-head";
+      var head = document.createElement("div"); head.className = "cand-head";
       var pill = document.createElement("span");
       pill.className = "state-pill " + (rest === 0 ? "state-fit" : rest < 0 ? "state-over" : "state-left");
-      pill.textContent = rest === 0 ? "ぴったり" : rest < 0 ? "超過 " + (-rest) : "余り " + rest;
-      head.appendChild(pill);
-      var meta = document.createElement("span");
-      meta.className = "hint";
-      meta.textContent = texts.length + "語 ／ 合計 " + total + " 文字";
-      head.appendChild(meta);
+      pill.textContent = rest === 0 ? "ぴったり" : rest < 0 ? "超過 " + fmt(-rest) : "余り " + fmt(rest);
+      var meta = document.createElement("span"); meta.className = "hint";
+      meta.textContent = texts.length + "語 ／ 合計 " + fmt(total) + " 文字";
+      head.appendChild(pill); head.appendChild(meta);
       el.appendChild(head);
 
-      var txt = document.createElement("div");
-      txt.className = "cand-text";
-      if(S.body) txt.appendChild(document.createTextNode(S.body + S.sep));
-      var kwSpan = document.createElement("span");
-      kwSpan.className = "cand-kw";
-      kwSpan.textContent = texts.join(S.sep);
+      var txt = document.createElement("div"); txt.className = "cand-text";
+      if(S.body) txt.appendChild(document.createTextNode(S.body + S.join));
+      var kwSpan = document.createElement("span"); kwSpan.className = "cand-kw";
+      kwSpan.textContent = S.wrapOpen + texts.join(S.sep) + S.wrapClose;
       txt.appendChild(kwSpan);
       el.appendChild(txt);
 
-      var row = document.createElement("div");
-      row.className = "row";
-      var useBtn = document.createElement("button");
-      useBtn.className = "btn sm primary"; useBtn.textContent = "これを使う";
-      useBtn.addEventListener("click", function(){
-        S.selected = c.ids.slice();
-        renderGauge(); renderSelected(); renderKeywords(); save();
-        toast("キーワードを反映しました");
+      var row = document.createElement("div"); row.className = "row";
+      var use = document.createElement("button");
+      use.className = "btn sm primary"; use.textContent = "これを使う";
+      use.addEventListener("click", function(){
+        S.selected = picked.map(function(k){ return k.id; });
+        renderGauge(); renderSelected(); renderKeywords(); save(); toast("反映しました");
       });
-      var copyBtn = document.createElement("button");
-      copyBtn.className = "btn sm"; copyBtn.textContent = "コピー";
-      copyBtn.addEventListener("click", function(){ copyText(full); });
-      row.appendChild(useBtn); row.appendChild(copyBtn);
+      var cp = document.createElement("button");
+      cp.className = "btn sm"; cp.textContent = "コピー";
+      cp.addEventListener("click", function(){ copyText(full); });
+      row.appendChild(use); row.appendChild(cp);
       el.appendChild(row);
       box.appendChild(el);
     })(list[i]);
   }
-
   if(shown < list.length){
     var more = document.createElement("button");
     more.className = "btn sm ghost"; more.style.marginTop = "8px";
@@ -803,19 +885,504 @@ function renderCandidates(){
   }
 }
 
-function renderAll(){
+function renderSingle(){
   renderPresets(); renderGauge(); renderSelected(); renderKeywords(); renderCandidates();
 }
 
-/* ---------- コピー・トースト ---------- */
+function runFill(){
+  var r = fillOne(S.body, S.limit, 0);
+  S.selected = r.picked.map(function(k){ return k.id; });
+  S.candidates = r.all || [];
+  S.candShown = 8;
+  var note = "";
+  if(r.reason) note = r.reason;
+  else {
+    var rest = S.limit - count(compose(S.body, r.picked.map(function(k){ return k.text; })));
+    note = r.picked.length + " 語を入れて余り " + fmt(rest) + " 文字";
+    if(rest > 0 && r.capped) note += "（「最大何語まで」に達しました）";
+    else if(S.strategy === "priority" && rest > 0) note += "（詰め方を「余りが最小」にすると更に詰まる場合があります）";
+  }
+  $("searchNote").textContent = note;
+  renderSingle(); save();
+}
+
+/* ==================== xlsx の読み込み（外部ライブラリなし） ==================== */
+/* xlsx は ZIP。ブラウザの DecompressionStream('deflate-raw') で展開して XML を読む。 */
+var WANTED = /^xl\/(worksheets\/sheet[0-9]+\.xml|sharedStrings\.xml|workbook\.xml|_rels\/workbook\.xml\.rels)$/;
+
+async function unzipXml(buf){
+  var u8 = new Uint8Array(buf), dv = new DataView(buf);
+  var eocd = -1, min = Math.max(0, u8.length - 66000);
+  for(var i = u8.length - 22; i >= min; i--){
+    if(dv.getUint32(i, true) === 0x06054b50){ eocd = i; break; }
+  }
+  if(eocd < 0) throw new Error("xlsx（ZIP）として読めませんでした");
+  var total = dv.getUint16(eocd + 10, true);
+  var off = dv.getUint32(eocd + 16, true);
+  var dec = new TextDecoder("utf-8");
+  var files = {}, jobs = [];
+  for(var n = 0; n < total; n++){
+    if(off + 46 > u8.length || dv.getUint32(off, true) !== 0x02014b50) break;
+    var method = dv.getUint16(off + 10, true);
+    var compSize = dv.getUint32(off + 20, true);
+    var nameLen = dv.getUint16(off + 28, true);
+    var extraLen = dv.getUint16(off + 30, true);
+    var cmtLen = dv.getUint16(off + 32, true);
+    var localOff = dv.getUint32(off + 42, true);
+    var name = dec.decode(u8.subarray(off + 46, off + 46 + nameLen));
+    off += 46 + nameLen + extraLen + cmtLen;
+    if(!WANTED.test(name)) continue;
+    var lNameLen = dv.getUint16(localOff + 26, true);
+    var lExtraLen = dv.getUint16(localOff + 28, true);
+    var start = localOff + 30 + lNameLen + lExtraLen;
+    var data = u8.subarray(start, start + compSize);
+    jobs.push(inflate(name, data, method, files));
+  }
+  await Promise.all(jobs);
+  return files;
+}
+async function inflate(name, data, method, files){
+  if(method === 0){ files[name] = new TextDecoder("utf-8").decode(data); return; }
+  if(method !== 8) return;
+  if(typeof DecompressionStream === "undefined"){
+    throw new Error("このブラウザではxlsxを展開できません。CSVか貼り付けをお使いください");
+  }
+  var stream = new Blob([data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+  files[name] = await new Response(stream).text();
+}
+
+function xmlDoc(text){ return new DOMParser().parseFromString(text, "application/xml"); }
+function textOf(node){
+  var ts = node.getElementsByTagName("t"), out = "";
+  for(var i=0;i<ts.length;i++) out += ts[i].textContent;
+  return out;
+}
+function parseShared(xml){
+  if(!xml) return [];
+  var doc = xmlDoc(xml), sis = doc.getElementsByTagName("si"), out = [];
+  for(var i=0;i<sis.length;i++) out.push(textOf(sis[i]));
+  return out;
+}
+function colOf(ref){
+  var n = 0;
+  for(var i=0;i<ref.length;i++){
+    var c = ref.charCodeAt(i);
+    if(c >= 65 && c <= 90) n = n * 26 + (c - 64); else break;
+  }
+  return n - 1;
+}
+function parseSheet(xml, shared){
+  var doc = xmlDoc(xml), rows = doc.getElementsByTagName("row"), grid = [];
+  for(var i=0;i<rows.length;i++){
+    var r = parseInt(rows[i].getAttribute("r"), 10) - 1;
+    if(isNaN(r) || r < 0) r = grid.length;
+    var arr = grid[r] || (grid[r] = []);
+    var cells = rows[i].getElementsByTagName("c");
+    for(var j=0;j<cells.length;j++){
+      var cell = cells[j];
+      var ci = colOf(cell.getAttribute("r") || "");
+      if(ci < 0) ci = j;
+      var t = cell.getAttribute("t"), v = "";
+      if(t === "s"){
+        var vs = cell.getElementsByTagName("v")[0];
+        v = vs ? (shared[parseInt(vs.textContent, 10)] || "") : "";
+      } else if(t === "inlineStr"){
+        var is = cell.getElementsByTagName("is")[0];
+        v = is ? textOf(is) : "";
+      } else {
+        var vv = cell.getElementsByTagName("v")[0];
+        v = vv ? vv.textContent : "";
+      }
+      arr[ci] = v;
+    }
+  }
+  for(var k=0;k<grid.length;k++) if(!grid[k]) grid[k] = [];
+  return grid;
+}
+function listSheets(files){
+  var out = [];
+  var wb = files["xl/workbook.xml"], rels = files["xl/_rels/workbook.xml.rels"];
+  if(wb && rels){
+    var map = {}, rdoc = xmlDoc(rels), rl = rdoc.getElementsByTagName("Relationship");
+    for(var i=0;i<rl.length;i++) map[rl[i].getAttribute("Id")] = rl[i].getAttribute("Target");
+    var wdoc = xmlDoc(wb), sh = wdoc.getElementsByTagName("sheet");
+    for(var j=0;j<sh.length;j++){
+      var rid = sh[j].getAttribute("r:id") || sh[j].getAttributeNS("http://schemas.openxmlformats.org/officeDocument/2006/relationships", "id");
+      var target = map[rid] || "";
+      var path = target.replace(/^\/?(xl\/)?/, "xl/");
+      if(files[path]) out.push({name: sh[j].getAttribute("name") || ("シート" + (j + 1)), path: path});
+    }
+  }
+  if(!out.length){
+    Object.keys(files).forEach(function(p){
+      if(/^xl\/worksheets\/sheet[0-9]+\.xml$/.test(p)) out.push({name: p.replace(/^.*\//, ""), path: p});
+    });
+    out.sort(function(a,b){ return a.path.localeCompare(b.path, undefined, {numeric:true}); });
+  }
+  return out;
+}
+
+/* ==================== 貼り付け（TSV / CSV）の読み込み ==================== */
+function parseDelimited(text, delim){
+  var rows = [], row = [], cell = "", inQuote = false;
+  for(var i=0;i<text.length;i++){
+    var ch = text[i];
+    if(inQuote){
+      if(ch === '"'){
+        if(text[i+1] === '"'){ cell += '"'; i++; } else inQuote = false;
+      } else cell += ch;
+    } else if(ch === '"'){ inQuote = true; }
+    else if(ch === delim){ row.push(cell); cell = ""; }
+    else if(ch === "\r"){ /* skip */ }
+    else if(ch === "\n"){ row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  row.push(cell); rows.push(row);
+  while(rows.length && rows[rows.length-1].every(function(c){ return !c; })) rows.pop();
+  return rows;
+}
+function parseTable(text){
+  var head = text.split("\n").slice(0, 20).join("\n");
+  return parseDelimited(text, head.indexOf("\t") !== -1 ? "\t" : ",");
+}
+
+/* ==================== 表から項目を取り出す ==================== */
+var LIMIT_RE = /最大\s*([0-9０-９]+)\s*文字/;
+function isNumericCell(v){ return /^[0-9０-９.．,，\s]+$/.test(String(v).trim()); }
+
+function groupLabel(grid, col){
+  for(var r=0;r<Math.min(3, grid.length);r++){
+    for(var c=Math.max(0, col - 2); c<=col + 3; c++){
+      var v = String((grid[r] || [])[c] || "").trim();
+      if(v && !LIMIT_RE.test(v) && !isNumericCell(v) && v.length <= 24) return v;
+    }
+  }
+  return "";
+}
+function pickLabel(grid, r, c){
+  var row = grid[r] || [];
+  for(var k=c-1;k>=Math.max(0, c-4);k--){
+    var v = String(row[k] || "").trim();
+    if(v && !isNumericCell(v)) return v;
+  }
+  for(var up=r-1;up>=Math.max(0, r-3);up--){
+    for(var k2=Math.max(0, c-4);k2<c;k2++){
+      var v2 = String((grid[up] || [])[k2] || "").trim();
+      if(v2 && !isNumericCell(v2)) return v2;
+    }
+  }
+  return "";
+}
+function pickBody(grid, r, c){
+  var row = grid[r] || [];
+  for(var k=c+1;k<Math.min(row.length, c+6);k++){
+    var v = String(row[k] || "");
+    if(!v.trim()) continue;
+    if(isNumericCell(v)) continue;
+    return {text: v, col: k};
+  }
+  return {text: "", col: c + 1};
+}
+function ruleLimitFor(label){
+  var name = String(label || "");
+  for(var i=0;i<S.rules.length;i++){
+    var rn = String(S.rules[i].name || "").trim();
+    if(rn && name.indexOf(rn) !== -1) return S.rules[i].limit;
+  }
+  return null;
+}
+function extractRows(grid){
+  var out = [];
+  /* パターンA: 「最大◯文字」のセルを基準にする */
+  for(var r=0;r<grid.length;r++){
+    var row = grid[r] || [];
+    for(var c=0;c<row.length;c++){
+      var m = String(row[c] || "").match(LIMIT_RE);
+      if(!m) continue;
+      var label = pickLabel(grid, r, c);
+      var body = pickBody(grid, r, c);
+      out.push({
+        id: "r" + r + "_" + c, group: "", label: label || "項目",
+        limit: parseInt(toHalfDigits(m[1]), 10), body: body.text,
+        row: r, col: body.col, use: true
+      });
+    }
+  }
+  if(out.length) return withGroups(out, grid);
+  /* パターンB: ルール表の項目名に一致するセルを基準にする */
+  for(var r2=0;r2<grid.length;r2++){
+    var row2 = grid[r2] || [];
+    for(var c2=0;c2<row2.length;c2++){
+      var cellText = String(row2[c2] || "").trim();
+      if(!cellText || cellText.length > 20) continue;
+      var lim = ruleLimitFor(cellText);
+      if(lim === null) continue;
+      var b2 = pickBody(grid, r2, c2);
+      if(!b2.text) continue;
+      out.push({
+        id: "r" + r2 + "_" + c2, group: "", label: cellText,
+        limit: lim, body: b2.text, row: r2, col: b2.col, use: true
+      });
+    }
+  }
+  return withGroups(out, grid);
+}
+function withGroups(rows, grid){
+  rows.forEach(function(r){
+    var g = groupLabel(grid, r.col - 1);
+    r.group = (g && g !== r.label) ? g : "";
+  });
+  return rows;
+}
+
+/* ==================== 一括モードの描画 ==================== */
+function renderRules(){
+  var box = $("ruleList"); box.innerHTML = "";
+  S.rules.forEach(function(rule, i){
+    var row = document.createElement("div"); row.className = "rulerow";
+    var name = document.createElement("input");
+    name.type = "text"; name.value = rule.name; name.placeholder = "項目名（部分一致）";
+    name.addEventListener("input", function(){ rule.name = name.value; save(); });
+    var lim = document.createElement("input");
+    lim.type = "number"; lim.min = "1"; lim.value = rule.limit;
+    lim.addEventListener("input", function(){ rule.limit = parseInt(lim.value, 10) || 1; save(); });
+    var del = document.createElement("button");
+    del.className = "btn sm ghost"; del.textContent = "×";
+    del.addEventListener("click", function(){ S.rules.splice(i, 1); renderRules(); save(); });
+    row.appendChild(name); row.appendChild(lim); row.appendChild(del);
+    box.appendChild(row);
+  });
+}
+
+function renderRows(){
+  var t = $("rowsTable"); t.innerHTML = "";
+  $("rowCount").textContent = S.rows.length ? S.rows.length + " 項目を検出" : "";
+  if(!S.rows.length){
+    var cap = document.createElement("caption");
+    cap.style.cssText = "padding:14px;color:var(--ink-3);font-size:13px;text-align:left";
+    cap.textContent = "まだ取り込んでいません。上でファイルを選ぶか、表を貼り付けてください。";
+    t.appendChild(cap); return;
+  }
+  var head = t.createTHead().insertRow();
+  ["", "項目", "上限", "本文", "文字数"].forEach(function(h){
+    var th = document.createElement("th"); th.textContent = h; head.appendChild(th);
+  });
+  var tb = t.createTBody();
+  S.rows.forEach(function(r){
+    var tr = tb.insertRow();
+    if(!r.use) tr.className = "skip";
+
+    var c0 = tr.insertCell(); c0.className = "c";
+    var chk = document.createElement("input");
+    chk.type = "checkbox"; chk.checked = r.use;
+    chk.addEventListener("change", function(){ r.use = chk.checked; renderRows(); });
+    c0.appendChild(chk);
+
+    var c1 = tr.insertCell();
+    if(r.group){
+      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = r.group;
+      c1.appendChild(g);
+    }
+    var nameIn = document.createElement("input");
+    nameIn.type = "text"; nameIn.value = r.label; nameIn.style.width = "150px";
+    nameIn.addEventListener("input", function(){ r.label = nameIn.value; });
+    c1.appendChild(nameIn);
+
+    var c2 = tr.insertCell(); c2.className = "n";
+    var limIn = document.createElement("input");
+    limIn.type = "number"; limIn.min = "1"; limIn.value = r.limit;
+    c2.appendChild(limIn);
+
+    var c3 = tr.insertCell();
+    var d = document.createElement("div"); d.className = "cellwrap"; d.textContent = r.body || "（空）";
+    c3.appendChild(d);
+
+    var c4 = tr.insertCell(); c4.className = "n";
+    function refreshLen(){
+      var len = count(r.body);
+      c4.textContent = fmt(len) + " / " + fmt(r.limit);
+      c4.style.color = len > r.limit ? "var(--bad)" : "";
+    }
+    limIn.addEventListener("input", function(){
+      r.limit = parseInt(limIn.value, 10) || 1; refreshLen();
+    });
+    refreshLen();
+  });
+}
+
+function runBatch(){
+  var targets = S.rows.filter(function(r){ return r.use; });
+  if(!targets.length){ toast("対象の項目がありません"); return; }
+  if(!S.keywords.filter(function(k){ return k.on !== false; }).length){
+    toast("キーワード帳が空です"); return;
+  }
+  S.results = targets.map(function(r, i){
+    var res = fillOne(r.body, r.limit, S.rotate ? i : 0);
+    var texts = res.picked.map(function(k){ return k.text; });
+    var out = compose(r.body, texts);
+    return {
+      row: r, texts: texts, text: out, capped: !!res.capped,
+      total: count(out), rest: r.limit - count(out), reason: res.reason || ""
+    };
+  });
+  var filled = S.results.filter(function(x){ return x.texts.length; }).length;
+  var capped = S.results.filter(function(x){ return x.capped && x.rest > 0; }).length;
+  var note = S.results.length + " 項目中 " + filled + " 項目に挿入しました";
+  if(capped) note += " ／ " + capped + " 項目は「最大何語まで」に達して止まりました（増やすともっと詰まります）";
+  $("batchNote").textContent = note;
+  renderResults();
+}
+
+function renderResults(){
+  var t = $("resultTable"); t.innerHTML = "";
+  var acts = $("resultActions"); acts.innerHTML = "";
+  if(!S.results.length){
+    var cap = document.createElement("caption");
+    cap.style.cssText = "padding:14px;color:var(--ink-3);font-size:13px;text-align:left";
+    cap.textContent = "「選択した項目を一括で埋める」を押すと、ここに結果が出ます。";
+    t.appendChild(cap); return;
+  }
+  var head = t.createTHead().insertRow();
+  ["項目", "結果", "文字数", "余り", ""].forEach(function(h){
+    var th = document.createElement("th"); th.textContent = h; head.appendChild(th);
+  });
+  var tb = t.createTBody();
+  S.results.forEach(function(res){
+    var tr = tb.insertRow();
+    var c0 = tr.insertCell();
+    if(res.row.group){
+      var g = document.createElement("span"); g.className = "grouptag"; g.textContent = res.row.group;
+      c0.appendChild(g);
+    }
+    c0.appendChild(document.createTextNode(res.row.label));
+
+    var c1 = tr.insertCell();
+    var d = document.createElement("div"); d.className = "cellwrap";
+    d.appendChild(document.createTextNode(res.row.body + (res.texts.length && res.row.body ? S.join : "")));
+    if(res.texts.length){
+      var kw = document.createElement("span"); kw.className = "result-kw";
+      kw.textContent = S.wrapOpen + res.texts.join(S.sep) + S.wrapClose;
+      d.appendChild(kw);
+    } else if(res.reason){
+      var why = document.createElement("span"); why.className = "hint";
+      why.textContent = "　← " + res.reason;
+      d.appendChild(why);
+    }
+    c1.appendChild(d);
+
+    var c2 = tr.insertCell(); c2.className = "n";
+    c2.textContent = fmt(res.total) + " / " + fmt(res.row.limit);
+
+    var c3 = tr.insertCell(); c3.className = "n";
+    var pill = document.createElement("span");
+    pill.className = "state-pill " + (res.rest === 0 ? "state-fit" : res.rest < 0 ? "state-over" : "state-left");
+    pill.textContent = res.rest === 0 ? "ぴったり" : res.rest < 0 ? "超過 " + fmt(-res.rest) : "余り " + fmt(res.rest);
+    c3.appendChild(pill);
+
+    var c4 = tr.insertCell(); c4.className = "c";
+    var cp = document.createElement("button");
+    cp.className = "btn xs"; cp.textContent = "コピー";
+    cp.addEventListener("click", function(){ copyText(res.text); });
+    c4.appendChild(cp);
+  });
+
+  var b1 = document.createElement("button");
+  b1.className = "btn primary"; b1.textContent = "結果を縦1列でコピー";
+  b1.addEventListener("click", function(){
+    copyText(S.results.map(function(r){ return tsvCell(r.text); }).join("\n"));
+  });
+  var b2 = document.createElement("button");
+  b2.className = "btn"; b2.textContent = "項目名つきでコピー（TSV）";
+  b2.addEventListener("click", function(){
+    copyText(S.results.map(function(r){
+      return [r.row.group, r.row.label, r.row.limit, tsvCell(r.text), fmt(r.total)].join("\t");
+    }).join("\n"));
+  });
+  acts.appendChild(b1); acts.appendChild(b2);
+
+  if(S.grid){
+    var b3 = document.createElement("button");
+    b3.className = "btn"; b3.textContent = "元の表の形のままコピー（TSV）";
+    b3.title = "取り込んだ表の本文セルだけ置き換えて書き出します。スプレッドシートに貼り戻せます。";
+    b3.addEventListener("click", function(){ copyText(exportGrid()); });
+    acts.appendChild(b3);
+  }
+  var note = document.createElement("span");
+  note.className = "hint";
+  note.textContent = "貼り付け先のセルを選んでから貼り付けてください。";
+  acts.appendChild(note);
+}
+function tsvCell(v){
+  var s = String(v == null ? "" : v);
+  return /[\t\n"]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function exportGrid(){
+  var g = S.grid.map(function(row){ return (row || []).slice(); });
+  S.results.forEach(function(res){
+    var r = res.row.row, c = res.row.col;
+    if(r == null || c == null) return;
+    if(!g[r]) g[r] = [];
+    g[r][c] = res.text;
+  });
+  var width = 0;
+  g.forEach(function(row){ width = Math.max(width, (row || []).length); });
+  return g.map(function(row){
+    var cells = [];
+    for(var i=0;i<width;i++) cells.push(tsvCell((row || [])[i] || ""));
+    return cells.join("\t");
+  }).join("\n");
+}
+
+function loadGrid(grid, sourceNote){
+  S.grid = grid;
+  S.rows = extractRows(grid);
+  S.results = [];
+  $("batchNote").textContent = "";
+  $("importNote").textContent = sourceNote + "／" + (S.rows.length
+    ? S.rows.length + " 項目を検出"
+    : "「最大◯文字」の記載が見つかりませんでした。ルール表の項目名でも探しましたが該当なしです");
+  renderRows(); renderResults();
+}
+
+async function importFile(file){
+  if(!file) return;
+  $("importNote").textContent = "読み込み中…";
+  try{
+    if(/\.xlsx$/i.test(file.name)){
+      var files = await unzipXml(await file.arrayBuffer());
+      var shared = parseShared(files["xl/sharedStrings.xml"]);
+      var sheets = listSheets(files);
+      if(!sheets.length) throw new Error("シートが見つかりませんでした");
+      S.sheets = sheets.map(function(s){
+        return {name: s.name, grid: parseSheet(files[s.path], shared)};
+      });
+      var pick = $("sheetPick");
+      pick.innerHTML = "";
+      S.sheets.forEach(function(s, i){
+        var o = document.createElement("option"); o.value = i; o.textContent = s.name;
+        pick.appendChild(o);
+      });
+      $("sheetPickWrap").classList.toggle("hidden", S.sheets.length < 2);
+      loadGrid(S.sheets[0].grid, file.name + "（" + S.sheets[0].name + "）");
+    } else {
+      var text = await file.text();
+      $("sheetPickWrap").classList.add("hidden");
+      loadGrid(parseTable(text), file.name);
+    }
+  }catch(e){
+    $("importNote").textContent = "読み込めませんでした: " + (e && e.message ? e.message : e);
+  }
+}
+
+/* ==================== 共通のUI部品 ==================== */
 var toastTimer = null;
 function toast(msg){
   var t = $("toast"); t.textContent = msg; t.classList.add("show");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 1800);
+  toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 2000);
 }
 function copyText(text){
-  if(!text){ toast("コピーする文章がありません"); return; }
+  if(!text){ toast("コピーするものがありません"); return; }
   function fallback(){
     var ta = document.createElement("textarea");
     ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
@@ -823,124 +1390,129 @@ function copyText(text){
     var ok = false;
     try{ ok = document.execCommand("copy"); }catch(e){}
     document.body.removeChild(ta);
-    toast(ok ? "コピーしました" : "コピーできませんでした。文章を選択して手動でコピーしてください");
+    toast(ok ? "コピーしました" : "コピーできませんでした。手動で選択してください");
   }
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(text).then(function(){ toast("コピーしました"); }, fallback);
-  } else { fallback(); }
+  } else fallback();
 }
 
-/* ---------- 書き出し／読み込み ---------- */
 var modalMode = "export";
 function openModal(mode){
   modalMode = mode;
   $("modalTitle").textContent = mode === "export" ? "書き出し" : "読み込み";
   $("modalHint").textContent = mode === "export"
-    ? "この内容をコピーして、メモなどに保存しておいてください。"
-    : "書き出したテキストを貼り付けて「読み込む」を押すと、キーワード帳と設定を復元します。";
+    ? "この内容をコピーして保存しておいてください。別の端末やブラウザで「読み込み」に貼れば復元できます。"
+    : "書き出したテキストを貼り付けて「読み込む」を押してください。";
   $("modalAction").textContent = mode === "export" ? "コピー" : "読み込む";
-  $("modalText").value = mode === "export"
-    ? JSON.stringify({presets:S.presets, keywords:S.keywords, sep:S.sep, limit:S.limit}, null, 2)
-    : "";
+  $("modalText").value = mode === "export" ? JSON.stringify({
+    keywords: S.keywords, presets: S.presets, rules: S.rules,
+    sep: S.sep, wrapOpen: S.wrapOpen, wrapClose: S.wrapClose, join: S.join,
+    countMode: S.countMode, strategy: S.strategy, maxCount: S.maxCount
+  }, null, 2) : "";
   $("modalBg").classList.add("show");
   $("modalText").focus();
 }
 function closeModal(){ $("modalBg").classList.remove("show"); }
 
-/* ---------- 初期化 ---------- */
+function setMode(mode){
+  S.mode = mode;
+  $("tabSingle").setAttribute("aria-selected", String(mode === "single"));
+  $("tabBatch").setAttribute("aria-selected", String(mode === "batch"));
+  $("panelSingle").classList.toggle("hidden", mode !== "single");
+  $("panelBatch").classList.toggle("hidden", mode !== "batch");
+  save();
+}
 function applyTheme(){
   if(S.theme === "auto") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", S.theme);
 }
 
+/* ==================== 初期化 ==================== */
 $("limitInput").value = S.limit;
 $("bodyInput").value = S.body;
+$("sepInput").value = S.sep;
+$("wrapOpen").value = S.wrapOpen;
+$("wrapClose").value = S.wrapClose;
+$("joinSelect").value = S.join;
+$("countMode").value = S.countMode;
+$("strategy").value = S.strategy;
 $("maxCount").value = S.maxCount;
-$("preferSelect").value = S.prefer;
 $("excludeUsed").checked = !!S.excludeUsed;
-$("wideMode").checked = !!S.wideMode;
-$("kwSort").value = S.kwSort;
-(function initSep(){
-  var opts = Array.prototype.map.call($("sepSelect").options, function(o){ return o.value; });
-  if(opts.indexOf(S.sep) !== -1 && S.sepChoice !== "__custom__"){
-    $("sepSelect").value = S.sep;
-  } else {
-    $("sepSelect").value = "__custom__";
-    $("sepCustomWrap").style.display = "";
-    $("sepCustom").value = S.sep;
-  }
-})();
+$("rotateChk").checked = !!S.rotate;
 applyTheme();
+setMode(S.mode);
+
+$("tabSingle").addEventListener("click", function(){ setMode("single"); });
+$("tabBatch").addEventListener("click", function(){ setMode("batch"); });
+$("themeBtn").addEventListener("click", function(){
+  S.theme = S.theme === "auto" ? "light" : S.theme === "light" ? "dark" : "auto";
+  applyTheme(); save();
+  toast(S.theme === "auto" ? "端末の設定に合わせます" : S.theme === "light" ? "ライト表示" : "ダーク表示");
+});
 
 $("limitInput").addEventListener("input", function(){
   var v = parseInt(this.value, 10);
   S.limit = isNaN(v) || v < 1 ? 1 : v;
   S.activePresetId = null;
-  renderPresets(); renderGauge(); renderKeywords(); save();
+  renderSingle(); save();
 });
 $("bodyInput").addEventListener("input", function(){
-  S.body = this.value; renderGauge(); renderKeywords(); save();
+  S.body = this.value; S.candidates = []; renderSingle(); save();
 });
-$("sepSelect").addEventListener("change", function(){
-  S.sepChoice = this.value;
-  if(this.value === "__custom__"){
-    $("sepCustomWrap").style.display = "";
-    S.sep = $("sepCustom").value;
-  } else {
-    $("sepCustomWrap").style.display = "none";
-    S.sep = this.value;
-  }
-  renderGauge(); renderKeywords(); save();
-});
-$("sepCustom").addEventListener("input", function(){
-  S.sep = this.value; renderGauge(); renderKeywords(); save();
-});
-$("maxCount").addEventListener("input", function(){
-  var v = parseInt(this.value, 10);
-  S.maxCount = isNaN(v) || v < 1 ? 1 : Math.min(12, v); save();
-});
-$("preferSelect").addEventListener("change", function(){ S.prefer = this.value; save(); });
-$("excludeUsed").addEventListener("change", function(){ S.excludeUsed = this.checked; save(); });
-$("wideMode").addEventListener("change", function(){
-  S.wideMode = this.checked; renderGauge(); renderKeywords(); renderCandidates(); save();
-});
-$("kwFilter").addEventListener("input", renderKeywords);
-$("kwSort").addEventListener("change", function(){ S.kwSort = this.value; renderKeywords(); save(); });
-
 $("addPresetBtn").addEventListener("click", function(){
   var name = ($("presetName").value || "").trim();
   if(!name){ toast("プリセット名を入力してください"); return; }
   var p = {id: uid(), name: name, limit: S.limit};
-  S.presets.push(p);
-  S.activePresetId = p.id;
+  S.presets.push(p); S.activePresetId = p.id;
   $("presetName").value = "";
   renderPresets(); save(); toast("プリセットを追加しました");
 });
+$("fillBtn").addEventListener("click", runFill);
+$("clearSelBtn").addEventListener("click", function(){
+  S.selected = []; S.candidates = []; $("searchNote").textContent = "";
+  renderSingle(); save();
+});
+$("copyBtn").addEventListener("click", function(){ copyText(currentText()); });
+
+function onSettingChange(){
+  S.sep = $("sepInput").value;
+  S.wrapOpen = $("wrapOpen").value;
+  S.wrapClose = $("wrapClose").value;
+  S.join = $("joinSelect").value;
+  S.countMode = $("countMode").value;
+  S.strategy = $("strategy").value;
+  var mc = parseInt($("maxCount").value, 10);
+  S.maxCount = isNaN(mc) || mc < 1 ? 1 : Math.min(30, mc);
+  S.excludeUsed = $("excludeUsed").checked;
+  S.candidates = [];
+  renderSingle(); renderRows(); renderResults(); save();
+}
+["sepInput","wrapOpen","wrapClose","joinSelect","countMode","strategy","maxCount","excludeUsed"]
+  .forEach(function(id){ $(id).addEventListener("input", onSettingChange); $(id).addEventListener("change", onSettingChange); });
 
 $("addKwBtn").addEventListener("click", function(){
   var raw = $("kwInput").value || "";
-  var parts = raw.split(/[\n,、，]/).map(function(s){ return s.trim(); }).filter(Boolean);
+  var parts = raw.split(/[\/\n,、，]/).map(function(s){ return s.trim(); }).filter(Boolean);
   if(!parts.length){ toast("キーワードを入力してください"); return; }
-  var existing = {};
-  S.keywords.forEach(function(k){ existing[k.text] = 1; });
+  var seen = {};
+  S.keywords.forEach(function(k){ seen[k.text] = 1; });
   var added = 0;
   parts.forEach(function(t){
-    if(existing[t]) return;
-    existing[t] = 1;
-    S.keywords.push({id: uid(), text: t, on: true, req: false});
+    if(seen[t]) return;
+    seen[t] = 1;
+    S.keywords.push({id: uid(), text: t, on: true});
     added++;
   });
   $("kwInput").value = "";
   renderKeywords(); save();
   toast(added ? added + " 語を追加しました" : "すべて登録済みでした");
 });
-
-$("fillBtn").addEventListener("click", runAutoFill);
-$("clearSelBtn").addEventListener("click", function(){
-  S.selected = []; renderGauge(); renderSelected(); renderKeywords(); save();
+$("clearKwBtn").addEventListener("click", function(){
+  if(!S.keywords.length) return;
+  S.keywords = []; S.selected = [];
+  renderSingle(); save(); toast("キーワード帳を空にしました");
 });
-$("copyBtn").addEventListener("click", function(){ copyText(composeText()); });
-
 $("exportBtn").addEventListener("click", function(){ openModal("export"); });
 $("importBtn").addEventListener("click", function(){ openModal("import"); });
 $("modalClose").addEventListener("click", closeModal);
@@ -953,25 +1525,76 @@ $("modalAction").addEventListener("click", function(){
   catch(e){ toast("読み込めませんでした。書き出したテキストをそのまま貼り付けてください"); return; }
   if(Array.isArray(data.keywords)){
     S.keywords = data.keywords.filter(function(k){ return k && k.text; }).map(function(k){
-      return {id: k.id || uid(), text: String(k.text), on: k.on !== false, req: !!k.req};
+      return {id: k.id || uid(), text: String(k.text), on: k.on !== false};
     });
     S.selected = [];
   }
-  if(Array.isArray(data.presets) && data.presets.length){
-    S.presets = data.presets.filter(function(p){ return p && p.name && p.limit; });
-  }
-  if(typeof data.sep === "string") S.sep = data.sep;
-  if(typeof data.limit === "number") { S.limit = data.limit; $("limitInput").value = data.limit; }
-  closeModal(); renderAll(); save(); toast("読み込みました");
+  if(Array.isArray(data.presets) && data.presets.length) S.presets = data.presets;
+  if(Array.isArray(data.rules) && data.rules.length) S.rules = data.rules;
+  ["sep","wrapOpen","wrapClose","join","countMode","strategy"].forEach(function(k){
+    if(typeof data[k] === "string") S[k] = data[k];
+  });
+  if(typeof data.maxCount === "number") S.maxCount = data.maxCount;
+  $("sepInput").value = S.sep; $("wrapOpen").value = S.wrapOpen; $("wrapClose").value = S.wrapClose;
+  $("joinSelect").value = S.join; $("countMode").value = S.countMode;
+  $("strategy").value = S.strategy; $("maxCount").value = S.maxCount;
+  closeModal(); renderSingle(); renderRules(); renderRows(); save(); toast("読み込みました");
 });
 
-$("themeBtn").addEventListener("click", function(){
-  S.theme = S.theme === "auto" ? "light" : S.theme === "light" ? "dark" : "auto";
-  applyTheme(); save();
-  toast(S.theme === "auto" ? "端末の設定に合わせます" : S.theme === "light" ? "ライト表示" : "ダーク表示");
+$("fileInput").addEventListener("change", function(){ importFile(this.files && this.files[0]); });
+$("importPasteBtn").addEventListener("click", function(){
+  var text = $("pasteInput").value || "";
+  if(!text.trim()){ toast("表を貼り付けてください"); return; }
+  $("sheetPickWrap").classList.add("hidden");
+  loadGrid(parseTable(text), "貼り付けた表");
+});
+$("sheetPick").addEventListener("change", function(){
+  var i = parseInt(this.value, 10) || 0;
+  if(S.sheets && S.sheets[i]) loadGrid(S.sheets[i].grid, "シート: " + S.sheets[i].name);
+});
+var dz = $("dropzone");
+["dragenter","dragover"].forEach(function(ev){
+  dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.add("hot"); });
+});
+["dragleave","drop"].forEach(function(ev){
+  dz.addEventListener(ev, function(e){ e.preventDefault(); dz.classList.remove("hot"); });
+});
+dz.addEventListener("drop", function(e){
+  var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+  if(f) importFile(f);
 });
 
-renderAll();
+$("addRuleBtn").addEventListener("click", function(){
+  S.rules.push({name: "", limit: 50}); renderRules(); save();
+});
+$("applyRulesBtn").addEventListener("click", function(){
+  var n = 0;
+  S.rows.forEach(function(r){
+    var lim = ruleLimitFor(r.label);
+    if(lim !== null && lim !== r.limit){ r.limit = lim; n++; }
+  });
+  renderRows();
+  toast(n ? n + " 項目の上限を更新しました" : "変更はありませんでした");
+});
+$("selectAllBtn").addEventListener("click", function(){
+  S.rows.forEach(function(r){ r.use = true; }); renderRows();
+});
+$("selectNoneBtn").addEventListener("click", function(){
+  S.rows.forEach(function(r){ r.use = false; }); renderRows();
+});
+$("clearRowsBtn").addEventListener("click", function(){
+  S.rows = []; S.results = []; S.grid = null; S.sheets = null;
+  $("importNote").textContent = ""; $("batchNote").textContent = "";
+  $("sheetPickWrap").classList.add("hidden");
+  renderRows(); renderResults();
+});
+$("rotateChk").addEventListener("change", function(){ S.rotate = this.checked; save(); });
+$("runBatchBtn").addEventListener("click", runBatch);
+
+renderSingle();
+renderRules();
+renderRows();
+renderResults();
 })();
 </script>
 </body>
