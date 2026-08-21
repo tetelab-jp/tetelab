@@ -47,8 +47,12 @@ dashboard.get('/dashboard', async (c) => {
     }>()
   const isConnected = cred?.connection_status === 'success'
 
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 登録ブログ一覧(GET /blog/articles)が
+  // status='approved'のみを表示するようになったため、まだ「投稿一覧に追加」を
+  // 押していない生成直後の下書き(status='unapproved')をここでもカウントしない
+  // ようにし、一覧の件数と一致させる。
   const blogArticlesRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE auto_post_enabled_flag = 1) as auto_post_on FROM blog_articles WHERE user_id = ? AND salon_id = ?'
+    "SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE auto_post_enabled_flag = 1) as auto_post_on FROM blog_articles WHERE user_id = ? AND salon_id = ? AND status = 'approved'"
   )
     .bind(user.id, user.active_salon_id)
     .first<{ total: number; auto_post_on: number }>()

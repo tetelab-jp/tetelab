@@ -342,13 +342,18 @@ blog.post('/blog/salon/import-references', async (c) => {
     .first<{ n: number }>()
   let sortOrder = nextOrderRow?.n ?? 0
 
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): このルートは新規作成/AI生成と
+  // 違い、確認・編集画面を挟まずクリックした時点で直接一覧へ追加する仕様
+  // (既存スタイル取り込みと同じ位置づけ)。GET /blog/articlesがstatus='approved'
+  // のみ表示するようになったため、ここもapprovedで作成しないと追加した記事が
+  // 一覧に一切表示されなくなってしまう。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
     await c.env.DB.prepare(
       `INSERT INTO blog_articles (
          user_id, salon_id, title, body, month_tags_json,
-         footer_enabled_flag, auto_post_enabled_flag, status, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'unapproved', ?, ?, ?)`
+         footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
+       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
         user.id, user.active_salon_id, row.title, row.excerpt,
@@ -1043,8 +1048,13 @@ async function generateOneArticle(
 
   // カテゴリに季節パラメータが設定されていれば、生成した記事の月タグへ
   // そのまま反映する(その月に合わせて投稿されるようにするため)。
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 以前はここで無条件に
+  // status='unapproved'に戻していたため、既に登録ブログ一覧に表示済み
+  // (status='approved')の記事で「本文をAIで再生成」を押すと、一覧クエリが
+  // status='approved'のみを表示するようになったことで記事が一覧から
+  // 消えてしまう不具合になる。statusには触れず、現在の承認状態を維持する。
   await c.env.DB.prepare(
-    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, month_tags_json=?, status='unapproved', updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
+    `UPDATE blog_articles SET title=?, body=?, stylist_id=?, month_tags_json=?, updated_at=CURRENT_TIMESTAMP WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(result.title, result.body, category.default_stylist_id || null, JSON.stringify(seasonMonths), article.id, user.id, user.active_salon_id)
     .run()
@@ -1536,10 +1546,15 @@ blog.post('/blog/articles/:id/edit', async (c) => {
     parsed.body = stripTrailingFooterBlock(parsed.body, footerText, separator)
   }
 
+  // 2026-08-21追記(ユーザー指摘によるバグ修正): 新規作成/AI生成直後の記事は
+  // status='unapproved'でDBに存在するが、まだ登録ブログ一覧には出さない
+  // (GET /blog/articlesがstatus='approved'のみ表示する)。この保存(「投稿一覧に
+  // 追加」/「保存する」)で初めてapprovedへ確定し、一覧に反映される。
   await c.env.DB.prepare(
     `UPDATE blog_articles SET
        category_id=?, stylist_id=?, coupon_id=?, title=?, body=?, month_tags_json=?,
-       footer_enabled_flag=?, auto_post_enabled_flag=?, updated_at=CURRENT_TIMESTAMP
+       footer_enabled_flag=?, auto_post_enabled_flag=?, status='approved',
+       approved_at=COALESCE(approved_at, CURRENT_TIMESTAMP), updated_at=CURRENT_TIMESTAMP
      WHERE id=? AND user_id=? AND salon_id=?`
   )
     .bind(
@@ -1786,6 +1801,12 @@ function jstNow(): Date {
   return new Date(Date.now() + JST_OFFSET_MS)
 }
 
+// 2026-08-21追記(ユーザー指摘によるバグ修正): 新規作成/AI生成は途中で編集
+// 画面を離れても内容を失わないよう生成時点でDBへINSERTする(status='unapproved')
+// 設計だが、この一覧クエリがstatusを見ていなかったため、ユーザーが「投稿一覧に
+// 追加」を押す前(=まだ内容を確認・編集している最中)の記事までここに表示されて
+// しまっていた。status='approved'(POST /blog/articles/:id/editの保存時に確定)
+// のものだけを表示する。
 blog.get('/blog/articles', async (c) => {
   const user = c.get('user')
 
@@ -1805,7 +1826,7 @@ blog.get('/blog/articles', async (c) => {
      LEFT JOIN stylists st ON st.id = a.stylist_id AND st.user_id = a.user_id AND st.salon_id = a.salon_id
      LEFT JOIN coupons cp ON cp.id = a.coupon_id AND cp.user_id = a.user_id AND cp.salon_id = a.salon_id
      LEFT JOIN blog_categories bc ON bc.id = a.category_id AND bc.user_id = a.user_id AND bc.salon_id = a.salon_id
-     WHERE a.user_id = ? AND a.salon_id = ?
+     WHERE a.user_id = ? AND a.salon_id = ? AND a.status = 'approved'
      ORDER BY a.sort_order ASC, a.id ASC`
   )
     .bind(user.id, user.active_salon_id)
