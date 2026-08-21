@@ -100,7 +100,14 @@ async function getBlogReferenceArticleCount(c: AppContext, user: AppUser): Promi
   return row?.cnt ?? 0
 }
 
-type BlogReferenceArticleRow = { id: number; title: string | null; excerpt: string; posted_date: string | null }
+type BlogReferenceArticleRow = {
+  id: number
+  title: string | null
+  excerpt: string
+  posted_date: string | null
+  category_name: string | null
+  stylist_name: string | null
+}
 
 // 2026-08-21追記(ユーザー指定): 「サロンボードからブログ読み込み」で取得した
 // 過去記事一覧(blog_reference_articles、既にAI生成の参考材料として保存済み)を、
@@ -109,7 +116,8 @@ type BlogReferenceArticleRow = { id: number; title: string | null; excerpt: stri
 // 追加アクセス(全文取得)は行わない(一覧の抜粋のみを取り込み用の本文にする)。
 async function getBlogReferenceArticles(c: AppContext, user: AppUser): Promise<BlogReferenceArticleRow[]> {
   const { results } = await c.env.DB.prepare(
-    'SELECT id, title, excerpt, posted_date FROM blog_reference_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC'
+    `SELECT id, title, excerpt, posted_date, category_name, stylist_name
+     FROM blog_reference_articles WHERE user_id = ? AND salon_id = ? ORDER BY sort_order ASC`
   )
     .bind(user.id, user.active_salon_id)
     .all<BlogReferenceArticleRow>()
@@ -215,7 +223,7 @@ blog.get('/blog/salon', async (c) => {
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
-            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。タイトルをタップすると内容を確認できます。
+            選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。カテゴリ・投稿者はHPB公開ページの表示から一致するものを自動設定します(一致しない場合は未設定のままなので、追加後に編集画面で設定してください)。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
             <button type="submit" class="mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
@@ -237,6 +245,12 @@ blog.get('/blog/salon', async (c) => {
                       {a.posted_date ? `${compactDate(a.posted_date)} ・ ` : ''}
                       {a.excerpt.slice(0, 60)}
                     </p>
+                    {(a.category_name || a.stylist_name) && (
+                      <p class="text-xs text-gray-400 mt-0.5">
+                        {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 mr-1">{a.category_name}</span>}
+                        {a.stylist_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{a.stylist_name}</span>}
+                      </p>
+                    )}
                   </button>
                 </li>
               ))}
@@ -292,11 +306,20 @@ blog.post('/blog/salon/import-references', async (c) => {
   if (ids.length === 0) return c.redirect('/blog/salon')
 
   const { results: rows } = await c.env.DB.prepare(
-    `SELECT id, title, excerpt, posted_date FROM blog_reference_articles
+    `SELECT id, title, excerpt, posted_date, category_name, stylist_name, stylist_salonboard_key
+     FROM blog_reference_articles
      WHERE id IN (${ids.map(() => '?').join(',')}) AND user_id = ? AND salon_id = ?`
   )
     .bind(...ids, user.id, user.active_salon_id)
-    .all<{ id: number; title: string | null; excerpt: string; posted_date: string | null }>()
+    .all<{
+      id: number
+      title: string | null
+      excerpt: string
+      posted_date: string | null
+      category_name: string | null
+      stylist_name: string | null
+      stylist_salonboard_key: string | null
+    }>()
 
   const nextOrderRow = await c.env.DB.prepare(
     'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM blog_articles WHERE user_id = ? AND salon_id = ?'
@@ -310,16 +333,31 @@ blog.post('/blog/salon/import-references', async (c) => {
   // (既存スタイル取り込みと同じ位置づけ)。GET /blog/articlesがstatus='approved'
   // のみ表示するようになったため、ここもapprovedで作成しないと追加した記事が
   // 一覧に一切表示されなくなってしまう。
+  // 2026-08-21追記(ユーザー提供の実HTMLで確認): HPB公開ブログ一覧にはカテゴリ・
+  // 投稿者(スタイリスト)も掲載されている。カテゴリはHPB_BLOG_CATEGORY_OPTIONSの
+  // ラベル文字列と一致する想定なのでresolveArticleCategoryIdでcategory_idへ
+  // (存在しなければ生成テンプレートと同じ仕組みで自動作成)、投稿者は
+  // stylists.salonboard_stylist_key(Tコード)との完全一致でstylist_idへ変換する
+  // (曖昧一致はしない。一致しなければ未設定のまま、編集画面で手動設定できる)。
   for (const row of rows || []) {
     const lastPostedAt = row.posted_date ? `${row.posted_date} 00:00:00` : null
+    const categoryId = row.category_name ? await resolveArticleCategoryId(c, user, row.category_name) : null
+    const stylistRow = row.stylist_salonboard_key
+      ? await c.env.DB.prepare(
+          'SELECT id FROM stylists WHERE user_id = ? AND salon_id = ? AND salonboard_stylist_key = ?'
+        )
+          .bind(user.id, user.active_salon_id, row.stylist_salonboard_key)
+          .first<{ id: number }>()
+      : null
+
     await c.env.DB.prepare(
       `INSERT INTO blog_articles (
-         user_id, salon_id, title, body, month_tags_json,
+         user_id, salon_id, category_id, stylist_id, title, body, month_tags_json,
          footer_enabled_flag, auto_post_enabled_flag, status, approved_at, sort_order, last_posted_at, post_count
-       ) VALUES (?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
+       ) VALUES (?, ?, ?, ?, ?, ?, '[]', 1, 0, 'approved', CURRENT_TIMESTAMP, ?, ?, ?)`
     )
       .bind(
-        user.id, user.active_salon_id, row.title, row.excerpt,
+        user.id, user.active_salon_id, categoryId, stylistRow?.id ?? null, row.title, row.excerpt,
         sortOrder, lastPostedAt, lastPostedAt ? 1 : 0
       )
       .run()
@@ -376,10 +414,15 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       let sortOrder = 0
       for (const item of blogResult.items) {
         await c.env.DB.prepare(
-          `INSERT INTO blog_reference_articles (user_id, salon_id, title, excerpt, source_url, posted_date, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          `INSERT INTO blog_reference_articles (
+             user_id, salon_id, title, excerpt, source_url, posted_date,
+             category_name, stylist_name, stylist_salonboard_key, sort_order
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-          .bind(user.id, user.active_salon_id, item.title, item.excerpt, item.sourceUrl, item.postedDate, sortOrder)
+          .bind(
+            user.id, user.active_salon_id, item.title, item.excerpt, item.sourceUrl, item.postedDate,
+            item.categoryName, item.stylistName, item.stylistSalonboardKey, sortOrder
+          )
           .run()
         sortOrder += 1
       }

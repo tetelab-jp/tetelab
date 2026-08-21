@@ -871,6 +871,19 @@ const bindings: Bindings = {
     console.error('起動時マイグレーション(blog_reference_articles)に失敗しました:', err)
   }
   try {
+    // 2026-08-21追記(ユーザー提供の実HTMLで確認): HPB公開ブログ一覧の各記事に
+    // カテゴリ・投稿者(スタイリスト)も掲載されていることが確認できたため、
+    // 登録ブログへ取り込む際にblog_articles.category_id/stylist_idへ
+    // 反映できるよう保存する。
+    await bindings.DB.prepare(`ALTER TABLE blog_reference_articles ADD COLUMN IF NOT EXISTS category_name TEXT`).run()
+    await bindings.DB.prepare(`ALTER TABLE blog_reference_articles ADD COLUMN IF NOT EXISTS stylist_name TEXT`).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE blog_reference_articles ADD COLUMN IF NOT EXISTS stylist_salonboard_key TEXT`
+    ).run()
+  } catch (err) {
+    console.error('起動時マイグレーション(blog_reference_articles.category_name/stylist_name)に失敗しました:', err)
+  }
+  try {
     // 2026-08-16追記(ユーザー指定・至急対応): 管理者サイト「機能設定」
     // (/admin/tool)の見た目はサロン単位だったが、実際のON/OFFはusers側の
     // アカウント単位の列(style_enabled等)で管理していたため、複数サロンを

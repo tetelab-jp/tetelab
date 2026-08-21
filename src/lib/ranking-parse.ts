@@ -462,6 +462,11 @@ export type HpbBlogListItem = {
   sourceUrl: string
   /** "YYYY-MM-DD"。一覧ページに日付表示が無い/検出できない場合はnull */
   postedDate: string | null
+  /** HPB_BLOG_CATEGORY_OPTIONS(blog.tsx)のいずれかのラベル文字列と一致する想定 */
+  categoryName: string | null
+  stylistName: string | null
+  /** stylists.salonboard_stylist_keyと同じ形式のTコード(例: T001090850) */
+  stylistSalonboardKey: string | null
 }
 
 export type HpbBlogListPageResult = {
@@ -474,6 +479,10 @@ export type HpbBlogListPageResult = {
  * 1ページ分をパースする。一覧には抜粋(「続きを見る」で個別ページへの
  * リンク)のみが掲載されており、全文は個別ページに遷移しないと取得できない。
  * AI生成の参考材料としては抜粋で十分なため、個別ページへの追加アクセスは行わない。
+ * 2026-08-21追記(ユーザー提供の実HTMLで確認): 一覧の各カセットには
+ * カテゴリ(class="blogCategory"のdiv)と投稿者(href="…/stylist/{Tコード}/"の
+ * リンク)も掲載されている。取り込み時にblog_articlesのcategory_id/
+ * stylist_idへ反映するため、あわせて取得する。
  */
 export function parseHpbBlogListPage(html: string): HpbBlogListPageResult {
   const $ = cheerio.load(html)
@@ -498,7 +507,20 @@ export function parseHpbBlogListPage(html: string): HpbBlogListPageResult {
     const dateText = $li.text().match(/(\d{4})\/(\d{1,2})\/(\d{1,2})/)
     const postedDate = dateText ? `${dateText[1]}-${dateText[2].padStart(2, '0')}-${dateText[3].padStart(2, '0')}` : null
 
-    items.push({ title, excerpt, sourceUrl, postedDate })
+    const categoryName = $li.find('.blogCategory').first().text().replace(/\s+/g, ' ').trim() || null
+
+    let stylistName: string | null = null
+    let stylistSalonboardKey: string | null = null
+    $li.find('a[href*="/stylist/"]').each((_, a) => {
+      const href = $(a).attr('href') || ''
+      const match = href.match(/\/stylist\/([^/]+)\/?/)
+      if (!match) return
+      stylistSalonboardKey = match[1]
+      stylistName = $(a).text().replace(/\s+/g, ' ').trim() || null
+      return false
+    })
+
+    items.push({ title, excerpt, sourceUrl, postedDate, categoryName, stylistName, stylistSalonboardKey })
   })
 
   const nextPageUrl = $('link[rel="next"]').attr('href') || null
