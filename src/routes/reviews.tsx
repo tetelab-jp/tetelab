@@ -83,10 +83,7 @@ function ReviewAutoSyncInfo({ backfillDone, lastSyncRunAt }: { backfillDone: boo
         <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>口コミデータの同期
       </p>
       {backfillDone ? (
-        <>
-          <p class="text-sm text-gray-600 mt-1">毎週月曜21時に、サロンボードとHPBの最新の口コミを自動で取得・反映します。</p>
-          <p class="text-xs text-gray-400 mt-1">最終同期: {lastSyncRunAt ? formatJstDateTimeCompact(lastSyncRunAt) : '未実施'}</p>
-        </>
+        <p class="text-xs text-gray-400 mt-1">最終同期: {lastSyncRunAt ? formatJstDateTimeCompact(lastSyncRunAt) : '未実施'}</p>
       ) : (
         <p class="text-sm text-gray-600 mt-1">
           まだ初回データ取り込みが完了していません。
@@ -124,6 +121,12 @@ reviews.get('/reviews/trend', async (c) => {
                 <i class="fas fa-star text-amber-400 text-2xl"></i>
                 <span class="text-5xl font-bold text-gray-800">{trendByNewest[0].avgOverall.toFixed(2)}</span>
                 <span class="text-sm text-gray-400 ml-1">({trendByNewest[0].count}件)</span>
+                {(() => {
+                  const diff = trendByNewest[0].count - trendByNewest[1].count
+                  const sign = diff > 0 ? '+' : ''
+                  const colorClass = diff > 0 ? 'text-green-600 bg-green-50' : diff < 0 ? 'text-red-600 bg-red-50' : 'text-gray-400 bg-gray-50'
+                  return <span class={`text-xs font-semibold rounded-full px-2 py-0.5 ${colorClass}`}>前回比 {sign}{diff}件</span>
+                })()}
               </div>
             </div>
           )}

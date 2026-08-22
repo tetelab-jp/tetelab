@@ -60,8 +60,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   var paginationEl = document.getElementById('blog-ref-pagination')
   var paginationLabelEl = document.getElementById('blog-ref-pagination-label')
+  var firstBtn = document.getElementById('blog-ref-page-first')
+  var back5Btn = document.getElementById('blog-ref-page-back5')
   var prevBtn = document.getElementById('blog-ref-page-prev')
   var nextBtn = document.getElementById('blog-ref-page-next')
+  var fwd5Btn = document.getElementById('blog-ref-page-fwd5')
+  var lastBtn = document.getElementById('blog-ref-page-last')
 
   function renderPage() {
     var visibleCount = 0
@@ -79,8 +83,14 @@ document.addEventListener('DOMContentLoaded', () => {
           paginationLabelEl.textContent =
             (start + 1) + '〜' + (start + visibleCount) + '件 / 全' + items.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
         }
-        if (prevBtn) prevBtn.disabled = currentPage <= 1
-        if (nextBtn) nextBtn.disabled = currentPage >= totalPages
+        var atFirst = currentPage <= 1
+        var atLast = currentPage >= totalPages
+        if (firstBtn) firstBtn.disabled = atFirst
+        if (back5Btn) back5Btn.disabled = atFirst
+        if (prevBtn) prevBtn.disabled = atFirst
+        if (nextBtn) nextBtn.disabled = atLast
+        if (fwd5Btn) fwd5Btn.disabled = atLast
+        if (lastBtn) lastBtn.disabled = atLast
       } else {
         paginationEl.classList.add('hidden')
         paginationEl.classList.remove('flex')
@@ -89,22 +99,17 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   renderPage()
 
-  if (prevBtn) {
-    prevBtn.addEventListener('click', function () {
-      if (currentPage <= 1) return
-      currentPage -= 1
-      renderPage()
-      list.scrollIntoView({ block: 'start' })
-    })
+  function goToPage(page) {
+    currentPage = Math.min(Math.max(1, page), totalPages)
+    renderPage()
+    list.scrollIntoView({ block: 'start' })
   }
-  if (nextBtn) {
-    nextBtn.addEventListener('click', function () {
-      if (currentPage >= totalPages) return
-      currentPage += 1
-      renderPage()
-      list.scrollIntoView({ block: 'start' })
-    })
-  }
+  if (firstBtn) firstBtn.addEventListener('click', function () { goToPage(1) })
+  if (back5Btn) back5Btn.addEventListener('click', function () { goToPage(currentPage - 5) })
+  if (prevBtn) prevBtn.addEventListener('click', function () { goToPage(currentPage - 1) })
+  if (nextBtn) nextBtn.addEventListener('click', function () { goToPage(currentPage + 1) })
+  if (fwd5Btn) fwd5Btn.addEventListener('click', function () { goToPage(currentPage + 5) })
+  if (lastBtn) lastBtn.addEventListener('click', function () { goToPage(totalPages) })
 
   // 全選択/全解除は現在表示中のページの記事だけを対象にする
   // (既存スタイル取り込みで、全ページ分が対象になってしまっていた不具合の

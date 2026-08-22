@@ -4,13 +4,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const statusEl = document.getElementById('import-status')
   const listContainer = document.getElementById('import-list-container')
   const listEl = document.getElementById('import-list')
-  const executeBtn = document.getElementById('import-execute-btn')
-  const executeBtnLabel = document.getElementById('import-execute-btn-label')
+  const listCountEl = document.getElementById('import-list-count')
+  const executeBtns = document.querySelectorAll('.import-execute-btn')
+  const executeBtnLabels = document.querySelectorAll('.import-execute-btn-label')
   const executeStatusEl = document.getElementById('import-execute-status')
   const paginationEl = document.getElementById('import-pagination')
   const paginationLabelEl = document.getElementById('import-pagination-label')
+  const pageFirstBtn = document.getElementById('import-page-first')
+  const pageBack5Btn = document.getElementById('import-page-back5')
   const pagePrevBtn = document.getElementById('import-page-prev')
   const pageNextBtn = document.getElementById('import-page-next')
+  const pageFwd5Btn = document.getElementById('import-page-fwd5')
+  const pageLastBtn = document.getElementById('import-page-last')
   const lastFetchAtEl = document.getElementById('style-fetch-last-at')
   const progressModal = document.getElementById('import-progress-modal')
   const progressText = document.getElementById('import-progress-text')
@@ -143,8 +148,14 @@ document.addEventListener('DOMContentLoaded', () => {
           paginationLabelEl.textContent =
             (start + 1) + '〜' + (start + pageStyles.length) + '件 / 全' + allStyles.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
         }
-        if (pagePrevBtn) pagePrevBtn.disabled = currentPage <= 1
-        if (pageNextBtn) pageNextBtn.disabled = currentPage >= totalPages
+        const atFirst = currentPage <= 1
+        const atLast = currentPage >= totalPages
+        if (pageFirstBtn) pageFirstBtn.disabled = atFirst
+        if (pageBack5Btn) pageBack5Btn.disabled = atFirst
+        if (pagePrevBtn) pagePrevBtn.disabled = atFirst
+        if (pageNextBtn) pageNextBtn.disabled = atLast
+        if (pageFwd5Btn) pageFwd5Btn.disabled = atLast
+        if (pageLastBtn) pageLastBtn.disabled = atLast
       } else {
         paginationEl.classList.add('hidden')
         paginationEl.classList.remove('flex')
@@ -157,6 +168,7 @@ document.addEventListener('DOMContentLoaded', () => {
     allStyles = styles
     currentPage = 1
     selectedIds.clear()
+    if (listCountEl) listCountEl.textContent = String(styles.length)
     renderPage()
   }
 
@@ -182,20 +194,18 @@ document.addEventListener('DOMContentLoaded', () => {
   function scrollToListTop() {
     if (listContainer) listContainer.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
-  if (pagePrevBtn) {
-    pagePrevBtn.addEventListener('click', () => {
-      currentPage -= 1
-      renderPage()
-      scrollToListTop()
-    })
+  function goToPage(page) {
+    const totalPages = Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))
+    currentPage = Math.min(Math.max(1, page), totalPages)
+    renderPage()
+    scrollToListTop()
   }
-  if (pageNextBtn) {
-    pageNextBtn.addEventListener('click', () => {
-      currentPage += 1
-      renderPage()
-      scrollToListTop()
-    })
-  }
+  if (pageFirstBtn) pageFirstBtn.addEventListener('click', () => goToPage(1))
+  if (pageBack5Btn) pageBack5Btn.addEventListener('click', () => goToPage(currentPage - 5))
+  if (pagePrevBtn) pagePrevBtn.addEventListener('click', () => goToPage(currentPage - 1))
+  if (pageNextBtn) pageNextBtn.addEventListener('click', () => goToPage(currentPage + 1))
+  if (pageFwd5Btn) pageFwd5Btn.addEventListener('click', () => goToPage(currentPage + 5))
+  if (pageLastBtn) pageLastBtn.addEventListener('click', () => goToPage(Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))))
 
   function saveCache(styles) {
     try {
@@ -233,8 +243,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const cached = loadCache()
   if (cached && cached.styles.length > 0) {
     setStyles(cached.styles)
-    statusEl.textContent =
-      cached.styles.length + '件のスタイルを表示しています。最新の状態にするには再取得してください。'
   }
 
   if (fetchBtn) {
@@ -279,7 +287,18 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
-  if (executeBtn) {
+  function setExecuteBtnsDisabled(disabled) {
+    executeBtns.forEach((btn) => {
+      btn.disabled = disabled
+    })
+  }
+  function setExecuteBtnsLabel(text) {
+    executeBtnLabels.forEach((label) => {
+      label.textContent = text
+    })
+  }
+
+  executeBtns.forEach((executeBtn) => {
     executeBtn.addEventListener('click', async () => {
       // ページをまたいで選択できるため、現在のDOM(表示中のページ分のみ)ではなく
       // selectedIds(全ページ分の選択状態)から取得する。
@@ -290,8 +309,8 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       if (!confirm(styleIds.length + '件のスタイルを取り込みます。よろしいですか？')) return
 
-      executeBtn.disabled = true
-      if (executeBtnLabel) executeBtnLabel.textContent = '反映中'
+      setExecuteBtnsDisabled(true)
+      setExecuteBtnsLabel('反映中')
       if (executeStatusEl) executeStatusEl.textContent = ''
       // 2026-08-17追記(ユーザー指定): 取り込み中は操作不能のローディングモーダルを
       // 表示する。「中止する」を押すとAbortControllerでfetchを中断し、サーバー側も
@@ -340,8 +359,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
       currentAbortController = null
-      executeBtn.disabled = false
-      if (executeBtnLabel) executeBtnLabel.textContent = '登録スタイルへ追加'
+      setExecuteBtnsDisabled(false)
+      setExecuteBtnsLabel('登録スタイルへ追加')
     })
-  }
+  })
 })
