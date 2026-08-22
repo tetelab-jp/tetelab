@@ -166,7 +166,7 @@ dashboard.get('/dashboard', async (c) => {
           <div class="grid grid-cols-2 gap-3 text-sm">
             <div class="bg-gray-50 rounded-lg p-3">
               <p class="text-xs text-gray-400">スタイリスト</p>
-              <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 件</p>
+              <p class="font-bold text-gray-800">{stylistCountRow?.cnt ?? 0} 名</p>
               <p class="text-xs text-gray-400 mt-1 flex flex-col md:flex-row md:gap-1">
                 <span>最終同期:</span>
                 <span class="whitespace-nowrap">{cred.last_stylist_synced_at ? formatJstDateTimeCompact(cred.last_stylist_synced_at) : '未実施'}</span>
@@ -227,7 +227,46 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       )}
 
-      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-2 gap-3 md:hidden">
+        <DashboardNavIconTile
+          icon="fa-images"
+          label="スタイル投稿"
+          colorClasses="bg-pink-100 text-pink-600"
+          autoOn={styleScheduleRow?.enabled === 1}
+          count={styleTotalRow?.total ?? 0}
+          unit="スタイル"
+          href="/style/library"
+        />
+        <DashboardNavIconTile
+          icon="fa-pen-to-square"
+          label="ブログ投稿"
+          colorClasses="bg-blue-100 text-blue-600"
+          autoOn={blogScheduleRow?.enabled === 1}
+          count={blogArticlesRow?.total ?? 0}
+          unit="記事"
+          href="/blog/articles"
+        />
+        <DashboardNavIconTile
+          icon="fa-comments"
+          label="口コミ管理"
+          colorClasses="bg-purple-100 text-purple-600"
+          autoOn={reviewReplyScheduleRow?.enabled === 1}
+          count={reviewUnrepliedRow?.cnt ?? 0}
+          unit="未返信"
+          href="/reviews/list"
+        />
+        <DashboardNavIconTile
+          icon="fa-list-check"
+          label="SEO"
+          colorClasses="bg-amber-100 text-amber-600"
+          autoOn={rankingScheduleRow?.enabled === 1}
+          count={seoKeywordRow?.cnt ?? 0}
+          unit="対策KW"
+          href="/seo/keywords"
+        />
+      </div>
+
+      <div class="hidden md:grid md:grid-cols-4 gap-4">
         <DashboardNavCard
           icon="fa-images"
           title="スタイル投稿"
@@ -250,7 +289,7 @@ dashboard.get('/dashboard', async (c) => {
         />
         <DashboardNavCard
           icon="fa-comments"
-          title="口コミ"
+          title="口コミ管理"
           autoOn={reviewReplyScheduleRow?.enabled === 1}
           count={reviewUnrepliedRow?.cnt ?? 0}
           unit="未返信"
@@ -260,7 +299,7 @@ dashboard.get('/dashboard', async (c) => {
         />
         <DashboardNavCard
           icon="fa-list-check"
-          title="SEO測定"
+          title="SEO"
           autoOn={rankingScheduleRow?.enabled === 1}
           count={seoKeywordRow?.cnt ?? 0}
           unit="対策KW"
@@ -270,20 +309,22 @@ dashboard.get('/dashboard', async (c) => {
         />
       </div>
 
-      <div class="flex flex-row items-stretch gap-4">
+      <div class="flex flex-col md:flex-row items-stretch gap-4">
         {cred && (
-          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-2 flex-1 min-w-0">
-            <p class="font-semibold"><i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定</p>
-            <p class="text-xs text-gray-400">
-              サロンID・ログインID・パスワードの確認/更新は
-              <a href="/settings/salonboard" class="text-pink-600 font-medium hover:underline">連携設定ページ</a>
-              から行えます。
-            </p>
-          </div>
+          <a
+            href="/settings/salonboard"
+            class="bg-white rounded-xl border border-gray-100 hover:border-pink-300 hover:bg-pink-50/40 transition-colors p-6 flex items-center justify-between gap-3 flex-1 min-w-0 group"
+          >
+            <div class="min-w-0">
+              <p class="font-semibold"><i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定</p>
+              <p class="text-xs text-gray-400 mt-1">サロンID・ログインID・パスワードの確認/更新はこちらから</p>
+            </div>
+            <i class="fas fa-chevron-right text-gray-300 group-hover:text-pink-500 flex-shrink-0"></i>
+          </a>
         )}
 
-        <div class="bg-white rounded-xl border border-gray-100 p-5 flex-shrink-0">
-          <p class="text-xs text-gray-400 mb-1 whitespace-nowrap">サロンボード連携</p>
+        <div class="bg-white rounded-xl border border-gray-100 p-5 flex items-center justify-between gap-3 md:block md:flex-shrink-0">
+          <p class="text-xs text-gray-400 mb-0 md:mb-1 whitespace-nowrap">サロンボード連携</p>
           <p class={'text-lg font-bold whitespace-nowrap ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
             {isConnected ? (
               <><i class="fas fa-circle-check mr-1"></i>連携済み</>
@@ -843,6 +884,43 @@ function DashboardNavCard({
         {linkLabel} <i class="fas fa-arrow-right ml-1"></i>
       </a>
     </div>
+  )
+}
+
+// 2026-08-22追記(ユーザー指定): モバイルではDashboardNavCard(説明文付き)ではなく、
+// アイコンを主役にしたアプリのホーム画面のようなタイルを2x2で並べる。
+function DashboardNavIconTile({
+  icon,
+  label,
+  colorClasses,
+  autoOn,
+  count,
+  unit,
+  href
+}: {
+  icon: string
+  label: string
+  colorClasses: string
+  autoOn: boolean
+  count: number
+  unit: string
+  href: string
+}) {
+  return (
+    <a
+      href={href}
+      class="relative bg-white rounded-2xl border border-gray-100 p-4 flex flex-col items-center gap-2 text-center active:scale-95 transition-transform"
+    >
+      {autoOn && <span class="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-green-500"></span>}
+      <span class={'w-14 h-14 rounded-2xl flex items-center justify-center text-2xl ' + colorClasses}>
+        <i class={`fas ${icon}`}></i>
+      </span>
+      <span class="text-sm font-semibold text-gray-800">{label}</span>
+      <span class="text-xs text-gray-400">
+        {count}
+        {unit}
+      </span>
+    </a>
   )
 }
 

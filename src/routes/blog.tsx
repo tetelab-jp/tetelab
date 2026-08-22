@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { requireAuth, requireBlogEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
+import { PaginationBar } from '../components/pagination'
 import { processBlogArticleImage } from '../lib/image-process'
 import {
   generateCategoryDraft,
@@ -239,22 +240,27 @@ blog.get('/blog/salon', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
-        <div class="flex-1 min-w-[240px]">
-          <p class="font-semibold text-sm">サロンボードから読み込む</p>
-          <p class="text-xs text-gray-400 mt-1">
-            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大300件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします
-          </p>
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-wrap gap-3">
+          <div>
+            <p class="font-semibold">
+              <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
+              サロンボードから読み込む
+            </p>
+            <p class="text-sm text-gray-600 mt-1">
+              スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大300件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします。
+            </p>
+          </div>
+          <div class="flex flex-col items-center gap-1 w-full sm:w-auto sm:self-center">
+            <button id="blog-salon-sync-btn" class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm whitespace-nowrap">
+              <i class="fas fa-cloud-arrow-down mr-2"></i>サロンボードからブログ読み込み
+            </button>
+            <p id="blog-salon-last-at" class="text-xs text-gray-400 whitespace-nowrap">
+              最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
+            </p>
+          </div>
         </div>
-        <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
-          <button id="blog-salon-sync-btn" class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
-            サロンボードからブログ読み込み
-          </button>
-          <p id="blog-salon-last-at" class="text-xs text-gray-400">
-            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
-          </p>
-        </div>
-        <p id="blog-salon-sync-status" class="text-sm text-gray-500 w-full"></p>
+        <p id="blog-salon-sync-status" class="text-sm text-gray-500 mt-3"></p>
       </div>
 
       {referenceArticles.length > 0 && (
@@ -264,10 +270,6 @@ blog.get('/blog/salon', async (c) => {
               <i class="fas fa-list-check mr-2 text-pink-500"></i>
               取り込んだ過去の記事（{referenceArticles.length}件）
             </p>
-            <div class="flex gap-2">
-              <button type="button" id="blog-ref-select-all-btn" class="text-xs text-pink-600 hover:underline">このページを全選択</button>
-              <button type="button" id="blog-ref-deselect-all-btn" class="text-xs text-pink-600 hover:underline">このページを全解除</button>
-            </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
             選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。カテゴリ・投稿者はHPB公開ページの表示から一致するものを自動設定します(一致しない場合は未設定のままなので、追加後に編集画面で設定してください)。タイトルをタップすると内容を確認できます。
@@ -276,41 +278,53 @@ blog.get('/blog/salon', async (c) => {
             <button type="submit" class="w-full sm:w-auto mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
+            <div class="grid grid-cols-2 gap-2 mb-3">
+              <button
+                type="button"
+                id="blog-ref-select-all-btn"
+                class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+              >
+                <i class="fas fa-check-double mr-1.5"></i>このページを全選択
+              </button>
+              <button
+                type="button"
+                id="blog-ref-deselect-all-btn"
+                class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+              >
+                <i class="fas fa-xmark mr-1.5"></i>このページを全解除
+              </button>
+            </div>
             <ul id="blog-ref-list" class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a, idx) => (
                 <li class="flex items-center gap-3 p-3" data-page={Math.floor(idx / 100) + 1}>
                   <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox w-4 h-4 accent-pink-500 flex-shrink-0" />
-                  <a href={`/blog/salon/reference/${a.id}/preview`} class="min-w-0 flex-1 text-left">
-                    <p class="text-sm font-medium text-gray-700 truncate">{a.title || '（無題）'}</p>
-                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
-                      {a.posted_date && (
-                        <span class="inline-flex items-center gap-1 text-xs font-semibold text-pink-600">
-                          <i class="fas fa-calendar-day"></i>{compactDate(a.posted_date)}
-                        </span>
-                      )}
-                      {a.stylist_name && (
-                        <span class="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
-                          <i class="fas fa-user"></i>{a.stylist_name}
-                        </span>
-                      )}
-                      {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 text-xs">{a.category_name}</span>}
+                  <a
+                    href={`/blog/salon/reference/${a.id}/preview`}
+                    class="min-w-0 flex-1 flex items-center gap-2 text-left group rounded-lg -m-1 p-1 hover:bg-pink-50/60 transition-colors"
+                  >
+                    <div class="min-w-0 flex-1">
+                      <p class="text-sm font-medium text-gray-700 truncate group-hover:text-pink-600">{a.title || '（無題）'}</p>
+                      <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                        {a.posted_date && (
+                          <span class="inline-flex items-center gap-1 text-xs font-semibold text-pink-600">
+                            <i class="fas fa-calendar-day"></i>{compactDate(a.posted_date)}
+                          </span>
+                        )}
+                        {a.stylist_name && (
+                          <span class="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
+                            <i class="fas fa-user"></i>{a.stylist_name}
+                          </span>
+                        )}
+                        {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 text-xs">{a.category_name}</span>}
+                      </div>
+                      <p class="text-xs text-gray-400 mt-1 truncate">{a.excerpt.slice(0, 60)}</p>
                     </div>
-                    <p class="text-xs text-gray-400 mt-1 truncate">{a.excerpt.slice(0, 60)}</p>
+                    <i class="fas fa-chevron-right text-gray-300 group-hover:text-pink-400 flex-shrink-0"></i>
                   </a>
                 </li>
               ))}
             </ul>
-            <div id="blog-ref-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
-              <span id="blog-ref-pagination-label"></span>
-              <div class="flex gap-3">
-                <button type="button" id="blog-ref-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-                  ← 前へ
-                </button>
-                <button type="button" id="blog-ref-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-                  次へ →
-                </button>
-              </div>
-            </div>
+            <PaginationBar idPrefix="blog-ref" />
             <button type="submit" class="w-full sm:w-auto mt-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
@@ -913,7 +927,7 @@ blog.get('/blog/template', async (c) => {
                   <i class="fas fa-wand-magic-sparkles mr-1"></i>AIで下書き生成
                 </button>
               </div>
-              <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg">保存する</button>
+              <button type="submit" class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">保存する</button>
             </form>
           </div>
           <p class="text-xs text-gray-400">
@@ -1020,6 +1034,9 @@ blog.get('/blog/template', async (c) => {
               ※350文字を超えています(本文の生成余地が減ります)
             </span>
           </p>
+          <button type="submit" class="w-full sm:w-auto mt-4 bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">
+            保存する
+          </button>
         </div>
 
         <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -1048,11 +1065,10 @@ blog.get('/blog/template', async (c) => {
               <input type="text" name="closing_days" value={profile?.closing_days || ''} class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" />
             </div>
           </div>
+          <button type="submit" class="w-full sm:w-auto mt-4 bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm">
+            保存する
+          </button>
         </div>
-
-        <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-6 py-2.5 rounded-lg text-sm">
-          保存する
-        </button>
       </form>
       )}
 

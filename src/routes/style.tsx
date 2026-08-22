@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono'
 import { requireAuth, requireStyleEnabled } from '../lib/auth-middleware'
 import { PageLayout } from '../components/layout'
+import { PaginationBar } from '../components/pagination'
 import { decryptSecret } from '../lib/crypto'
 import { launchBrowser, newAutomationPage, loginToSalonBoard, handleGroupTopIfPresent } from '../lib/salonboard-automation'
 import { fetchExistingStyles, importSelectedStyles } from '../lib/salonboard-import'
@@ -306,36 +307,11 @@ function StyleListSection({
             / {totalCount} 件
           </span>
         </p>
-        <div class="flex items-center flex-nowrap gap-2">
-          {isTemplateMode && (
-            <>
-              <button
-                id="template-target-select-all-btn"
-                type="button"
-                class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1 whitespace-nowrap"
-              >
-                このページを全選択
-              </button>
-              <button
-                id="template-target-deselect-all-btn"
-                type="button"
-                class="text-xs font-semibold text-gray-500 hover:text-pink-600 border border-gray-300 rounded px-2 py-1 whitespace-nowrap"
-              >
-                このページを全解除
-              </button>
-            </>
-          )}
-          {!isTemplateMode && (
-            <select id="style-filter-select" class="text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-3 py-2">
-              <option value="all">すべて</option>
-              <option value="on">ONのみ</option>
-              <option value="off">OFFのみ</option>
-            </select>
-          )}
+        <div class="flex items-center flex-nowrap gap-2 w-full sm:w-auto">
           {showCreateLink && (
             <a
               href="/style/new"
-              class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap flex-shrink-0"
+              class="w-full sm:w-auto text-center bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap sm:flex-shrink-0"
             >
               <i class="fas fa-plus mr-1"></i>新規作成
             </a>
@@ -351,20 +327,43 @@ function StyleListSection({
         ) : (
           <>
             {!isTemplateMode && (
-              <div class="flex items-center gap-2 mb-3">
+              <div class="grid grid-cols-3 gap-2 mb-3">
+                <select id="style-filter-select" class="w-full text-sm font-semibold text-gray-600 border border-gray-300 rounded-lg px-2 py-2">
+                  <option value="all">すべて</option>
+                  <option value="on">ONのみ</option>
+                  <option value="off">OFFのみ</option>
+                </select>
                 <button
                   type="button"
                   id="style-select-all-btn"
-                  class="bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg"
+                  class="bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-2 py-2 rounded-lg whitespace-nowrap"
                 >
                   <i class="fas fa-check-double mr-1.5"></i>全選択
                 </button>
                 <button
                   type="button"
                   id="style-deselect-all-btn"
-                  class="bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg"
+                  class="bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-2 py-2 rounded-lg whitespace-nowrap"
                 >
                   <i class="fas fa-xmark mr-1.5"></i>全解除
+                </button>
+              </div>
+            )}
+            {isTemplateMode && (
+              <div class="grid grid-cols-2 gap-2 mb-3">
+                <button
+                  type="button"
+                  id="template-target-select-all-btn"
+                  class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                >
+                  <i class="fas fa-check-double mr-1.5"></i>このページを全選択
+                </button>
+                <button
+                  type="button"
+                  id="template-target-deselect-all-btn"
+                  class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                >
+                  <i class="fas fa-xmark mr-1.5"></i>このページを全解除
                 </button>
               </div>
             )}
@@ -444,19 +443,7 @@ function StyleListSection({
               </div>
             ))}
             </div>
-            {isTemplateMode && (
-              <div id="template-target-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
-                <span id="template-target-pagination-label"></span>
-                <div class="flex gap-3">
-                  <button type="button" id="template-target-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-                    ← 前へ
-                  </button>
-                  <button type="button" id="template-target-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-                    次へ →
-                  </button>
-                </div>
-              </div>
-            )}
+            {isTemplateMode && <PaginationBar idPrefix="template-target" />}
           </>
         )}
       </div>
@@ -621,9 +608,9 @@ style.get('/style/import', async (c) => {
               <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
               サロンボードからスタイル取得
             </p>
-            <p class="text-sm text-gray-600 mt-1">サロンボードに登録済みのスタイルを取得します。取得後、取り込むスタイルを選択できます。</p>
+            <p class="text-sm text-gray-600 mt-1">サロンボードに登録済みのスタイルを取得し登録スタイルへ反映します。</p>
           </div>
-          <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
+          <div class="flex flex-col items-center gap-1 w-full sm:w-auto sm:self-center">
             <button
               id="fetch-list-btn"
               disabled={!cred}
@@ -642,51 +629,48 @@ style.get('/style/import', async (c) => {
 
       <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
         <i class="fas fa-circle-info mr-2"></i>
-        サロンボードに既に登録されているスタイルを一覧取得し、選択したものをSalonMotion側の
-        スタイル一覧に取り込みます。取り込んだスタイルは「入力完了」扱いになりますが、
-        自動投稿対象には初期状態では含まれません（重複投稿防止のため）。
+        取り込んだスタイルは初期状態では自動投稿対象には含まれません。登録スタイルから設定をお願いいたします。
       </div>
 
       <div id="import-list-container" data-cache-scope={`${user.id}_${user.active_salon_id ?? ''}`} class="bg-white rounded-xl border border-gray-100 p-6 hidden">
         <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
           <p class="font-semibold sm:flex-1">
-            <i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択
+            <i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択（<span id="import-list-count">0</span>件）
           </p>
           <button
+            type="button"
             id="import-execute-btn"
-            class="w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 sm:px-8 sm:py-3.5 rounded-lg disabled:opacity-50"
+            class="import-execute-btn w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 sm:px-8 sm:py-3.5 rounded-lg disabled:opacity-50"
           >
-            <span id="import-execute-btn-label">登録スタイルへ追加</span>
+            <span class="import-execute-btn-label">登録スタイルへ追加</span>
           </button>
         </div>
-        <div class="flex items-center gap-2 mb-3">
+        <div class="grid grid-cols-2 gap-2 mb-3">
           <button
             type="button"
             id="import-select-all-btn"
-            class="bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg"
+            class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
           >
-            <i class="fas fa-check-double mr-1.5"></i>スタイルを<br class="sm:hidden" />全選択
+            <i class="fas fa-check-double mr-1.5"></i>スタイルを全選択
           </button>
           <button
             type="button"
             id="import-deselect-all-btn"
-            class="bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg"
+            class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
           >
-            <i class="fas fa-xmark mr-1.5"></i>スタイルを<br class="sm:hidden" />全解除
+            <i class="fas fa-xmark mr-1.5"></i>スタイルを全解除
           </button>
         </div>
         <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
-        <div id="import-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
-          <span id="import-pagination-label"></span>
-          <div class="flex gap-3">
-            <button type="button" id="import-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-              ← 前へ
-            </button>
-            <button type="button" id="import-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
-              次へ →
-            </button>
-          </div>
+        <PaginationBar idPrefix="import" />
+        <div class="mt-4 pt-4 border-t border-gray-100">
+          <button
+            type="button"
+            class="import-execute-btn w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 rounded-lg disabled:opacity-50"
+          >
+            <span class="import-execute-btn-label">登録スタイルへ追加</span>
+          </button>
         </div>
       </div>
 

@@ -115,8 +115,12 @@ document.addEventListener('DOMContentLoaded', () => {
     var currentPage = 1
 
     var labelEl = document.getElementById('template-target-pagination-label')
+    var firstBtn = document.getElementById('template-target-page-first')
+    var back5Btn = document.getElementById('template-target-page-back5')
     var prevBtn = document.getElementById('template-target-page-prev')
     var nextBtn = document.getElementById('template-target-page-next')
+    var fwd5Btn = document.getElementById('template-target-page-fwd5')
+    var lastBtn = document.getElementById('template-target-page-last')
 
     function renderTemplateTargetPage() {
       var visibleCount = 0
@@ -133,8 +137,14 @@ document.addEventListener('DOMContentLoaded', () => {
           labelEl.textContent =
             (start + 1) + '〜' + (start + visibleCount) + '件 / 全' + rows.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
         }
-        if (prevBtn) prevBtn.disabled = currentPage <= 1
-        if (nextBtn) nextBtn.disabled = currentPage >= totalPages
+        var atFirst = currentPage <= 1
+        var atLast = currentPage >= totalPages
+        if (firstBtn) firstBtn.disabled = atFirst
+        if (back5Btn) back5Btn.disabled = atFirst
+        if (prevBtn) prevBtn.disabled = atFirst
+        if (nextBtn) nextBtn.disabled = atLast
+        if (fwd5Btn) fwd5Btn.disabled = atLast
+        if (lastBtn) lastBtn.disabled = atLast
       } else {
         templateTargetPaginationEl.classList.add('hidden')
         templateTargetPaginationEl.classList.remove('flex')
@@ -143,22 +153,17 @@ document.addEventListener('DOMContentLoaded', () => {
     renderTemplateTargetPage()
 
     var styleListEl = document.getElementById('style-list')
-    if (prevBtn) {
-      prevBtn.addEventListener('click', function () {
-        if (currentPage <= 1) return
-        currentPage -= 1
-        renderTemplateTargetPage()
-        if (styleListEl) styleListEl.scrollIntoView({ block: 'start' })
-      })
+    function goToTemplateTargetPage(page) {
+      currentPage = Math.min(Math.max(1, page), totalPages)
+      renderTemplateTargetPage()
+      if (styleListEl) styleListEl.scrollIntoView({ block: 'start' })
     }
-    if (nextBtn) {
-      nextBtn.addEventListener('click', function () {
-        if (currentPage >= totalPages) return
-        currentPage += 1
-        renderTemplateTargetPage()
-        if (styleListEl) styleListEl.scrollIntoView({ block: 'start' })
-      })
-    }
+    if (firstBtn) firstBtn.addEventListener('click', function () { goToTemplateTargetPage(1) })
+    if (back5Btn) back5Btn.addEventListener('click', function () { goToTemplateTargetPage(currentPage - 5) })
+    if (prevBtn) prevBtn.addEventListener('click', function () { goToTemplateTargetPage(currentPage - 1) })
+    if (nextBtn) nextBtn.addEventListener('click', function () { goToTemplateTargetPage(currentPage + 1) })
+    if (fwd5Btn) fwd5Btn.addEventListener('click', function () { goToTemplateTargetPage(currentPage + 5) })
+    if (lastBtn) lastBtn.addEventListener('click', function () { goToTemplateTargetPage(totalPages) })
   }
 
   const templateTargetSelectAllBtn = document.getElementById('template-target-select-all-btn')
