@@ -41,17 +41,81 @@ document.addEventListener('DOMContentLoaded', () => {
   })
 })
 
-// 取り込んだ過去の記事一覧: 全選択/全解除ボタン
+// 取り込んだ過去の記事一覧: 100件ずつのページ表示+全選択/全解除ボタン
+// (既存スタイル取り込みの100件ページネーションと同じ考え方。データは
+// サーバー側で既に全件レンダリング済みのため、ページ切り替えはli[data-page]の
+// 表示/非表示で行う。選択はページをまたいでも保持される)
 document.addEventListener('DOMContentLoaded', () => {
+  var list = document.getElementById('blog-ref-list')
   var selectAllBtn = document.getElementById('blog-ref-select-all-btn')
   var deselectAllBtn = document.getElementById('blog-ref-deselect-all-btn')
-  if (!selectAllBtn && !deselectAllBtn) return
+  if (!list) return
 
-  function setAll(checked) {
-    document.querySelectorAll('.blog-ref-checkbox').forEach(function (cb) {
-      cb.checked = checked
+  var PAGE_SIZE = 100
+  var items = Array.prototype.slice.call(list.querySelectorAll('li[data-page]'))
+  var totalPages = items.reduce(function (max, li) {
+    return Math.max(max, Number(li.getAttribute('data-page')) || 1)
+  }, 1)
+  var currentPage = 1
+
+  var paginationEl = document.getElementById('blog-ref-pagination')
+  var paginationLabelEl = document.getElementById('blog-ref-pagination-label')
+  var prevBtn = document.getElementById('blog-ref-page-prev')
+  var nextBtn = document.getElementById('blog-ref-page-next')
+
+  function renderPage() {
+    var visibleCount = 0
+    items.forEach(function (li) {
+      var isCurrent = Number(li.getAttribute('data-page')) === currentPage
+      li.classList.toggle('hidden', !isCurrent)
+      if (isCurrent) visibleCount += 1
+    })
+    if (paginationEl) {
+      if (totalPages > 1) {
+        paginationEl.classList.remove('hidden')
+        paginationEl.classList.add('flex')
+        var start = (currentPage - 1) * PAGE_SIZE
+        if (paginationLabelEl) {
+          paginationLabelEl.textContent =
+            (start + 1) + '〜' + (start + visibleCount) + '件 / 全' + items.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
+        }
+        if (prevBtn) prevBtn.disabled = currentPage <= 1
+        if (nextBtn) nextBtn.disabled = currentPage >= totalPages
+      } else {
+        paginationEl.classList.add('hidden')
+        paginationEl.classList.remove('flex')
+      }
+    }
+  }
+  renderPage()
+
+  if (prevBtn) {
+    prevBtn.addEventListener('click', function () {
+      if (currentPage <= 1) return
+      currentPage -= 1
+      renderPage()
+      list.scrollIntoView({ block: 'start' })
     })
   }
-  if (selectAllBtn) selectAllBtn.addEventListener('click', function () { setAll(true) })
-  if (deselectAllBtn) deselectAllBtn.addEventListener('click', function () { setAll(false) })
+  if (nextBtn) {
+    nextBtn.addEventListener('click', function () {
+      if (currentPage >= totalPages) return
+      currentPage += 1
+      renderPage()
+      list.scrollIntoView({ block: 'start' })
+    })
+  }
+
+  // 全選択/全解除は現在表示中のページの記事だけを対象にする
+  // (既存スタイル取り込みで、全ページ分が対象になってしまっていた不具合の
+  // 再発防止と同じ考え方)。
+  function setCurrentPage(checked) {
+    items.forEach(function (li) {
+      if (Number(li.getAttribute('data-page')) !== currentPage) return
+      var cb = li.querySelector('.blog-ref-checkbox')
+      if (cb) cb.checked = checked
+    })
+  }
+  if (selectAllBtn) selectAllBtn.addEventListener('click', function () { setCurrentPage(true) })
+  if (deselectAllBtn) deselectAllBtn.addEventListener('click', function () { setCurrentPage(false) })
 })

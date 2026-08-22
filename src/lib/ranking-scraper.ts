@@ -234,12 +234,13 @@ export type HpbBlogArticlesResult = {
   pagesScanned: number
 }
 
-const DEFAULT_MAX_BLOG_ARTICLES = 100
+// 2026-08-22追記(ユーザー指定): 100件→300件に引き上げ。
+const DEFAULT_MAX_BLOG_ARTICLES = 300
 const DEFAULT_HPB_BLOG_PAGE_DELAY_MS = 800
 
 /**
  * HPB公開ブログ一覧(https://beauty.hotpepper.jp/{hpbSlnId}/blog/)を、
- * 最大件数(デフォルト100件)に達するかページが尽きるまで巡回して取得する。
+ * 最大件数(デフォルト300件)に達するかページが尽きるまで巡回して取得する。
  * ログイン不要・Puppeteer不要。一覧の抜粋のみを取得し、個別記事ページへの
  * 追加アクセスは行わない(AI生成の参考材料としては抜粋で十分なため)。
  */

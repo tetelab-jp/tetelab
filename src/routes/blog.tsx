@@ -243,7 +243,7 @@ blog.get('/blog/salon', async (c) => {
         <div class="flex-1 min-w-[240px]">
           <p class="font-semibold text-sm">サロンボードから読み込む</p>
           <p class="text-xs text-gray-400 mt-1">
-            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします
+            スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大300件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします
           </p>
         </div>
         <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
@@ -265,8 +265,8 @@ blog.get('/blog/salon', async (c) => {
               取り込んだ過去の記事（{referenceArticles.length}件）
             </p>
             <div class="flex gap-2">
-              <button type="button" id="blog-ref-select-all-btn" class="text-xs text-pink-600 hover:underline">全選択</button>
-              <button type="button" id="blog-ref-deselect-all-btn" class="text-xs text-pink-600 hover:underline">全解除</button>
+              <button type="button" id="blog-ref-select-all-btn" class="text-xs text-pink-600 hover:underline">このページを全選択</button>
+              <button type="button" id="blog-ref-deselect-all-btn" class="text-xs text-pink-600 hover:underline">このページを全解除</button>
             </div>
           </div>
           <p class="text-xs text-gray-400 mb-3">
@@ -276,9 +276,9 @@ blog.get('/blog/salon', async (c) => {
             <button type="submit" class="w-full sm:w-auto mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
-            <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
-              {referenceArticles.map((a) => (
-                <li class="flex items-center gap-3 p-3">
+            <ul id="blog-ref-list" class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
+              {referenceArticles.map((a, idx) => (
+                <li class="flex items-center gap-3 p-3" data-page={Math.floor(idx / 100) + 1}>
                   <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox w-4 h-4 accent-pink-500 flex-shrink-0" />
                   <a href={`/blog/salon/reference/${a.id}/preview`} class="min-w-0 flex-1 text-left">
                     <p class="text-sm font-medium text-gray-700 truncate">{a.title || '（無題）'}</p>
@@ -300,6 +300,17 @@ blog.get('/blog/salon', async (c) => {
                 </li>
               ))}
             </ul>
+            <div id="blog-ref-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
+              <span id="blog-ref-pagination-label"></span>
+              <div class="flex gap-3">
+                <button type="button" id="blog-ref-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+                  ← 前へ
+                </button>
+                <button type="button" id="blog-ref-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+                  次へ →
+                </button>
+              </div>
+            </div>
             <button type="submit" class="w-full sm:w-auto mt-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
@@ -322,7 +333,7 @@ blog.get('/blog/salon', async (c) => {
 // 2026-08-21追記(ユーザー指定): 取り込んだ過去記事のタイトルをタップすると、
 // 一覧の抜粋ではなく個別記事ページ(source_url)を都度取得し、全文・画像を
 // 表示する。選択した数件だけ取り込む/確認するために都度アクセスする方式
-// なので、一覧の巡回(mark-synced、最大100件)とは違い低負荷。
+// なので、一覧の巡回(mark-synced、最大300件)とは違い低負荷。
 blog.get('/blog/salon/reference/:id/preview', async (c) => {
   const user = c.get('user')
   const id = Number(c.req.param('id'))
@@ -541,7 +552,7 @@ blog.post('/blog/salon/import-references', async (c) => {
 // 既存エンドポイントを再利用し、二重実装を避ける(public/static/blog-salon.js参照)。
 // 2026-08-17追記(ユーザー指定): このタイミングでHPB公開ページ(ログイン不要・
 // fetchのみ)からキャッチ・コピー・「からの一言」メッセージと、過去のブログ記事
-// (最大100件、一覧の抜粋のみ)を取得し、AI記事生成の参考材料として保存する。
+// (最大300件、一覧の抜粋のみ)を取得し、AI記事生成の参考材料として保存する。
 blog.post('/blog/salon/mark-synced', async (c) => {
   const user = c.get('user')
   const existing = await c.env.DB.prepare('SELECT id FROM salon_profiles WHERE user_id = ? AND salon_id = ?')
