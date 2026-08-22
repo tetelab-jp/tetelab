@@ -289,6 +289,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const openBtn = e.target.closest('.review-reply-open-btn')
       const closeBtn = e.target.closest('.review-reply-close-btn')
       const generateBtn = e.target.closest('.review-reply-generate-btn')
+      const appendSalonNameBtn = e.target.closest('.review-reply-append-salon-name-btn')
       const sendBtn = e.target.closest('.review-reply-send-btn')
 
       if (openBtn) {
@@ -341,6 +342,19 @@ document.addEventListener('DOMContentLoaded', () => {
           if (statusEl) statusEl.textContent = '通信エラーが発生しました'
         } finally {
           generateBtn.disabled = false
+        }
+        return
+      }
+
+      if (appendSalonNameBtn) {
+        const reviewId = appendSalonNameBtn.dataset.reviewId
+        const salonNameText = appendSalonNameBtn.dataset.salonNameText || ''
+        const textarea = listContainer.querySelector(`.review-reply-textarea[data-review-id="${reviewId}"]`)
+        if (textarea && salonNameText) {
+          const current = textarea.value.replace(/\s+$/, '')
+          textarea.value = current ? `${current}\n\n${salonNameText}` : salonNameText
+          textarea.style.height = 'auto'
+          textarea.style.height = textarea.scrollHeight + 'px'
         }
         return
       }

@@ -16,7 +16,12 @@
 
 import type { Bindings } from '../types'
 import { runReviewReplyTask, stopStylePostTask } from './aws-ecs'
-import { generateReviewReply, type ReviewForReplyGeneration, type SalonProfileForGeneration } from './ai-generate'
+import {
+  generateReviewReply,
+  type ReviewForReplyGeneration,
+  type SalonProfileForGeneration,
+  type ReviewReplySettings
+} from './ai-generate'
 import { publishAlert } from './sns-alert'
 import { hasAnyInFlightSalonAutomationJob } from './automation-lock'
 
@@ -267,7 +272,15 @@ async function dispatchReviewReplyJob(
   }
 }
 
-type ScheduleState = { enabled: number; paused_until: string | null; use_past_replies: number }
+type ScheduleState = {
+  enabled: number
+  paused_until: string | null
+  use_past_replies: number
+  must_include_text: string | null
+  must_avoid_text: string | null
+  append_salon_name_flag: number
+  append_salon_name_text: string | null
+}
 
 async function canReplyNow(env: Bindings, salonId: number | null, schedule: ScheduleState): Promise<boolean> {
   if (schedule.enabled !== 1) return false
@@ -311,7 +324,8 @@ async function dispatchNextReviewReply(
   env: Bindings,
   userId: number,
   salonId: number | null,
-  usePastReplies: boolean
+  usePastReplies: boolean,
+  replySettings: ReviewReplySettings
 ): Promise<ReviewReplyDispatchResult> {
   const review = await selectNextEligibleReview(env, userId, salonId)
   if (!review) return { dispatched: false }
@@ -327,7 +341,7 @@ async function dispatchNextReviewReply(
   }
 
   try {
-    const replyContent = await generateReviewReply(env, reviewInput, profile, pastReplies)
+    const replyContent = await generateReviewReply(env, reviewInput, profile, pastReplies, replySettings)
     if (!replyContent) throw new Error('AI返信文の生成結果が空でした')
     // 2026-08-22追記(ユーザー指定): 返信者欄(SALON BOARD側replyFrom)に
     // 口コミの担当スタイリスト名を自動で入れる(自動返信バッチでも同様)。
@@ -352,7 +366,11 @@ export type ReviewReplyBatchResult = { totalDispatched: number }
  * その時点で打ち切る。
  */
 export async function runReviewReplyBatchForUser(env: Bindings, userId: number, salonId: number | null): Promise<ReviewReplyBatchResult> {
-  const schedule = await env.DB.prepare(`SELECT enabled, paused_until, use_past_replies FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`)
+  const schedule = await env.DB.prepare(
+    `SELECT enabled, paused_until, use_past_replies, must_include_text, must_avoid_text,
+            append_salon_name_flag, append_salon_name_text
+     FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
+  )
     .bind(userId, salonId)
     .first<ScheduleState>()
   if (!schedule) return { totalDispatched: 0 }
@@ -361,9 +379,15 @@ export async function runReviewReplyBatchForUser(env: Bindings, userId: number, 
   await requireCredentialsConfigured(env, userId)
 
   const usePastReplies = schedule.use_past_replies !== 0
+  const replySettings: ReviewReplySettings = {
+    mustIncludeText: schedule.must_include_text,
+    mustAvoidText: schedule.must_avoid_text,
+    appendSalonName: schedule.append_salon_name_flag === 1,
+    salonNameText: schedule.append_salon_name_text
+  }
   let totalDispatched = 0
   for (;;) {
-    const result = await dispatchNextReviewReply(env, userId, salonId, usePastReplies)
+    const result = await dispatchNextReviewReply(env, userId, salonId, usePastReplies, replySettings)
     // dispatched=falseは「対象の口コミが無くなった(正常終了)」と「直近の
     // 口コミへの投入に失敗した」の両方で返る。後者の場合、同じ口コミを
     // 選び直して即再試行すると同じ理由で失敗し続ける恐れがあるため、

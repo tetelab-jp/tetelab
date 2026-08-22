@@ -905,6 +905,14 @@ dashboard.get('/settings/auto-update', async (c) => {
         .bind(user.id, salonId)
         .first<{ enabled: number; paused_until: string | null }>()
     : null
+  const blogAutoPostRow = blogEnabled
+    ? await c.env.DB.prepare(
+        "SELECT COUNT(*) as cnt FROM blog_articles WHERE user_id = ? AND salon_id = ? AND status = 'approved' AND auto_post_enabled_flag = 1"
+      )
+        .bind(user.id, salonId)
+        .first<{ cnt: number }>()
+    : null
+  const blogAutoPostCount = blogAutoPostRow?.cnt ?? 0
   const blogScheduleEnabled = blogSchedule?.enabled === 1
   const blogPausedUntilMs = blogSchedule?.paused_until
     ? new Date(blogSchedule.paused_until.replace(' ', 'T') + 'Z').getTime()
@@ -982,9 +990,7 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
-                <span class="text-sm font-medium text-gray-700">
-                  自動投稿を有効にする（{POST_INTERVAL_MINUTES_LABEL}分おきに1件、深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}は停止）
-                </span>
+                <span class="text-sm font-medium text-gray-700">自動投稿を有効にする</span>
               </label>
             </form>
           </div>
@@ -1064,9 +1070,7 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
-                <span class="text-sm font-medium text-gray-700">
-                  自動投稿を有効にする（SALON BOARDへ、月タグに合う記事を毎朝8:00に1本自動投稿）
-                </span>
+                <span class="text-sm font-medium text-gray-700">自動投稿を有効にする</span>
               </label>
             </form>
           </div>
@@ -1078,16 +1082,37 @@ dashboard.get('/settings/auto-update', async (c) => {
             </div>
           )}
 
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
+            <i class="fas fa-circle-info mr-2"></i>
+            自動投稿を有効にすると、SALON BOARDへ毎朝8:00に1本自動投稿します。
+            <br />
+            ※「投稿する月を限定する」を設定した記事はその月の1日に優先投稿されます(月1回まで)
+            <br />
+            現在<b>{blogAutoPostCount}件</b>が対象です。
+          </div>
+
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿</p>
+            <div class="bg-gray-50 rounded-lg p-4">
+              {user.is_impersonated === 1 ? (
+                <>
+                  <button type="button" id="blog-test-run-btn" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50" disabled={!!inFlightBlogJob}>
+                    <i class="fas fa-flask mr-2"></i>今すぐまとめて投稿する
+                  </button>
+                  {inFlightBlogJob && <p class="text-xs text-gray-400 mt-3">投稿処理が進行中です...</p>}
+                  <p id="blog-test-run-status" class="text-sm text-gray-500 mt-3"></p>
+                </>
+              ) : (
+                <p class="text-sm text-gray-400">手動実行はなりすましログイン中のみ利用できます</p>
+              )}
+            </div>
+          </div>
+
           {user.is_impersonated === 1 && (
-            <div>
-              <p class="text-xs font-semibold text-gray-400 mb-2">手動投稿(なりすましログイン中のみ)</p>
-              <div class="bg-gray-50 rounded-lg p-4">
-                <button type="button" id="blog-test-run-btn" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2.5 rounded-lg transition disabled:opacity-50" disabled={!!inFlightBlogJob}>
-                  <i class="fas fa-flask mr-2"></i>今すぐまとめて投稿する
-                </button>
-                {inFlightBlogJob && <p class="text-xs text-gray-400 mt-3">投稿処理が進行中です...</p>}
-                <p id="blog-test-run-status" class="text-sm text-gray-500 mt-3"></p>
-              </div>
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-5 text-sm text-amber-800">
+              <i class="fas fa-triangle-exclamation mr-2"></i>
+              手動実行ボタンを押すと、現在自動投稿対象の記事すべてに対して実際にSALON BOARDへの投稿が実行されます。
+              実行はAWS側のジョブとして非同期に行われるため、結果は完了次第、順次<a href="/blog/articles" class="underline font-semibold">登録ブログ</a>に反映されます（数十秒〜数分かかります）。
             </div>
           )}
         </AutoUpdateSection>
@@ -1095,15 +1120,9 @@ dashboard.get('/settings/auto-update', async (c) => {
 
       {seoEnabled && (
         <AutoUpdateSection icon="fa-magnifying-glass-chart" colorClasses="bg-amber-100 text-amber-600" title="SEO">
-          <div class="bg-gray-50 rounded-lg p-4">
-            <p class="text-sm font-semibold text-gray-700 mb-2">定期測定設定</p>
-            <p class="text-sm text-gray-500 mb-2">
-              「対策キーワード設定」に登録した条件を、毎週月曜日の夜20時に自動計測します。
-            </p>
-            <p class="text-xs text-gray-400 mb-4">
-              前回の定期実行：{rankingLastRunAt ? formatJstDateTime(rankingLastRunAt) : 'なし'}
-            </p>
-            <form method="post" action="/seo/schedule">
+          <div>
+            <p class="text-xs font-semibold text-gray-400 mb-2">自動測定</p>
+            <form method="post" action="/seo/schedule" class="bg-gray-50 rounded-lg p-4">
               <label class="flex items-center gap-3 cursor-pointer w-fit">
                 <span class="relative inline-flex items-center flex-shrink-0">
                   <input
@@ -1117,9 +1136,16 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
-                <span class="text-sm font-medium text-gray-700">定期測定を有効にする（毎週月曜 20:00）</span>
+                <span class="text-sm font-medium text-gray-700">定期測定を有効にする</span>
               </label>
             </form>
+          </div>
+
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
+            <i class="fas fa-circle-info mr-2"></i>
+            定期測定を有効にすると、「対策キーワード設定」に登録した条件を毎週月曜日の夜20:00に自動計測します。
+            <br />
+            前回の定期実行：{rankingLastRunAt ? formatJstDateTime(rankingLastRunAt) : 'なし'}
           </div>
         </AutoUpdateSection>
       )}
@@ -1135,9 +1161,7 @@ dashboard.get('/settings/auto-update', async (c) => {
                   <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
                   <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
                 </span>
-                <span class="text-sm font-medium text-gray-700">
-                  自動返信を有効にする（HPB掲載済み・星4以上の口コミにAIが返信文を作成し自動投稿。星3以下は「未返信口コミ」から手動またはAI生成→手動投稿）
-                </span>
+                <span class="text-sm font-medium text-gray-700">自動返信を有効にする</span>
               </label>
             </form>
           </div>
@@ -1148,6 +1172,15 @@ dashboard.get('/settings/auto-update', async (c) => {
               連続で返信投稿に失敗したため、一時的に自動返信を停止しています(しばらくすると自動的に再開します)。
             </div>
           )}
+
+          <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
+            <i class="fas fa-circle-info mr-2"></i>
+            自動返信を有効にすると、HPB掲載済み・星4以上の口コミに毎朝9:00にAIが返信文を作成し自動投稿します。
+            <br />
+            ※星3以下は対象外です。「未返信口コミ」から手動またはAI生成→手動投稿してください
+            <br />
+            返信文の生成ルール(必ず入れること・してはいけないこと・サロン名の自動追加等)は<a href="/reviews/settings" class="underline font-semibold">口コミ設定</a>で変更できます。
+          </div>
         </AutoUpdateSection>
       )}
 

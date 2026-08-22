@@ -355,6 +355,18 @@ export type ReviewForReplyGeneration = {
   menuUsed: string | null
 }
 
+// 2026-08-22追記(ユーザー指定): 「口コミ設定」ページで設定する返信文章の
+// ルール。mustInclude/mustAvoidはAIへの生成指示として渡す(自由記述のため
+// 機械的な検証はできない)。サロン名の追加はAI任せだと付け忘れ・表記ゆれが
+// 起きるため、生成後にこちら側で機械的に追加する(ブログのフッター追加と
+// 同じ考え方)。
+export type ReviewReplySettings = {
+  mustIncludeText?: string | null
+  mustAvoidText?: string | null
+  appendSalonName?: boolean
+  salonNameText?: string | null
+}
+
 // SALON BOARD返信フォームの実際の入力上限(実HTML確認済み。詳細はworker/src/
 // salonboard-automation.ts参照): 返信本文(replyContents)は全角500文字以内・
 // 改行80回以内。AIには全角換算で余裕を持った400字程度を目安に指示する。
@@ -371,7 +383,8 @@ export async function generateReviewReply(
   env: Bindings,
   review: ReviewForReplyGeneration,
   profile: SalonProfileForGeneration,
-  pastReplies: string[] = []
+  pastReplies: string[] = [],
+  settings?: ReviewReplySettings
 ): Promise<string> {
   const referenceLines =
     pastReplies.length > 0
@@ -396,6 +409,8 @@ export async function generateReviewReply(
     // 生成させる(AI任せだと呼びかけの有無・改行位置がぶれるため)。
     '出力するのは、お客様への呼びかけ(お名前+「様」等)を含まない、本文部分のみにしてください。呼びかけは別途システム側で自動的に付加します。',
     ...referenceLines,
+    ...(settings?.mustIncludeText ? [`返信文章に必ず入れること: ${settings.mustIncludeText}`] : []),
+    ...(settings?.mustAvoidText ? [`返信文章で絶対にしてはいけないこと: ${settings.mustAvoidText}`] : []),
     '必ず指定されたJSON形式のみで出力してください。'
   ]
 
@@ -419,7 +434,15 @@ ${reviewLines.join('\n')}
   // 2026-08-18追記(ユーザー指定): 口コミ投稿者の名前と本文は必ず改行する。
   // AI生成のばらつきを避けるため、呼びかけ行はここで機械的に組み立てる。
   const greeting = review.hpbNickname ? `${review.hpbNickname}様` : null
-  return greeting ? `${greeting}\n\n${body}` : body
+  let result = greeting ? `${greeting}\n\n${body}` : body
+
+  // 2026-08-22追記(ユーザー指定): 「サロン名を返信文章最後に追加する」がONなら、
+  // AI任せにせずこちらで機械的に末尾へ追加する(ブログのフッター追加と同じ考え方)。
+  if (settings?.appendSalonName && settings.salonNameText) {
+    result = `${result}\n\n${settings.salonNameText}`
+  }
+
+  return result
 }
 
 /**
