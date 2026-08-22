@@ -341,11 +341,11 @@ reviews.get('/reviews/list', async (c) => {
   const backfillDone = !!state?.backfill_completed_at
 
   const replySchedule = await c.env.DB.prepare(
-    `SELECT use_past_replies FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
+    `SELECT append_salon_name_flag, append_salon_name_text FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
   )
     .bind(user.id, salonId)
-    .first<{ use_past_replies: number }>()
-  const usePastReplies = (replySchedule?.use_past_replies ?? 1) !== 0
+    .first<{ append_salon_name_flag: number; append_salon_name_text: string | null }>()
+  const appendSalonNameText = replySchedule?.append_salon_name_flag === 1 ? replySchedule.append_salon_name_text || '' : ''
 
   // 2026-08-20追記(ユーザー指定): この一覧は「返信する」ための画面のため、
   // 既に返信済みの口コミは表示対象から外し、未返信の口コミのみを表示する。
@@ -364,22 +364,6 @@ reviews.get('/reviews/list', async (c) => {
   return c.render(
     <PageLayout active="review-list" salonName={user.salon_name} title="未返信口コミ" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
       <SyncStatusPanel backfillDone={backfillDone} lastSyncRunAt={state?.last_sync_run_at ?? null} />
-
-      <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <form method="post" action="/reviews/reply/use-past-replies">
-          <label class="flex items-center gap-3 cursor-pointer w-fit">
-            <span class="relative inline-flex items-center flex-shrink-0">
-              <input type="checkbox" name="use_past_replies" checked={usePastReplies} onchange="this.form.submit()" class="sr-only peer" />
-              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
-              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
-            </span>
-            <span class="text-sm font-medium text-gray-700">
-              過去の返信の文章を参考にする
-              <span class="block text-xs text-gray-400 font-normal">OFFの場合は過去の返信文を参照せずにAI返信文を生成します</span>
-            </span>
-          </label>
-        </form>
-      </div>
 
       {backfillDone && (
         <div class="bg-white rounded-xl border border-gray-100 overflow-hidden">
@@ -471,6 +455,16 @@ reviews.get('/reviews/list', async (c) => {
                       >
                         {r.ai_reply_draft || ''}
                       </textarea>
+                      {appendSalonNameText && (
+                        <button
+                          type="button"
+                          class="review-reply-append-salon-name-btn w-full bg-white border border-gray-300 text-gray-600 hover:bg-gray-100 text-xs font-semibold px-3 py-2 rounded-lg"
+                          data-review-id={r.id}
+                          data-salon-name-text={appendSalonNameText}
+                        >
+                          <i class="fas fa-plus mr-1"></i>最後にサロン名を追加
+                        </button>
+                      )}
                       <div class="flex items-center justify-between gap-2">
                         <p class="review-reply-status text-xs text-gray-400" data-review-id={r.id}></p>
                         <button
@@ -665,23 +659,143 @@ reviews.post('/reviews/reply/schedule', async (c) => {
   return c.redirect('/settings/auto-update')
 })
 
-// 2026-08-21追記(ユーザー指定): 「過去の返信の文章を参考にする」ON/OFF
-// (口コミ返信ページのSyncStatusPanelの下に配置)。自動返信・手動下書き生成の
-// 両方に反映される(review-reply-runner.ts/generateReviewReply参照)。
-reviews.post('/reviews/reply/use-past-replies', async (c) => {
+// ---------- ⑤口コミ設定(2026-08-22追記) ----------
+// AI返信文の生成ルール(過去の返信を参考にする/必ず入れること/してはいけないこと/
+// サロン名の自動追加)をまとめて設定するページ。従来/reviews/listにあった
+// 「過去の返信の文章を参考にする」トグルはここに移設した。
+
+type ReviewReplySettingsRow = {
+  use_past_replies: number
+  must_include_text: string | null
+  must_avoid_text: string | null
+  append_salon_name_flag: number
+  append_salon_name_text: string | null
+}
+
+reviews.get('/reviews/settings', async (c) => {
+  const user = c.get('user')
+  const salonId = user.active_salon_id
+  if (!salonId) return c.text('サロンが選択されていません', 400)
+
+  const settings = await c.env.DB.prepare(
+    `SELECT use_past_replies, must_include_text, must_avoid_text, append_salon_name_flag, append_salon_name_text
+     FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
+  )
+    .bind(user.id, salonId)
+    .first<ReviewReplySettingsRow>()
+
+  const usePastReplies = (settings?.use_past_replies ?? 1) !== 0
+  const appendSalonName = settings?.append_salon_name_flag === 1
+
+  return c.render(
+    <PageLayout active="review-settings" salonName={user.salon_name} title="口コミ設定" reviewEnabled={true} isImpersonated={user.is_impersonated === 1}>
+      <form method="post" action="/reviews/settings" class="space-y-6">
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <label class="flex items-center gap-3 cursor-pointer w-fit">
+            <span class="relative inline-flex items-center flex-shrink-0">
+              <input type="checkbox" name="use_past_replies" checked={usePastReplies} class="sr-only peer" />
+              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </span>
+            <span class="text-sm font-medium text-gray-700">
+              過去の返信の文章を参考にする
+              <span class="block text-xs text-gray-400 font-normal">OFFの場合は過去の返信文を参照せずにAI返信文を生成します</span>
+            </span>
+          </label>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="text-sm font-semibold text-gray-700 mb-1">返信文章に必ず入れること</p>
+          <p class="text-xs text-gray-400 mb-3">例: 投稿者のお名前(さん付け)、来店の挨拶、返信文章に対しての返答</p>
+          <textarea
+            name="must_include_text"
+            rows={4}
+            maxlength={1000}
+            placeholder="例: 投稿者のお名前をさん付けで呼ぶ、ご来店へのお礼、口コミ本文への具体的な返答を必ず入れる"
+            class="w-full border border-gray-200 rounded-lg p-3 text-sm"
+          >
+            {settings?.must_include_text || ''}
+          </textarea>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <p class="text-sm font-semibold text-gray-700 mb-1">返信文章に絶対にしてはいけないこと</p>
+          <p class="text-xs text-gray-400 mb-3">例: クレームに対してサロン側を正当化する発言</p>
+          <textarea
+            name="must_avoid_text"
+            rows={4}
+            maxlength={1000}
+            placeholder="例: クレームに対してサロン側を正当化する発言をしない"
+            class="w-full border border-gray-200 rounded-lg p-3 text-sm"
+          >
+            {settings?.must_avoid_text || ''}
+          </textarea>
+        </div>
+
+        <div class="bg-white rounded-xl border border-gray-100 p-6">
+          <label class="flex items-center gap-3 cursor-pointer w-fit mb-3">
+            <span class="relative inline-flex items-center flex-shrink-0">
+              <input type="checkbox" name="append_salon_name_flag" checked={appendSalonName} class="sr-only peer" id="append-salon-name-flag" />
+              <span class="w-14 h-8 bg-gray-200 rounded-full peer-checked:bg-pink-500 transition-colors"></span>
+              <span class="absolute left-1 top-1 w-6 h-6 bg-white rounded-full shadow transition-transform peer-checked:translate-x-6"></span>
+            </span>
+            <span class="text-sm font-medium text-gray-700">
+              サロン名を返信文章最後に追加する
+              <span class="block text-xs text-gray-400 font-normal">サロン名にSEOのキーワードを設定している場合の露出対策に有効です</span>
+            </span>
+          </label>
+          <input
+            type="text"
+            name="append_salon_name_text"
+            maxlength={200}
+            placeholder="例: 〇〇駅前の美容室 サロン名"
+            value={settings?.append_salon_name_text || ''}
+            class="w-full border border-gray-200 rounded-lg p-2.5 text-sm"
+          />
+        </div>
+
+        <button type="submit" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-3 rounded-lg transition">
+          保存する
+        </button>
+      </form>
+    </PageLayout>,
+    { title: '口コミ設定' }
+  )
+})
+
+reviews.post('/reviews/settings', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const usePastReplies = body.use_past_replies === 'on' || body.use_past_replies === 'true'
+  const mustIncludeText = String(body.must_include_text || '').trim().slice(0, 1000)
+  const mustAvoidText = String(body.must_avoid_text || '').trim().slice(0, 1000)
+  const appendSalonName = body.append_salon_name_flag === 'on' || body.append_salon_name_flag === 'true'
+  const salonNameText = String(body.append_salon_name_text || '').trim().slice(0, 200)
 
   await c.env.DB.prepare(
-    `INSERT INTO review_reply_schedules (user_id, salon_id, use_past_replies)
-     VALUES (?, ?, ?)
-     ON CONFLICT (salon_id) DO UPDATE SET use_past_replies = EXCLUDED.use_past_replies, updated_at = CURRENT_TIMESTAMP`
+    `INSERT INTO review_reply_schedules
+       (user_id, salon_id, use_past_replies, must_include_text, must_avoid_text, append_salon_name_flag, append_salon_name_text)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (salon_id) DO UPDATE SET
+       use_past_replies = EXCLUDED.use_past_replies,
+       must_include_text = EXCLUDED.must_include_text,
+       must_avoid_text = EXCLUDED.must_avoid_text,
+       append_salon_name_flag = EXCLUDED.append_salon_name_flag,
+       append_salon_name_text = EXCLUDED.append_salon_name_text,
+       updated_at = CURRENT_TIMESTAMP`
   )
-    .bind(user.id, user.active_salon_id, usePastReplies ? 1 : 0)
+    .bind(
+      user.id,
+      user.active_salon_id,
+      usePastReplies ? 1 : 0,
+      mustIncludeText || null,
+      mustAvoidText || null,
+      appendSalonName ? 1 : 0,
+      salonNameText || null
+    )
     .run()
 
-  return c.redirect('/reviews/list')
+  return c.redirect('/reviews/settings')
 })
 
 reviews.post('/api/reviews/:id/generate-reply', async (c) => {
@@ -703,10 +817,17 @@ reviews.post('/api/reviews/:id/generate-reply', async (c) => {
 
   try {
     const schedule = await c.env.DB.prepare(
-      `SELECT use_past_replies FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
+      `SELECT use_past_replies, must_include_text, must_avoid_text, append_salon_name_flag, append_salon_name_text
+       FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?`
     )
       .bind(user.id, user.active_salon_id)
-      .first<{ use_past_replies: number }>()
+      .first<{
+        use_past_replies: number
+        must_include_text: string | null
+        must_avoid_text: string | null
+        append_salon_name_flag: number
+        append_salon_name_text: string | null
+      }>()
     const usePastReplies = (schedule?.use_past_replies ?? 1) !== 0
 
     const [profile, pastReplies] = await Promise.all([
@@ -723,7 +844,13 @@ reviews.post('/api/reviews/:id/generate-reply', async (c) => {
         menuUsed: review.menu_used
       },
       profile,
-      pastReplies
+      pastReplies,
+      {
+        mustIncludeText: schedule?.must_include_text ?? null,
+        mustAvoidText: schedule?.must_avoid_text ?? null,
+        appendSalonName: schedule?.append_salon_name_flag === 1,
+        salonNameText: schedule?.append_salon_name_text ?? null
+      }
     )
     await c.env.DB.prepare(`UPDATE reviews SET ai_reply_draft = ? WHERE id = ?`).bind(reply, reviewId).run()
     return c.json({ success: true, reply })

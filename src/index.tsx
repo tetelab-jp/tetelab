@@ -989,6 +989,21 @@ const bindings: Bindings = {
     await bindings.DB.prepare(
       `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS use_past_replies INTEGER NOT NULL DEFAULT 1`
     ).run()
+    // 2026-08-22追記(ユーザー指定): 「口コミ設定」ページ向けの追加設定
+    // (返信文章に必ず入れること/絶対にしてはいけないこと、サロン名の
+    // 自動追加ON/OFF+テキスト)。
+    await bindings.DB.prepare(
+      `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS must_include_text TEXT`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS must_avoid_text TEXT`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS append_salon_name_flag INTEGER NOT NULL DEFAULT 0`
+    ).run()
+    await bindings.DB.prepare(
+      `ALTER TABLE review_reply_schedules ADD COLUMN IF NOT EXISTS append_salon_name_text TEXT`
+    ).run()
 
     await bindings.DB.prepare(
       `CREATE TABLE IF NOT EXISTS review_reply_jobs (
