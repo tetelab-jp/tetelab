@@ -263,20 +263,7 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      <div class="bg-white rounded-xl border border-gray-100 p-5 max-w-xs">
-        <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-        <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
-          {isConnected ? (
-            <><i class="fas fa-circle-check mr-1"></i>連携済み</>
-          ) : cred ? (
-            <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
-          ) : (
-            <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
-          )}
-        </p>
-      </div>
-
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
         <DashboardStatCard
           icon="fa-images"
           title="スタイル投稿"
@@ -319,6 +306,19 @@ dashboard.get('/dashboard', async (c) => {
           </div>
         </div>
       )}
+
+      <div class="bg-white rounded-xl border border-gray-100 p-5 max-w-xs">
+        <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
+        <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+          {isConnected ? (
+            <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+          ) : cred ? (
+            <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+          ) : (
+            <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+          )}
+        </p>
+      </div>
 
       {cred && <script src="/static/salonboard-sync.js"></script>}
     </PageLayout>,
@@ -835,10 +835,14 @@ function DashboardStatCard({
 }) {
   return (
     <div class="bg-white rounded-xl border border-gray-100 p-5">
-      <div class="flex items-center justify-between gap-2 mb-2">
-        <p class="text-xs font-semibold text-gray-500 truncate">
-          <i class={`fas ${icon} mr-1 text-pink-500`}></i>
-          {title}
+      <p class="flex items-center gap-1 text-xs font-semibold text-gray-500 mb-2">
+        <i class={`fas ${icon} text-pink-500 flex-shrink-0`}></i>
+        <span>{title}</span>
+      </p>
+      <div class="flex items-center justify-between gap-2">
+        <p class="text-lg font-bold text-gray-800">
+          {count}
+          <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
         </p>
         <span
           class={
@@ -849,10 +853,6 @@ function DashboardStatCard({
           {autoOn ? '自動ON' : '自動OFF'}
         </span>
       </div>
-      <p class="text-lg font-bold text-gray-800">
-        {count}
-        <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
-      </p>
     </div>
   )
 }
