@@ -227,7 +227,7 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       )}
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div class="bg-white rounded-xl border border-gray-100 p-5">
           <p class="font-semibold mb-2">
             <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
@@ -248,6 +248,17 @@ dashboard.get('/dashboard', async (c) => {
           </p>
           <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
             登録ブログを開く <i class="fas fa-arrow-right ml-1"></i>
+          </a>
+        </div>
+        <div class="bg-white rounded-xl border border-gray-100 p-5">
+          <p class="font-semibold mb-2">
+            <i class="fas fa-comments mr-2 text-pink-500"></i>口コミ
+          </p>
+          <p class="text-sm text-gray-600 mb-3">
+            届いた口コミを確認し、AIで返信文を生成して自動/手動で返信できます。
+          </p>
+          <a href="/reviews/list" class="text-sm font-semibold text-pink-600 hover:underline">
+            口コミを開く <i class="fas fa-arrow-right ml-1"></i>
           </a>
         </div>
         <div class="bg-white rounded-xl border border-gray-100 p-5">
