@@ -73,6 +73,15 @@ function buildSalonPersonaLines(profile: SalonProfileForGeneration): string[] {
   if (profile?.first_person) lines.push(`一人称: ${profile.first_person}`)
   if (profile?.sentence_ending) lines.push(`語尾: ${profile.sentence_ending}`)
   if (profile?.ng_words) lines.push(`避けるべき表現・NGワード: ${profile.ng_words}`)
+  return lines
+}
+
+// 2026-08-22追記(ユーザー指定): 「HPBに掲載している情報を参考にする」
+// チェックボックス(AI記事生成画面)でON/OFFを切り替えられるよう、HPB公開
+// ページから取得した項目をbuildSalonPersonaLinesから分離した。
+// generateCategoryDraft/generateReviewReplyは従来通り常に含める。
+function buildHpbPersonaLines(profile: SalonProfileForGeneration): string[] {
+  const lines: string[] = []
   if (profile?.hpb_catch) lines.push(`サロンのキャッチコピー: ${profile.hpb_catch}`)
   if (profile?.hpb_copy) lines.push(`サロンの紹介文: ${profile.hpb_copy}`)
   if (profile?.hpb_message) lines.push(`サロンからの一言メッセージ: ${profile.hpb_message}`)
@@ -162,6 +171,7 @@ export async function generateCategoryDraft(
   const systemLines = [
     'あなたは美容サロンのブログ企画を考える専門プランナーです。',
     ...buildSalonPersonaLines(profile),
+    ...buildHpbPersonaLines(profile),
     ...buildSeasonLine(seasonMonths),
     '必ず指定されたJSON形式のみで出力してください。'
   ]
@@ -192,7 +202,14 @@ export type ArticleGenerationInput = {
   // 参考にする」トグル。falseの場合はbuildReferenceArticleLines(過去記事の
   // 抜粋)を一切システムプロンプトに含めず、テンプレートの情報(サロンの
   // 人格・季節感・本文の生成指示)のみで生成する。
+  // 2026-08-22追記(ユーザー指定): AI記事生成画面(/blog/generate)の
+  // 「HPBの過去のブログの文章パターンを参考にする」チェックボックスから
+  // 生成のたびに指定される(カテゴリ設定のデフォルト値を上書きする)。
   useReferenceArticles: boolean
+  // 2026-08-22追記(ユーザー指定): AI記事生成画面の「HPBに掲載している情報を
+  // 参考にする」チェックボックス。falseの場合はbuildHpbPersonaLines(HPB公開
+  // ページから取得したキャッチコピー・雰囲気・こだわり等)を一切含めない。
+  includeHpbInfo: boolean
 }
 
 export interface GeneratedArticle {
@@ -247,27 +264,6 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     'お客様の来店意欲を高める、親しみやすく説得力のある文章にしてください。'
   ]
 
-  // 2026-08-17追記(ユーザー指定): 各パラメータの役割を明確化する。
-  // - 写真の説明: 本文の主題そのもの(何について書くか)
-  // - サロンの人格: 主題を独立した話題として食い合うのではなく、主題をより深く
-  //   伝えるための補足情報として使う(文字数の配分ではなく「使い方」の指示)
-  // - 季節感: 本文の一部に割り当てる話題ではなく、言葉選びや表現全体に
-  //   さりげなく色をつける「味付け」として使う
-  if (input.imageDescription) {
-    systemLines.push(
-      '写真の説明を本文の主題(何について書くか)にしてください。サロンのコンセプト・強み・来てくれる人などの情報は、' +
-        '主題とは別の独立した話題として書くのではなく、「このサロンならではのこだわり・技術でこの仕上がりになった」' +
-        'のように、主題をより深く伝えるための補足として自然に織り交ぜてください。'
-    )
-    // 2026-08-17追記(ユーザー指定): 写真の説明に無い施術内容を勝手に補って
-    // 書かないよう明示する。特に「透明感カラー」は必ずしもブリーチを伴わない
-    // ため、ブリーチが明記されていない限り本文に含めない。
-    systemLines.push(
-      '写真の説明や他の情報に明記されていない施術内容(使用した薬剤・技術など)を推測で補って書かないでください。' +
-        '特に「透明感カラー」は必ずしもブリーチを伴うとは限らないため、ブリーチについて明記されていない限り、' +
-        '本文にブリーチに関する記述を含めないでください。'
-    )
-  }
   if (input.seasonMonths && input.seasonMonths.length > 0) {
     systemLines.push(
       '季節感は、本文の一部を割いて説明する話題ではありません。言葉選びや情景描写など、文章全体にさりげなく' +
@@ -278,8 +274,16 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
     systemLines.push(`担当スタイリストの得意分野・人柄: ${input.stylistBio}`)
   }
 
+  // 2026-08-22追記(ユーザー指定): プロンプトに渡す材料の優先度を明示する。
+  // 1.伝えたいこと(ユーザープロンプト側の{伝えたいこと}が最優先の指示)
+  // 2.過去のブログの文章パターン(トンマナ) 3.サロン情報(HPB掲載テキスト)
+  // 4.画像の内容(推測でのミスが生じやすいため最も優先度を低くする)
   if (input.useReferenceArticles) {
     systemLines.push(...buildReferenceArticleLines(input.profile))
+  }
+
+  if (input.includeHpbInfo) {
+    systemLines.push(...buildHpbPersonaLines(input.profile))
   }
 
   // 2026-08-17追記(ユーザー指定): 文章スタイル選択ドロップダウン(style_mode)を
@@ -291,6 +295,26 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
       '---',
       input.profile.reference_text.slice(0, 2000),
       '---'
+    )
+  }
+
+  // 2026-08-22追記(ユーザー指定): 写真の説明は最も優先度が低い参考材料として
+  // 扱う(推測に基づく誤り=ハルシネーションが生じやすいため)。「伝えたいこと」・
+  // 過去記事のトンマナ・サロン情報を優先し、写真の説明はその文脈に自然に
+  // 触れる程度の補足にとどめる(以前は写真の説明を本文の主題そのものとして
+  // 扱っていたが、ユーザー指定によりこの優先度に変更した)。
+  if (input.imageDescription) {
+    systemLines.push(
+      '写真の説明は参考情報の一つですが、他の材料(伝えたいこと・記事のテーマ・過去記事のトンマナ・サロン情報)より' +
+        '優先度は低いものとして扱ってください。断定的に書きすぎず、文脈に自然に触れる程度の補足として盛り込んでください。'
+    )
+    // 2026-08-17追記(ユーザー指定): 写真の説明に無い施術内容を勝手に補って
+    // 書かないよう明示する。特に「透明感カラー」は必ずしもブリーチを伴わない
+    // ため、ブリーチが明記されていない限り本文に含めない。
+    systemLines.push(
+      '写真の説明や他の情報に明記されていない施術内容(使用した薬剤・技術など)を推測で補って書かないでください。' +
+        '特に「透明感カラー」は必ずしもブリーチを伴うとは限らないため、ブリーチについて明記されていない限り、' +
+        '本文にブリーチに関する記述を含めないでください。'
     )
   }
 
@@ -351,6 +375,7 @@ export async function generateReviewReply(
   const systemLines = [
     'あなたは美容サロンのオーナーとして、お客様からの口コミに返信する担当者です。',
     ...buildSalonPersonaLines(profile),
+    ...buildHpbPersonaLines(profile),
     `SALON BOARDの返信欄の制約: 全角${REVIEW_REPLY_MAX_CHARS_HINT}文字程度まで(改行は控えめに)。`,
     '返信は必ず日本語の丁寧な言葉遣いで、お客様の口コミ本文の内容(施術・接客で触れられている点)に' +
       '具体的に触れながら感謝を伝えてください。',

@@ -921,7 +921,7 @@ blog.get('/blog/template', async (c) => {
                   disabled
                   class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  既存テンプレートを選ぶ
+                  既存テンプレートを編集
                 </button>
               </div>
             )}
@@ -929,6 +929,10 @@ blog.get('/blog/template', async (c) => {
         </div>
       )}
 
+      {/* 2026-08-22追記(ユーザー指定): フッター設定・基本情報は新規追加/編集の
+          画面には表示せず、/blog/templateの一覧画面(isNewMode/selectedのどちらも
+          無い状態)のみに配置する。 */}
+      {!isNewMode && !selected && (
       <form method="post" action="/blog/template/salon-info" class="space-y-6">
         <div class="bg-white rounded-xl border border-gray-100 p-6">
           <p class="font-semibold mb-1">
@@ -1009,6 +1013,7 @@ blog.get('/blog/template', async (c) => {
           保存する
         </button>
       </form>
+      )}
 
       <script src="/static/blog-template.js"></script>
     </PageLayout>,
@@ -1227,7 +1232,8 @@ async function generateOneArticle(
     bodyMaxChars,
     profile,
     seasonMonths,
-    useReferenceArticles: category.use_reference_articles !== 0
+    useReferenceArticles: category.use_reference_articles !== 0,
+    includeHpbInfo: true
   })
 
   // カテゴリに季節パラメータが設定されていれば、生成した記事の月タグへ
@@ -1904,6 +1910,22 @@ blog.get('/blog/generate', async (c) => {
             <input type="file" id="blog-generate-image-input" name="image" accept="image/*" required class="hidden" />
           </div>
           <div class="bg-white rounded-xl border border-gray-100 p-6">
+            <div class="flex items-center gap-3 mb-3">
+              <span class="w-7 h-7 rounded-full bg-pink-500 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">3</span>
+              <p class="font-semibold">生成の条件</p>
+            </div>
+            <div class="space-y-2">
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="use_reference_articles" checked class="accent-pink-500" />
+                HPBの過去のブログの文章パターンを参考にする
+              </label>
+              <label class="flex items-center gap-2 text-sm">
+                <input type="checkbox" name="use_hpb_info" checked class="accent-pink-500" />
+                HPBに掲載している情報を参考にする
+              </label>
+            </div>
+          </div>
+          <div class="bg-white rounded-xl border border-gray-100 p-6">
             <label class="flex items-center gap-2 text-sm">
               <input type="checkbox" name="footer_enabled" checked class="accent-pink-500" />
               フッターを追加する
@@ -1930,6 +1952,11 @@ blog.post('/blog/generate', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
   const footerEnabled = body.footer_enabled === 'on' || body.footer_enabled === 'true'
+  // 2026-08-22追記(ユーザー指定): 「生成の条件」チェックボックスで生成の
+  // たびに指定する。カテゴリ側のuse_reference_articles設定はこの画面からの
+  // 生成では使わず、フォームのチェック状態を優先する。
+  const useReferenceArticles = body.use_reference_articles === 'on' || body.use_reference_articles === 'true'
+  const includeHpbInfo = body.use_hpb_info === 'on' || body.use_hpb_info === 'true'
 
   const categoryId = Number(body.category_id)
   const category = await c.env.DB.prepare(
@@ -1979,7 +2006,8 @@ blog.post('/blog/generate', async (c) => {
       bodyMaxChars,
       profile,
       seasonMonths,
-      useReferenceArticles: category.use_reference_articles !== 0
+      useReferenceArticles,
+      includeHpbInfo
     })
 
     // 2026-08-21追記(ユーザー指定): auto_post_enabled_flagは常に1固定で
