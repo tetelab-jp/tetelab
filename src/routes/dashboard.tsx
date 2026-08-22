@@ -827,7 +827,7 @@ function DashboardNavCard({
         </p>
         <span
           class={
-            'flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ' +
+            'flex-shrink-0 text-sm font-bold px-3 py-1 rounded-full ' +
             (autoOn ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400')
           }
         >
