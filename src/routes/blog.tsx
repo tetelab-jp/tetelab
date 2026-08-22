@@ -72,6 +72,18 @@ const HPB_BLOG_CATEGORY_OPTIONS = [
   'その他'
 ] as const
 
+// 2026-08-22追記(ユーザー指定): 登録ブログ(自動投稿の対象)は、登録スタイル
+// (style.tsxのMAX_REGISTERED_STYLES)と同じ考え方でサロンあたり300件までに
+// 制限する。
+const MAX_REGISTERED_ARTICLES = 300
+
+async function countRegisteredArticles(c: AppContext, userId: number, salonId: number | null): Promise<number> {
+  const row = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM blog_articles WHERE user_id = ? AND salon_id = ?')
+    .bind(userId, salonId)
+    .first<{ cnt: number }>()
+  return row?.cnt ?? 0
+}
+
 type SalonProfileRow = {
   concept: string | null
   target_customer: string | null
@@ -212,9 +224,15 @@ blog.get('/blog/salon', async (c) => {
   const [profile, referenceArticles] = await Promise.all([getSalonProfile(c, user), getBlogReferenceArticles(c, user)])
   const referenceArticleCount = referenceArticles.length
   const imported = c.req.query('imported')
+  const error = c.req.query('error')
 
   return c.render(
     <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-salon" salonName={user.salon_name} title="HPBからブログ追加" styleEnabled={user.style_enabled !== 0}>
+      {error && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-triangle-exclamation mr-2"></i>{decodeURIComponent(error)}
+        </div>
+      )}
       {imported && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>{imported}件の記事を登録ブログへ追加しました
@@ -391,6 +409,14 @@ blog.post('/blog/salon/import-references', async (c) => {
     .filter((n) => Number.isInteger(n) && n > 0)
 
   if (ids.length === 0) return c.redirect('/blog/salon')
+
+  const currentArticleCount = await countRegisteredArticles(c, user.id, user.active_salon_id)
+  if (currentArticleCount + ids.length > MAX_REGISTERED_ARTICLES) {
+    const remaining = Math.max(0, MAX_REGISTERED_ARTICLES - currentArticleCount)
+    return c.redirect(
+      `/blog/salon?error=${encodeURIComponent(`登録できるブログは${MAX_REGISTERED_ARTICLES}件までです。あと${remaining}件まで取り込めます。選択数を減らしてください。`)}`
+    )
+  }
 
   const { results: rows } = await c.env.DB.prepare(
     `SELECT id, title, excerpt, posted_date, source_url, category_name, stylist_name, stylist_salonboard_key
@@ -1296,7 +1322,8 @@ function ArticleForm({
   stylists,
   coupons,
   footerText,
-  generatedNotice
+  generatedNotice,
+  limitError
 }: {
   mode: 'new' | 'edit'
   detail: ArticleFormDetail | null
@@ -1305,6 +1332,7 @@ function ArticleForm({
   coupons: { id: number; name: string }[]
   footerText: string
   generatedNotice?: boolean
+  limitError?: boolean
 }) {
   const monthTags: number[] = detail ? JSON.parse(detail.month_tags_json || '[]') : []
   const submitLabel = mode === 'new' || generatedNotice ? '投稿一覧に追加' : '保存する'
@@ -1315,6 +1343,12 @@ function ArticleForm({
 
   return (
     <div class="space-y-6">
+      {limitError && (
+        <div class="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3">
+          <i class="fas fa-circle-exclamation mr-2"></i>
+          登録できるブログは{MAX_REGISTERED_ARTICLES}件までです。これ以上追加するには、不要な記事を削除してください。
+        </div>
+      )}
       {generatedNotice && (
         <div class="bg-pink-50 border border-pink-200 text-pink-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-wand-magic-sparkles mr-2"></i>AIが記事を生成しました。内容を確認・編集して「{submitLabel}」を押してください。
@@ -1655,7 +1689,15 @@ blog.get('/blog/articles/new', async (c) => {
       title="記事の新規作成"
       styleEnabled={user.style_enabled !== 0}
     >
-      <ArticleForm mode="new" detail={null} categories={categories} stylists={stylists} coupons={coupons} footerText={footerText} />
+      <ArticleForm
+        mode="new"
+        detail={null}
+        categories={categories}
+        stylists={stylists}
+        coupons={coupons}
+        footerText={footerText}
+        limitError={c.req.query('limitError') === '1'}
+      />
       <script src="/static/blog-article-form.js"></script>
     </PageLayout>,
     { title: '記事の新規作成' }
@@ -1664,6 +1706,12 @@ blog.get('/blog/articles/new', async (c) => {
 
 blog.post('/blog/articles/new', async (c) => {
   const user = c.get('user')
+
+  const currentArticleCount = await countRegisteredArticles(c, user.id, user.active_salon_id)
+  if (currentArticleCount >= MAX_REGISTERED_ARTICLES) {
+    return c.redirect('/blog/articles/new?limitError=1')
+  }
+
   // 2026-08-21追記(ユーザー指摘によるバグ修正の横展開): 月タグ(month_tags)は
   // 同名チェックボックスが複数あり、{ all: true }を付けないと複数選択時に
   // 最後の1件しか渡らない(Honoの既定動作)。/blog/salon/import-referencesと
@@ -1948,6 +1996,12 @@ blog.get('/blog/generate', async (c) => {
 
 blog.post('/blog/generate', async (c) => {
   const user = c.get('user')
+
+  const currentArticleCount = await countRegisteredArticles(c, user.id, user.active_salon_id)
+  if (currentArticleCount >= MAX_REGISTERED_ARTICLES) {
+    return c.redirect(`/blog/generate?error=${encodeURIComponent(`登録できるブログは${MAX_REGISTERED_ARTICLES}件までです。これ以上追加するには、不要な記事を削除してください。`)}`)
+  }
+
   const body = await c.req.parseBody()
   // 2026-08-22追記(ユーザー指定): 画面から「フッターを追加する」チェック
   // ボックスを削除したため、常にONで作成する(footer_enabled_flagは記事編集
