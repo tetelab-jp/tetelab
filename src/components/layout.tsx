@@ -334,7 +334,7 @@ export function PageLayout({
           isImpersonated={isImpersonated}
         />
         <MobileGroupNav active={active} />
-        <main class="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto">{children}</main>
+        <main class="p-4 sm:p-6 space-y-6 max-w-[1600px] mx-auto overflow-x-hidden">{children}</main>
       </div>
       <script src="/static/salon-switcher.js"></script>
       <script src="/static/autosize-textarea.js"></script>

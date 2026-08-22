@@ -101,17 +101,77 @@ document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.template-target-checkbox').forEach((checkbox) => {
     checkbox.addEventListener('change', updateTemplateTargetCount)
   })
+
+  // 2026-08-22追記(ユーザー指定): テンプレート反映スタイルを100件ずつの
+  // ページ表示にする(既存スタイル取り込み・HPBからブログ追加の一覧と同じ
+  // 考え方)。全選択/全解除は表示中のページのみを対象にする。
+  const templateTargetPaginationEl = document.getElementById('template-target-pagination')
+  if (templateTargetPaginationEl) {
+    var PAGE_SIZE = 100
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#style-list > [data-page]'))
+    var totalPages = rows.reduce(function (max, row) {
+      return Math.max(max, Number(row.getAttribute('data-page')) || 1)
+    }, 1)
+    var currentPage = 1
+
+    var labelEl = document.getElementById('template-target-pagination-label')
+    var prevBtn = document.getElementById('template-target-page-prev')
+    var nextBtn = document.getElementById('template-target-page-next')
+
+    function renderTemplateTargetPage() {
+      var visibleCount = 0
+      rows.forEach(function (row) {
+        var isCurrent = Number(row.getAttribute('data-page')) === currentPage
+        row.classList.toggle('hidden', !isCurrent)
+        if (isCurrent) visibleCount += 1
+      })
+      if (totalPages > 1) {
+        templateTargetPaginationEl.classList.remove('hidden')
+        templateTargetPaginationEl.classList.add('flex')
+        var start = (currentPage - 1) * PAGE_SIZE
+        if (labelEl) {
+          labelEl.textContent =
+            (start + 1) + '〜' + (start + visibleCount) + '件 / 全' + rows.length + '件（' + currentPage + ' / ' + totalPages + 'ページ）'
+        }
+        if (prevBtn) prevBtn.disabled = currentPage <= 1
+        if (nextBtn) nextBtn.disabled = currentPage >= totalPages
+      } else {
+        templateTargetPaginationEl.classList.add('hidden')
+        templateTargetPaginationEl.classList.remove('flex')
+      }
+    }
+    renderTemplateTargetPage()
+
+    var styleListEl = document.getElementById('style-list')
+    if (prevBtn) {
+      prevBtn.addEventListener('click', function () {
+        if (currentPage <= 1) return
+        currentPage -= 1
+        renderTemplateTargetPage()
+        if (styleListEl) styleListEl.scrollIntoView({ block: 'start' })
+      })
+    }
+    if (nextBtn) {
+      nextBtn.addEventListener('click', function () {
+        if (currentPage >= totalPages) return
+        currentPage += 1
+        renderTemplateTargetPage()
+        if (styleListEl) styleListEl.scrollIntoView({ block: 'start' })
+      })
+    }
+  }
+
   const templateTargetSelectAllBtn = document.getElementById('template-target-select-all-btn')
   if (templateTargetSelectAllBtn) {
     templateTargetSelectAllBtn.addEventListener('click', () => {
-      document.querySelectorAll('.template-target-checkbox').forEach((cb) => (cb.checked = true))
+      document.querySelectorAll('#style-list > [data-page]:not(.hidden) .template-target-checkbox').forEach((cb) => (cb.checked = true))
       updateTemplateTargetCount()
     })
   }
   const templateTargetDeselectAllBtn = document.getElementById('template-target-deselect-all-btn')
   if (templateTargetDeselectAllBtn) {
     templateTargetDeselectAllBtn.addEventListener('click', () => {
-      document.querySelectorAll('.template-target-checkbox').forEach((cb) => (cb.checked = false))
+      document.querySelectorAll('#style-list > [data-page]:not(.hidden) .template-target-checkbox').forEach((cb) => (cb.checked = false))
       updateTemplateTargetCount()
     })
   }

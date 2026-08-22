@@ -812,7 +812,7 @@ blog.get('/blog/template', async (c) => {
           ) : (
             <form method="post" action="/blog/template/categories/add" class="flex flex-col sm:flex-row gap-2">
               <input type="text" name="name" required placeholder="新しい記事カテゴリ名" class="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm" />
-              <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg flex-shrink-0">カテゴリを追加する</button>
+              <button type="submit" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2 rounded-lg flex-shrink-0">テンプレートを追加</button>
             </form>
           )}
         </div>
@@ -1943,7 +1943,7 @@ blog.get('/blog/generate', async (c) => {
           <div class="bg-white rounded-xl border border-gray-100 p-6">
             <div class="flex items-center gap-3 mb-3">
               <span class="w-7 h-7 rounded-full bg-pink-500 text-white text-sm font-bold flex items-center justify-center flex-shrink-0">1</span>
-              <p class="font-semibold">テンプレート(記事カテゴリ)を選ぶ</p>
+              <p class="font-semibold">記事テンプレートを選ぶ</p>
             </div>
             <select name="category_id" required class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm">
               <option value="" selected disabled>テンプレートを選ぶ</option>

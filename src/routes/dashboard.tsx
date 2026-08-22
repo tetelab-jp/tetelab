@@ -1090,24 +1090,31 @@ dashboard.get('/settings/auto-update', async (c) => {
 // 読み出すだけの確認専用ページとして追加する(編集はできない。データの更新は
 // 従来通り「HPBからブログ追加」画面の「サロンボードからブログ読み込み」で行う)。
 
+// 2026-08-22追記(ユーザー指定): スマホでの横スライド/表示崩れの対策として
+// 各セクションをアコーディオン(details/summary)にしてタップで開閉できる
+// ようにする。長い英数字・URL等が折り返されずカードからはみ出すことがあった
+// ため、テキスト表示側にもbreak-wordsを追加する。
 function SalonInfoSection({ title, icon, children }: { title: string; icon: string; children: any }) {
   return (
-    <div class="bg-white rounded-xl border border-gray-100 p-6">
-      <p class="font-semibold mb-3">
-        <i class={`fas ${icon} mr-2 text-pink-500`}></i>
-        {title}
-      </p>
-      {children}
-    </div>
+    <details class="group bg-white rounded-xl border border-gray-100 overflow-hidden">
+      <summary class="flex items-center justify-between gap-2 p-6 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden">
+        <span class="font-semibold">
+          <i class={`fas ${icon} mr-2 text-pink-500`}></i>
+          {title}
+        </span>
+        <i class="fas fa-chevron-down text-gray-400 flex-shrink-0 transition-transform group-open:rotate-180"></i>
+      </summary>
+      <div class="px-6 pb-6 min-w-0">{children}</div>
+    </details>
   )
 }
 
 function SalonInfoField({ label, value }: { label: string; value: string | null }) {
   return (
-    <div class="mb-3 last:mb-0">
+    <div class="mb-3 last:mb-0 min-w-0">
       <p class="text-xs font-semibold text-gray-400 mb-1">{label}</p>
       {value ? (
-        <p class="text-sm text-gray-700 whitespace-pre-wrap">{value}</p>
+        <p class="text-sm text-gray-700 whitespace-pre-wrap break-words">{value}</p>
       ) : (
         <p class="text-sm text-gray-300">未取得</p>
       )}
@@ -1208,7 +1215,7 @@ dashboard.get('/settings/salon-info', async (c) => {
               <div class="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
                 <p class="text-sm font-semibold text-gray-700 mb-1">{st.name}</p>
                 {st.hpb_bio_text ? (
-                  <p class="text-sm text-gray-700 whitespace-pre-wrap">{st.hpb_bio_text}</p>
+                  <p class="text-sm text-gray-700 whitespace-pre-wrap break-words">{st.hpb_bio_text}</p>
                 ) : (
                   <p class="text-sm text-gray-300">未取得</p>
                 )}
@@ -1234,7 +1241,7 @@ dashboard.get('/settings/salon-info', async (c) => {
             {coupons.map((cp) => (
               <div class="border-t border-gray-100 pt-3 first:border-t-0 first:pt-0">
                 <p class="text-sm font-semibold text-gray-700 mb-1">{cp.name}</p>
-                <p class="text-sm text-gray-700 whitespace-pre-wrap">{cp.hpb_description_text}</p>
+                <p class="text-sm text-gray-700 whitespace-pre-wrap break-words">{cp.hpb_description_text}</p>
               </div>
             ))}
           </div>

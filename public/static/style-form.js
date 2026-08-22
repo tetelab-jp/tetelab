@@ -81,6 +81,21 @@ document.addEventListener('DOMContentLoaded', () => {
     })
   }
 
+  // 2026-08-22追記(ユーザー指定): 既に登録済みの画像もバツボタンで削除できる
+  // ようにする。押すと画面上は非表示にし、remove_imageフラグを立てて保存時に
+  // サーバー側で削除する(新しい画像を選択した場合はそちらが優先される)。
+  const styleImageExistingWrap = document.getElementById('style-image-existing-wrap')
+  const styleImageExistingRemoveBtn = document.getElementById('style-image-existing-remove-btn')
+  const styleImageRemoveFlag = document.getElementById('style-image-remove-flag')
+  if (styleImageExistingRemoveBtn && styleImageExistingWrap && styleImageRemoveFlag && form) {
+    styleImageExistingRemoveBtn.addEventListener('click', () => {
+      styleImageExistingWrap.classList.add('hidden')
+      styleImageRemoveFlag.value = '1'
+      form.dataset.hasExistingImage = 'false'
+      styleImageRemoveFlag.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+  }
+
   // テンプレートから作成: 選択したテンプレートの内容を画像以外の全項目に自動入力する
   const templateSelect = document.getElementById('template-select')
   const templateDataEl = document.getElementById('template-data')
@@ -186,13 +201,15 @@ document.addEventListener('DOMContentLoaded', () => {
   // 対象フィールドが存在する場合のみチェック対象に加える。
   const submitBtn = form ? form.querySelector('button[type="submit"]') : null
   if (form && submitBtn) {
-    const hasExistingImage = form.dataset.hasExistingImage === 'true'
-
     function isRequiredFieldsFilled() {
       const checks = [isHashtagsValid()]
 
       const imageInput = form.querySelector('input[name="image"]')
       if (imageInput) {
+        // 2026-08-22追記(ユーザー指定): 登録済み画像をバツボタンで削除できる
+        // ようにしたため、form.dataset.hasExistingImageを固定値ではなく
+        // 削除操作を反映した最新の状態として毎回読み直す。
+        const hasExistingImage = form.dataset.hasExistingImage === 'true'
         checks.push((imageInput.files && imageInput.files.length > 0) || hasExistingImage)
       }
 
