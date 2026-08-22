@@ -28,6 +28,34 @@ document.addEventListener('DOMContentLoaded', () => {
     updateLengthSelects()
   }
 
+  // 2026-08-22追記(ユーザー指摘によるバグ修正): 画像選択後にその場で
+  // プレビュー表示する(blog-generate.jsの画像プレビューと同じ実装)。
+  // これまでプレビュー用のimg要素・JSが無く、特にスマホでファイル選択後に
+  // 画面上で選択結果を確認する手段が無かった。
+  const styleImageInput = document.getElementById('style-image-input')
+  const styleImageDropzoneLabel = document.getElementById('style-image-dropzone-label')
+  const styleImageDropzoneIcon = document.getElementById('style-image-dropzone-icon')
+  const styleImagePreview = document.getElementById('style-image-preview')
+  if (styleImageInput && styleImageDropzoneLabel) {
+    styleImageInput.addEventListener('change', () => {
+      const file = styleImageInput.files && styleImageInput.files[0]
+      styleImageDropzoneLabel.textContent = file ? file.name : 'タップして画像を選択'
+      if (file && styleImagePreview) {
+        const reader = new FileReader()
+        reader.onload = (e) => {
+          styleImagePreview.src = e.target.result
+          styleImagePreview.classList.remove('hidden')
+          if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.add('hidden')
+        }
+        reader.readAsDataURL(file)
+      } else if (styleImagePreview) {
+        styleImagePreview.classList.add('hidden')
+        styleImagePreview.removeAttribute('src')
+        if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.remove('hidden')
+      }
+    })
+  }
+
   // テンプレートから作成: 選択したテンプレートの内容を画像以外の全項目に自動入力する
   const templateSelect = document.getElementById('template-select')
   const templateDataEl = document.getElementById('template-data')

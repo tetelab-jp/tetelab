@@ -953,7 +953,8 @@ function StyleForm({
           id="style-image-dropzone"
           class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
         >
-          <i class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+          <i id="style-image-dropzone-icon" class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
+          <img id="style-image-preview" class="hidden max-h-48 rounded-lg object-contain" />
           <span id="style-image-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
           <span class="text-xs text-gray-400">{detail?.front_style_image_id ? '変更する場合のみ選択してください' : 'このスタイルの画像として登録します'}</span>
         </label>
