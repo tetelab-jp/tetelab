@@ -228,80 +228,45 @@ dashboard.get('/dashboard', async (c) => {
       )}
 
       <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="font-semibold mb-2">
-            <i class="fas fa-images mr-2 text-pink-500"></i>スタイル投稿
-          </p>
-          <p class="text-sm text-gray-600 mb-3">
-            登録スタイルに事前登録し、チェックした画像のみ自動投稿されます。
-          </p>
-          <a href="/style/library" class="text-sm font-semibold text-pink-600 hover:underline">
-            登録スタイルを開く <i class="fas fa-arrow-right ml-1"></i>
-          </a>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="font-semibold mb-2">
-            <i class="fas fa-pen-to-square mr-2 text-pink-500"></i>ブログ投稿
-          </p>
-          <p class="text-sm text-gray-600 mb-3">
-            カテゴリ別テンプレートで画像から記事をAI生成し、自動投稿できます。
-          </p>
-          <a href="/blog/articles" class="text-sm font-semibold text-pink-600 hover:underline">
-            登録ブログを開く <i class="fas fa-arrow-right ml-1"></i>
-          </a>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="font-semibold mb-2">
-            <i class="fas fa-comments mr-2 text-pink-500"></i>口コミ
-          </p>
-          <p class="text-sm text-gray-600 mb-3">
-            届いた口コミを確認し、AIで返信文を生成して自動/手動で返信できます。
-          </p>
-          <a href="/reviews/list" class="text-sm font-semibold text-pink-600 hover:underline">
-            口コミを開く <i class="fas fa-arrow-right ml-1"></i>
-          </a>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="font-semibold mb-2">
-            <i class="fas fa-list-check mr-2 text-pink-500"></i>対策キーワード設定
-          </p>
-          <p class="text-sm text-gray-600 mb-3">
-            上位表示を狙うキーワードを登録し、定期的に検索順位を測定できます。
-          </p>
-          <a href="/seo/keywords" class="text-sm font-semibold text-pink-600 hover:underline">
-            対策キーワード設定を開く <i class="fas fa-arrow-right ml-1"></i>
-          </a>
-        </div>
-      </div>
-
-      <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-        <DashboardStatCard
+        <DashboardNavCard
           icon="fa-images"
           title="スタイル投稿"
           autoOn={styleScheduleRow?.enabled === 1}
           count={styleTotalRow?.total ?? 0}
           unit="スタイル"
+          description="登録スタイルに事前登録し、チェックした画像のみ自動投稿されます。"
+          href="/style/library"
+          linkLabel="登録スタイルを開く"
         />
-        <DashboardStatCard
+        <DashboardNavCard
           icon="fa-pen-to-square"
           title="ブログ投稿"
           autoOn={blogScheduleRow?.enabled === 1}
           count={blogArticlesRow?.total ?? 0}
           unit="記事"
+          description="カテゴリ別テンプレートで画像から記事をAI生成し、自動投稿できます。"
+          href="/blog/articles"
+          linkLabel="登録ブログを開く"
         />
-        <DashboardStatCard
+        <DashboardNavCard
           icon="fa-comments"
           title="口コミ"
           autoOn={reviewReplyScheduleRow?.enabled === 1}
           count={reviewUnrepliedRow?.cnt ?? 0}
           unit="未返信"
+          description="届いた口コミを確認し、AIで返信文を生成して自動/手動で返信できます。"
+          href="/reviews/list"
+          linkLabel="口コミを開く"
         />
-        <DashboardStatCard
+        <DashboardNavCard
           icon="fa-list-check"
           title="SEO測定"
           autoOn={rankingScheduleRow?.enabled === 1}
           count={seoKeywordRow?.cnt ?? 0}
           unit="対策KW"
+          description="上位表示を狙うキーワードを登録し、定期的に検索順位を測定できます。"
+          href="/seo/keywords"
+          linkLabel="対策キーワード設定を開く"
         />
       </div>
 
@@ -831,29 +796,34 @@ dashboard.post('/settings/account/password', async (c) => {
 // 2026-08-22追記(ユーザー指定): ダッシュボードの「スタイル投稿/ブログ投稿/
 // 口コミ/SEO測定」4項目カード。各機能の自動化ON/OFFと件数(登録数/未返信数等)
 // を1枚のカードにまとめて表示する。
-function DashboardStatCard({
+// 2026-08-22追記(ユーザー指定): 以前は「開くボタン」のカードと、自動ON/OFF
+// +件数だけのカードを別々の行に分けていたが、後者はタイトルだけのテキスト
+// 項目だったため、各機能の「〜を開く」カードに集約した。
+function DashboardNavCard({
   icon,
   title,
   autoOn,
   count,
-  unit
+  unit,
+  description,
+  href,
+  linkLabel
 }: {
   icon: string
   title: string
   autoOn: boolean
   count: number
   unit: string
+  description: string
+  href: string
+  linkLabel: string
 }) {
   return (
-    <div class="bg-white rounded-xl border border-gray-100 p-5">
-      <p class="flex items-center gap-1 text-xs font-semibold text-gray-500 mb-2">
-        <i class={`fas ${icon} text-pink-500 flex-shrink-0`}></i>
-        <span>{title}</span>
-      </p>
-      <div class="flex items-center justify-between gap-2">
-        <p class="text-lg font-bold text-gray-800">
-          {count}
-          <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
+    <div class="bg-white rounded-xl border border-gray-100 p-5 flex flex-col">
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <p class="font-semibold">
+          <i class={`fas ${icon} mr-2 text-pink-500`}></i>
+          {title}
         </p>
         <span
           class={
@@ -864,6 +834,14 @@ function DashboardStatCard({
           {autoOn ? '自動ON' : '自動OFF'}
         </span>
       </div>
+      <p class="text-lg font-bold text-gray-800 mb-2">
+        {count}
+        <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
+      </p>
+      <p class="text-sm text-gray-600 mb-3 flex-1">{description}</p>
+      <a href={href} class="text-sm font-semibold text-pink-600 hover:underline">
+        {linkLabel} <i class="fas fa-arrow-right ml-1"></i>
+      </a>
     </div>
   )
 }
