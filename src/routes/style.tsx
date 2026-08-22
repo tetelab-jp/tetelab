@@ -961,19 +961,6 @@ function StyleForm({
         <label class="block text-sm font-medium text-gray-700 mb-1">
           スタイル画像（FRONT）<span style="color:#d32475">*</span>
         </label>
-        {detail?.front_style_image_id && (
-          <div class="relative inline-block mb-2" id="style-image-existing-wrap">
-            <img src={`/style/image/${detail.front_style_image_id}`} class="w-32 h-40 object-cover rounded-lg border border-gray-200" />
-            <button
-              type="button"
-              id="style-image-existing-remove-btn"
-              class="absolute top-2 right-2 w-7 h-7 rounded-full bg-gray-800/70 hover:bg-gray-900/80 text-white text-sm flex items-center justify-center"
-              aria-label="登録済みの画像を削除"
-            >
-              <i class="fas fa-xmark"></i>
-            </button>
-          </div>
-        )}
         <input type="hidden" name="remove_image" id="style-image-remove-flag" value="0" />
         <label
           for="style-image-input"
@@ -983,15 +970,24 @@ function StyleForm({
           <button
             type="button"
             id="style-image-clear-btn"
-            class="hidden absolute top-2 right-2 w-7 h-7 rounded-full bg-gray-800/70 hover:bg-gray-900/80 text-white text-sm flex items-center justify-center z-10"
-            aria-label="選択した画像を削除"
+            class={`absolute top-2 right-2 w-7 h-7 rounded-full bg-gray-800/70 hover:bg-gray-900/80 text-white text-sm flex items-center justify-center z-10 ${detail?.front_style_image_id ? '' : 'hidden'}`}
+            aria-label="画像を削除"
           >
             <i class="fas fa-xmark"></i>
           </button>
-          <i id="style-image-dropzone-icon" class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
-          <img id="style-image-preview" class="hidden max-h-48 rounded-lg object-contain" />
+          <i
+            id="style-image-dropzone-icon"
+            class={`fas fa-cloud-arrow-up text-3xl text-gray-300 ${detail?.front_style_image_id ? 'hidden' : ''}`}
+          ></i>
+          <img
+            id="style-image-preview"
+            class={`max-h-48 rounded-lg object-contain ${detail?.front_style_image_id ? '' : 'hidden'}`}
+            src={detail?.front_style_image_id ? `/style/image/${detail.front_style_image_id}` : ''}
+          />
           <span id="style-image-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
-          <span class="text-xs text-gray-400">{detail?.front_style_image_id ? '変更する場合のみ選択してください' : 'このスタイルの画像として登録します'}</span>
+          <span id="style-image-dropzone-helper" class="text-xs text-gray-400">
+            {detail?.front_style_image_id ? '変更する場合のみ選択してください' : 'このスタイルの画像として登録します'}
+          </span>
         </label>
         <input type="file" id="style-image-input" name="image" accept="image/*" class="hidden" />
       </div>

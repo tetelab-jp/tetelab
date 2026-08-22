@@ -32,11 +32,44 @@ document.addEventListener('DOMContentLoaded', () => {
   // プレビュー表示する(blog-generate.jsの画像プレビューと同じ実装)。
   // これまでプレビュー用のimg要素・JSが無く、特にスマホでファイル選択後に
   // 画面上で選択結果を確認する手段が無かった。
+  // 2026-08-22追記(ユーザー指摘によるデザイン統一): 登録済み画像を別枠の
+  // サムネイルとして上に表示していたが、新規作成時の画像プレビューと見た目が
+  // 異なる(枠からはみ出す)との指摘があり、既存画像も同じドロップゾーン内に
+  // object-containで収まる形で表示するよう統一した。
   const styleImageInput = document.getElementById('style-image-input')
   const styleImageDropzoneLabel = document.getElementById('style-image-dropzone-label')
+  const styleImageDropzoneHelper = document.getElementById('style-image-dropzone-helper')
   const styleImageDropzoneIcon = document.getElementById('style-image-dropzone-icon')
   const styleImagePreview = document.getElementById('style-image-preview')
   const styleImageClearBtn = document.getElementById('style-image-clear-btn')
+  const styleImageRemoveFlag = document.getElementById('style-image-remove-flag')
+  const existingImageSrc = styleImagePreview ? styleImagePreview.getAttribute('src') || '' : ''
+  const DEFAULT_LABEL = 'タップして画像を選択'
+  const HELPER_WITH_IMAGE = '変更する場合のみ選択してください'
+  const HELPER_NO_IMAGE = 'このスタイルの画像として登録します'
+
+  function showEmptyImageState() {
+    if (styleImagePreview) {
+      styleImagePreview.classList.add('hidden')
+      styleImagePreview.removeAttribute('src')
+    }
+    if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.remove('hidden')
+    if (styleImageDropzoneLabel) styleImageDropzoneLabel.textContent = DEFAULT_LABEL
+    if (styleImageDropzoneHelper) styleImageDropzoneHelper.textContent = HELPER_NO_IMAGE
+    if (styleImageClearBtn) styleImageClearBtn.classList.add('hidden')
+  }
+
+  function showExistingImageState() {
+    if (styleImagePreview) {
+      styleImagePreview.src = existingImageSrc
+      styleImagePreview.classList.remove('hidden')
+    }
+    if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.add('hidden')
+    if (styleImageDropzoneLabel) styleImageDropzoneLabel.textContent = DEFAULT_LABEL
+    if (styleImageDropzoneHelper) styleImageDropzoneHelper.textContent = HELPER_WITH_IMAGE
+    if (styleImageClearBtn) styleImageClearBtn.classList.remove('hidden')
+  }
+
   if (styleImageInput && styleImageDropzoneLabel) {
     styleImageInput.addEventListener('change', () => {
       let file = styleImageInput.files && styleImageInput.files[0]
@@ -49,50 +82,46 @@ document.addEventListener('DOMContentLoaded', () => {
         styleImageInput.value = ''
         file = null
       }
-      styleImageDropzoneLabel.textContent = file ? file.name : 'タップして画像を選択'
-      if (file && styleImagePreview) {
-        const reader = new FileReader()
-        reader.onload = (e) => {
-          styleImagePreview.src = e.target.result
-          styleImagePreview.classList.remove('hidden')
-          if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.add('hidden')
+      if (file) {
+        if (styleImagePreview) {
+          const reader = new FileReader()
+          reader.onload = (e) => {
+            styleImagePreview.src = e.target.result
+            styleImagePreview.classList.remove('hidden')
+          }
+          reader.readAsDataURL(file)
         }
-        reader.readAsDataURL(file)
-      } else if (styleImagePreview) {
-        styleImagePreview.classList.add('hidden')
-        styleImagePreview.removeAttribute('src')
-        if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.remove('hidden')
+        if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.add('hidden')
+        styleImageDropzoneLabel.textContent = file.name
+        if (styleImageDropzoneHelper) styleImageDropzoneHelper.textContent = HELPER_NO_IMAGE
+        if (styleImageClearBtn) styleImageClearBtn.classList.remove('hidden')
+      } else if (existingImageSrc && form && form.dataset.hasExistingImage === 'true') {
+        showExistingImageState()
+      } else {
+        showEmptyImageState()
       }
-      if (styleImageClearBtn) styleImageClearBtn.classList.toggle('hidden', !file)
     })
   }
 
-  // 2026-08-22追記(ユーザー指定): 選択した画像をバツボタンで削除できるように
-  // する。ボタンはfor="style-image-input"のlabel内にあるため、クリックが
-  // labelへ伝播するとファイル選択ダイアログが再度開いてしまう。
-  // stopPropagation/preventDefaultで防ぎ、入力クリア後にchangeイベントを
-  // 発火させて上のプレビュー表示/非表示ロジックを再利用する。
+  // 2026-08-22追記(ユーザー指定): 選択した画像・登録済み画像をバツボタンで
+  // 削除できるようにする。ボタンはfor="style-image-input"のlabel内にあるため、
+  // クリックがlabelへ伝播するとファイル選択ダイアログが再度開いてしまう。
+  // stopPropagation/preventDefaultで防ぐ。新しく選択したファイルがある場合は
+  // それを取り消し(既存画像があればそちらの表示に戻す)、無ければ登録済み画像を
+  // remove_imageフラグを立てて削除対象にする(保存時にサーバー側で削除する)。
   if (styleImageClearBtn && styleImageInput) {
     styleImageClearBtn.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
-      styleImageInput.value = ''
-      styleImageInput.dispatchEvent(new Event('change', { bubbles: true }))
-    })
-  }
-
-  // 2026-08-22追記(ユーザー指定): 既に登録済みの画像もバツボタンで削除できる
-  // ようにする。押すと画面上は非表示にし、remove_imageフラグを立てて保存時に
-  // サーバー側で削除する(新しい画像を選択した場合はそちらが優先される)。
-  const styleImageExistingWrap = document.getElementById('style-image-existing-wrap')
-  const styleImageExistingRemoveBtn = document.getElementById('style-image-existing-remove-btn')
-  const styleImageRemoveFlag = document.getElementById('style-image-remove-flag')
-  if (styleImageExistingRemoveBtn && styleImageExistingWrap && styleImageRemoveFlag && form) {
-    styleImageExistingRemoveBtn.addEventListener('click', () => {
-      styleImageExistingWrap.classList.add('hidden')
-      styleImageRemoveFlag.value = '1'
-      form.dataset.hasExistingImage = 'false'
-      styleImageRemoveFlag.dispatchEvent(new Event('change', { bubbles: true }))
+      if (styleImageInput.files && styleImageInput.files.length > 0) {
+        styleImageInput.value = ''
+        styleImageInput.dispatchEvent(new Event('change', { bubbles: true }))
+      } else if (form && form.dataset.hasExistingImage === 'true') {
+        if (styleImageRemoveFlag) styleImageRemoveFlag.value = '1'
+        form.dataset.hasExistingImage = 'false'
+        showEmptyImageState()
+        if (styleImageRemoveFlag) styleImageRemoveFlag.dispatchEvent(new Event('change', { bubbles: true }))
+      }
     })
   }
 
