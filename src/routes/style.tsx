@@ -665,14 +665,14 @@ style.get('/style/import', async (c) => {
             id="import-select-all-btn"
             class="bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg"
           >
-            <i class="fas fa-check-double mr-1.5"></i>このページを全選択
+            <i class="fas fa-check-double mr-1.5"></i>スタイルを<br class="sm:hidden" />全選択
           </button>
           <button
             type="button"
             id="import-deselect-all-btn"
             class="bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg"
           >
-            <i class="fas fa-xmark mr-1.5"></i>このページを全解除
+            <i class="fas fa-xmark mr-1.5"></i>スタイルを<br class="sm:hidden" />全解除
           </button>
         </div>
         <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>

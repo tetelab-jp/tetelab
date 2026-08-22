@@ -266,15 +266,25 @@ function currentJstMonth(): number {
  * タイトル・本文の文字数は書き込み経路(articleAutoPostRequirementsMet)側で
  * 常に保証され、上記のような外部要因での事後変化もないため、SQL側では見ない。
  */
-const ELIGIBLE_ARTICLE_WHERE = `
+const ELIGIBLE_ARTICLE_BASE_WHERE = `
   a.user_id = ? AND a.salon_id = ? AND a.status = 'approved' AND a.auto_post_enabled_flag = 1
   AND a.image_r2_key IS NOT NULL AND a.stylist_id IS NOT NULL
   AND EXISTS (SELECT 1 FROM blog_categories bc WHERE bc.id = a.category_id AND bc.hpb_category_value IS NOT NULL)
   AND NOT EXISTS (SELECT 1 FROM blog_post_jobs j WHERE j.article_id = a.id AND j.status IN ('pending', 'running'))
-  AND (
+`
+
+const ELIGIBLE_ARTICLE_WHERE = `${ELIGIBLE_ARTICLE_BASE_WHERE} AND (
     a.month_tags_json = '[]'
     OR EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS m(v) WHERE m.v::int = ?)
-  )
+  )`
+
+// 2026-08-22追記(ユーザー指定): 「投稿する月を限定する」でチェックした月の
+// 記事は、その月の巡回で他より優先して投稿される(月1回まで)。優先対象は
+// 「今月にタグが付いている」記事に限定し(月タグ無し=毎月対象の記事は対象外)、
+// バインド順はELIGIBLE_ARTICLE_WHEREと同じ(userId, salonId, currentMonth)。
+const ELIGIBLE_TAGGED_FOR_MONTH_WHERE = `${ELIGIBLE_ARTICLE_BASE_WHERE}
+  AND a.month_tags_json != '[]'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS m(v) WHERE m.v::int = ?)
 `
 
 /** 指定した記事がまだ投稿対象として有効(承認済み・自動投稿ON・進行中ジョブなし等)かを確認する。 */
@@ -286,29 +296,72 @@ async function isArticleEligible(env: Bindings, userId: number, salonId: number 
 }
 
 /**
+ * 2026-08-22追記(ユーザー指定): 「投稿する月を限定する」の優先投稿(月1回まで)が
+ * 今月(JST)すでに使用済みかどうかを判定する。今月にタグ付けされた記事のいずれかが、
+ * 今月(JST)中に投稿済み(last_posted_at)であればtrue。
+ */
+async function isCurrentMonthPriorityUsed(env: Bindings, userId: number, salonId: number | null, currentMonth: number): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 as x FROM blog_articles a
+     WHERE a.user_id = ? AND a.salon_id = ?
+       AND a.last_posted_at IS NOT NULL
+       AND to_char(a.last_posted_at AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM') = to_char(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Tokyo', 'YYYY-MM')
+       AND a.month_tags_json != '[]'
+       AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS m(v) WHERE m.v::int = ?)`
+  )
+    .bind(userId, salonId, currentMonth)
+    .first<{ x: number }>()
+  return !!row
+}
+
+/**
+ * 「投稿する月を限定する」でチェックされた記事のうち、今月(JST)にタグ付けされ、
+ * まだ今月の優先枠(月1回まで)が使われていなければ、No.(sort_order/id)が
+ * 最も若いものを返す。優先枠が使用済み、または対象記事が無ければnullを返し、
+ * 呼び出し側は通常のラウンドロビン順(selectNextArticleId)に委ねる。
+ */
+async function selectPriorityArticleId(env: Bindings, userId: number, salonId: number | null, currentMonth: number): Promise<number | null> {
+  if (await isCurrentMonthPriorityUsed(env, userId, salonId, currentMonth)) return null
+  const row = await env.DB.prepare(
+    `SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_TAGGED_FOR_MONTH_WHERE} ORDER BY a.sort_order ASC, a.id ASC LIMIT 1`
+  )
+    .bind(userId, salonId, currentMonth)
+    .first<{ id: number }>()
+  return row?.id ?? null
+}
+
+/**
  * cronの巡回カーソル(next_cursor_article_id)より後ろの最初の1件を選び、
  * 無ければ(カーソル未設定、または最後まで巡回し終えた場合)先頭に戻る。
+ * 2026-08-22追記(ユーザー指定): 今月の優先枠(月1回まで)が既に使用済みの場合、
+ * 今月にタグ付けされた記事は通常のラウンドロビンからも除外し、同じ月に
+ * 二重投稿されないようにする。
  */
 async function selectNextArticleId(env: Bindings, userId: number, salonId: number | null, cursor: number | null): Promise<number | null> {
   const currentMonth = currentJstMonth()
+  const priorityUsed = await isCurrentMonthPriorityUsed(env, userId, salonId, currentMonth)
+  const monthExclusion = priorityUsed
+    ? `AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(a.month_tags_json::jsonb) AS me(v) WHERE me.v::int = ?)`
+    : ''
+  const monthExclusionBind = priorityUsed ? [currentMonth] : []
 
   if (cursor) {
     const nextRow = await env.DB.prepare(
       `SELECT a.id FROM blog_articles a
-       WHERE ${ELIGIBLE_ARTICLE_WHERE}
+       WHERE ${ELIGIBLE_ARTICLE_WHERE} ${monthExclusion}
          AND (a.sort_order, a.id) > (SELECT sort_order, id FROM blog_articles WHERE id = ?)
        ORDER BY a.sort_order ASC, a.id ASC
        LIMIT 1`
     )
-      .bind(userId, salonId, currentMonth, cursor)
+      .bind(userId, salonId, currentMonth, ...monthExclusionBind, cursor)
       .first<{ id: number }>()
     if (nextRow) return nextRow.id
   }
 
   const firstRow = await env.DB.prepare(
-    `SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_ARTICLE_WHERE} ORDER BY a.sort_order ASC, a.id ASC LIMIT 1`
+    `SELECT a.id FROM blog_articles a WHERE ${ELIGIBLE_ARTICLE_WHERE} ${monthExclusion} ORDER BY a.sort_order ASC, a.id ASC LIMIT 1`
   )
-    .bind(userId, salonId, currentMonth)
+    .bind(userId, salonId, currentMonth, ...monthExclusionBind)
     .first<{ id: number }>()
   return firstRow?.id ?? null
 }
@@ -485,7 +538,12 @@ export async function runNextArticleForUser(env: Bindings, userId: number, salon
 
   await requireCredentialsConfigured(env, userId)
 
-  const articleId = await selectNextArticleId(env, userId, salonId, schedule.next_cursor_article_id)
+  // 2026-08-22追記(ユーザー指定): 「投稿する月を限定する」でチェックした月の
+  // 記事は、通常のラウンドロビン巡回より優先して投稿する(月1回まで、複数
+  // 候補があればNo.=sort_order順)。優先対象が無ければ従来通りの巡回順。
+  const currentMonth = currentJstMonth()
+  const priorityArticleId = await selectPriorityArticleId(env, userId, salonId, currentMonth)
+  const articleId = priorityArticleId ?? (await selectNextArticleId(env, userId, salonId, schedule.next_cursor_article_id))
   if (!articleId) return null
 
   const runInsert = await env.DB.prepare(
@@ -495,17 +553,25 @@ export async function runNextArticleForUser(env: Bindings, userId: number, salon
     .run()
   const runId = Number(runInsert.meta.last_row_id)
 
+  // 優先投稿で選ばれた記事は通常の巡回順序の対象外のため、カーソルは進めない
+  // (次回以降も従来通りの巡回順で継続する)。
+  const shouldAdvanceCursor = !priorityArticleId
+
   try {
     await dispatchBlogPostJob(env, userId, salonId, articleId, runId)
-    await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
-      .bind(articleId, userId, salonId)
-      .run()
+    if (shouldAdvanceCursor) {
+      await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
+        .bind(articleId, userId, salonId)
+        .run()
+    }
     return { runId, totalArticles: 1, dispatchedCount: 1, failedToDispatchCount: 0, status: 'dispatched' }
   } catch (err: any) {
     const message = String(err?.message || err).slice(0, 500)
-    await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
-      .bind(articleId, userId, salonId)
-      .run()
+    if (shouldAdvanceCursor) {
+      await env.DB.prepare(`UPDATE blog_post_schedules SET next_cursor_article_id = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ? AND salon_id = ?`)
+        .bind(articleId, userId, salonId)
+        .run()
+    }
     await updateBlogConsecutiveFailureAndNotify(env, userId, salonId, false)
     await env.DB.prepare(`UPDATE blog_post_runs SET status = 'failed', error_message = ?, executed_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .bind(message, runId)
