@@ -275,25 +275,25 @@ blog.get('/blog/salon', async (c) => {
             選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。カテゴリ・投稿者はHPB公開ページの表示から一致するものを自動設定します(一致しない場合は未設定のままなので、追加後に編集画面で設定してください)。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
-            <button type="submit" class="w-full sm:w-auto mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
-              登録ブログへ追加
-            </button>
             <div class="grid grid-cols-2 gap-2 mb-3">
               <button
                 type="button"
                 id="blog-ref-select-all-btn"
-                class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-xs font-semibold px-3 py-1.5 rounded-lg"
               >
-                <i class="fas fa-check-double mr-1.5"></i>このページを全選択
+                <i class="fas fa-check-double mr-1"></i>このページを全選択
               </button>
               <button
                 type="button"
                 id="blog-ref-deselect-all-btn"
-                class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-xs font-semibold px-3 py-1.5 rounded-lg"
               >
-                <i class="fas fa-xmark mr-1.5"></i>このページを全解除
+                <i class="fas fa-xmark mr-1"></i>このページを全解除
               </button>
             </div>
+            <button type="submit" class="w-full sm:w-auto mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+              登録ブログへ追加
+            </button>
             <ul id="blog-ref-list" class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a, idx) => (
                 <li class="flex items-center gap-3 p-3" data-page={Math.floor(idx / 100) + 1}>

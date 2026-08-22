@@ -66,6 +66,8 @@ document.addEventListener('DOMContentLoaded', () => {
   var nextBtn = document.getElementById('blog-ref-page-next')
   var fwd5Btn = document.getElementById('blog-ref-page-fwd5')
   var lastBtn = document.getElementById('blog-ref-page-last')
+  var jumpInput = document.getElementById('blog-ref-page-jump-input')
+  var jumpBtn = document.getElementById('blog-ref-page-jump-btn')
 
   function renderPage() {
     var visibleCount = 0
@@ -110,6 +112,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (nextBtn) nextBtn.addEventListener('click', function () { goToPage(currentPage + 1) })
   if (fwd5Btn) fwd5Btn.addEventListener('click', function () { goToPage(currentPage + 5) })
   if (lastBtn) lastBtn.addEventListener('click', function () { goToPage(totalPages) })
+  function jumpToInputPage() {
+    if (!jumpInput) return
+    var page = parseInt(jumpInput.value, 10)
+    if (!isFinite(page)) return
+    goToPage(page)
+    jumpInput.value = ''
+  }
+  if (jumpBtn) jumpBtn.addEventListener('click', jumpToInputPage)
+  if (jumpInput) {
+    jumpInput.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        jumpToInputPage()
+      }
+    })
+  }
 
   // 全選択/全解除は現在表示中のページの記事だけを対象にする
   // (既存スタイル取り込みで、全ページ分が対象になってしまっていた不具合の

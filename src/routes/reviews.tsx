@@ -154,16 +154,33 @@ reviews.get('/reviews/trend', async (c) => {
                       <th class="px-4 py-3 text-left font-medium whitespace-nowrap">計測日</th>
                       <th class="px-4 py-3 text-left font-medium whitespace-nowrap">評価(総合スコア平均)</th>
                       <th class="px-4 py-3 text-left font-medium whitespace-nowrap">件数</th>
+                      <th class="px-4 py-3 text-left font-medium whitespace-nowrap">前回比</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-50">
-                    {trendByNewest.map((p) => (
-                      <tr>
-                        <td class="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">{compactDate(p.date)}</td>
-                        <td class="px-4 py-2.5 font-semibold text-gray-800 whitespace-nowrap">{p.avgOverall.toFixed(2)}</td>
-                        <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap">{p.count}件</td>
-                      </tr>
-                    ))}
+                    {trendByNewest.map((p, i) => {
+                      const prev = trendByNewest[i + 1]
+                      const diff = prev ? p.count - prev.count : null
+                      const sign = diff != null && diff > 0 ? '+' : ''
+                      const colorClass =
+                        diff == null
+                          ? 'text-gray-300'
+                          : diff > 0
+                            ? 'text-green-600'
+                            : diff < 0
+                              ? 'text-red-600'
+                              : 'text-gray-400'
+                      return (
+                        <tr>
+                          <td class="px-4 py-2.5 font-mono text-xs text-gray-600 whitespace-nowrap">{compactDate(p.date)}</td>
+                          <td class="px-4 py-2.5 font-semibold text-gray-800 whitespace-nowrap">{p.avgOverall.toFixed(2)}</td>
+                          <td class="px-4 py-2.5 text-gray-500 whitespace-nowrap">{p.count}件</td>
+                          <td class={`px-4 py-2.5 font-semibold whitespace-nowrap ${colorClass}`}>
+                            {diff == null ? '—' : `${sign}${diff}件`}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

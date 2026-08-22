@@ -121,6 +121,8 @@ document.addEventListener('DOMContentLoaded', () => {
     var nextBtn = document.getElementById('template-target-page-next')
     var fwd5Btn = document.getElementById('template-target-page-fwd5')
     var lastBtn = document.getElementById('template-target-page-last')
+    var jumpInput = document.getElementById('template-target-page-jump-input')
+    var jumpBtn = document.getElementById('template-target-page-jump-btn')
 
     function renderTemplateTargetPage() {
       var visibleCount = 0
@@ -164,6 +166,22 @@ document.addEventListener('DOMContentLoaded', () => {
     if (nextBtn) nextBtn.addEventListener('click', function () { goToTemplateTargetPage(currentPage + 1) })
     if (fwd5Btn) fwd5Btn.addEventListener('click', function () { goToTemplateTargetPage(currentPage + 5) })
     if (lastBtn) lastBtn.addEventListener('click', function () { goToTemplateTargetPage(totalPages) })
+    function jumpToInputPage() {
+      if (!jumpInput) return
+      var page = parseInt(jumpInput.value, 10)
+      if (!isFinite(page)) return
+      goToTemplateTargetPage(page)
+      jumpInput.value = ''
+    }
+    if (jumpBtn) jumpBtn.addEventListener('click', jumpToInputPage)
+    if (jumpInput) {
+      jumpInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') {
+          e.preventDefault()
+          jumpToInputPage()
+        }
+      })
+    }
   }
 
   const templateTargetSelectAllBtn = document.getElementById('template-target-select-all-btn')
