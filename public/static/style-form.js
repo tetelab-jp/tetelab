@@ -36,6 +36,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const styleImageDropzoneLabel = document.getElementById('style-image-dropzone-label')
   const styleImageDropzoneIcon = document.getElementById('style-image-dropzone-icon')
   const styleImagePreview = document.getElementById('style-image-preview')
+  const styleImageClearBtn = document.getElementById('style-image-clear-btn')
   if (styleImageInput && styleImageDropzoneLabel) {
     styleImageInput.addEventListener('change', () => {
       let file = styleImageInput.files && styleImageInput.files[0]
@@ -62,6 +63,21 @@ document.addEventListener('DOMContentLoaded', () => {
         styleImagePreview.removeAttribute('src')
         if (styleImageDropzoneIcon) styleImageDropzoneIcon.classList.remove('hidden')
       }
+      if (styleImageClearBtn) styleImageClearBtn.classList.toggle('hidden', !file)
+    })
+  }
+
+  // 2026-08-22追記(ユーザー指定): 選択した画像をバツボタンで削除できるように
+  // する。ボタンはfor="style-image-input"のlabel内にあるため、クリックが
+  // labelへ伝播するとファイル選択ダイアログが再度開いてしまう。
+  // stopPropagation/preventDefaultで防ぎ、入力クリア後にchangeイベントを
+  // 発火させて上のプレビュー表示/非表示ロジックを再利用する。
+  if (styleImageClearBtn && styleImageInput) {
+    styleImageClearBtn.addEventListener('click', (e) => {
+      e.preventDefault()
+      e.stopPropagation()
+      styleImageInput.value = ''
+      styleImageInput.dispatchEvent(new Event('change', { bubbles: true }))
     })
   }
 

@@ -953,8 +953,16 @@ function StyleForm({
         <label
           for="style-image-input"
           id="style-image-dropzone"
-          class="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
+          class="relative flex flex-col items-center justify-center gap-2 border-2 border-dashed border-gray-300 rounded-xl px-4 py-10 text-center cursor-pointer hover:border-pink-400 hover:bg-pink-50 transition-colors"
         >
+          <button
+            type="button"
+            id="style-image-clear-btn"
+            class="hidden absolute top-2 right-2 w-7 h-7 rounded-full bg-gray-800/70 hover:bg-gray-900/80 text-white text-sm flex items-center justify-center z-10"
+            aria-label="選択した画像を削除"
+          >
+            <i class="fas fa-xmark"></i>
+          </button>
           <i id="style-image-dropzone-icon" class="fas fa-cloud-arrow-up text-3xl text-gray-300"></i>
           <img id="style-image-preview" class="hidden max-h-48 rounded-lg object-contain" />
           <span id="style-image-dropzone-label" class="text-sm font-semibold text-gray-600">タップして画像を選択</span>
