@@ -464,6 +464,19 @@ function StyleListSection({
   )
 }
 
+// 2026-08-22追記(ユーザー指定): 「スタイル一括修正」で反映する項目を選べる
+// ようにする。キーはPOST /api/style/bulk-apply-templateのfields[]と対応する。
+const BULK_APPLY_FIELD_OPTIONS: { key: string; label: string }[] = [
+  { key: 'title', label: 'スタイル名' },
+  { key: 'stylist', label: '担当スタイリスト' },
+  { key: 'comment', label: 'スタイリストコメント' },
+  { key: 'category_length', label: 'カテゴリ・長さ' },
+  { key: 'menu', label: 'メニュー内容' },
+  { key: 'coupon', label: 'クーポン' },
+  { key: 'hashtags', label: 'ハッシュタグ' },
+  { key: 'model', label: 'モデル情報' }
+]
+
 function TemplateBulkApplySection({
   templates,
   hasStyles
@@ -480,6 +493,21 @@ function TemplateBulkApplySection({
           <option value={t.id}>{t.template_name}</option>
         ))}
       </select>
+
+      <div>
+        <p class="text-xs font-semibold text-gray-500 mb-2">適用する項目</p>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+          {BULK_APPLY_FIELD_OPTIONS.map((opt) => (
+            <label class="flex items-center gap-2 text-sm text-gray-700">
+              <input type="checkbox" class="bulk-apply-field-checkbox" value={opt.key} checked />
+              {opt.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <p class="text-xs font-semibold text-gray-600">チェックした項目を適用しますがよろしいですか？</p>
+
       <button
         id="bulk-apply-btn"
         type="button"
@@ -488,7 +516,7 @@ function TemplateBulkApplySection({
         <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
       <p class="text-xs text-gray-400">
-        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像を除く）を一括で反映します。
+        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像を除く）のうち、上でチェックした項目のみを一括で反映します。
       </p>
     </div>
   )
@@ -1554,13 +1582,23 @@ const BULK_APPLY_MAX_STYLES = 100
 
 style.post('/api/style/bulk-apply-template', async (c) => {
   const user = c.get('user')
-  const { templateId, styleIds } = await c.req.json<{ templateId: number; styleIds: number[] }>()
+  const { templateId, styleIds, fields } = await c.req.json<{
+    templateId: number
+    styleIds: number[]
+    fields?: string[]
+  }>()
 
   if (!templateId || !Array.isArray(styleIds) || styleIds.length === 0) {
     return c.json({ success: false, error: 'テンプレートと対象スタイルを選択してください' }, 400)
   }
   if (styleIds.length > BULK_APPLY_MAX_STYLES) {
     return c.json({ success: false, error: `一度に適用できるのは${BULK_APPLY_MAX_STYLES}件までです` }, 400)
+  }
+
+  const allowedFieldKeys = new Set(BULK_APPLY_FIELD_OPTIONS.map((opt) => opt.key))
+  const selectedFields = (Array.isArray(fields) ? fields : []).filter((f) => allowedFieldKeys.has(f))
+  if (selectedFields.length === 0) {
+    return c.json({ success: false, error: '適用する項目を選択してください' }, 400)
   }
 
   const template = await c.env.DB.prepare(
@@ -1579,10 +1617,10 @@ style.post('/api/style/bulk-apply-template', async (c) => {
   for (const styleId of styleIds) {
     try {
       const owned = await c.env.DB.prepare(
-        'SELECT id, title, stylist_id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?'
+        'SELECT id, stylist_id FROM styles WHERE id = ? AND user_id = ? AND salon_id = ?'
       )
         .bind(styleId, user.id, user.active_salon_id)
-        .first<{ id: number; title: string | null; stylist_id: number | null }>()
+        .first<{ id: number; stylist_id: number | null }>()
       if (!owned) {
         errors.push(`ID ${styleId}: 見つかりません`)
         continue
@@ -1592,29 +1630,52 @@ style.post('/api/style/bulk-apply-template', async (c) => {
       // (未設定の旧テンプレートの場合のみ、スタイル側の既存値を維持する)
       const effectiveStylistId = template.stylist_id ?? owned.stylist_id
 
-      await c.env.DB.prepare(
-        `UPDATE styles SET
-           title = ?, comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
-           menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
-           updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND user_id = ? AND salon_id = ?`
-      )
-        .bind(
-          template.title_template,
-          template.comment_template,
-          template.category_value,
-          template.length_value,
-          template.menu_values_json,
-          template.menu_detail_text,
-          effectiveStylistId,
-          template.coupon_id,
-          template.hashtags_json,
-          template.model_attributes_json,
-          styleId,
-          user.id,
-          user.active_salon_id
+      // 2026-08-22追記(ユーザー指定): 反映する項目をチェックボックスで選べる
+      // ようにしたため、選択された項目のSET句のみを組み立てて更新する
+      // (チェックを外した項目はスタイル側の既存値のまま変更しない)。
+      const setClauses: string[] = []
+      const values: unknown[] = []
+      if (selectedFields.includes('title')) {
+        setClauses.push('title = ?')
+        values.push(template.title_template)
+      }
+      if (selectedFields.includes('comment')) {
+        setClauses.push('comment = ?')
+        values.push(template.comment_template)
+      }
+      if (selectedFields.includes('category_length')) {
+        setClauses.push('category_value = ?', 'length_value = ?')
+        values.push(template.category_value, template.length_value)
+      }
+      if (selectedFields.includes('menu')) {
+        setClauses.push('menu_values_json = ?', 'menu_detail_text = ?')
+        values.push(template.menu_values_json, template.menu_detail_text)
+      }
+      if (selectedFields.includes('stylist')) {
+        setClauses.push('stylist_id = ?')
+        values.push(effectiveStylistId)
+      }
+      if (selectedFields.includes('coupon')) {
+        setClauses.push('coupon_id = ?')
+        values.push(template.coupon_id)
+      }
+      if (selectedFields.includes('hashtags')) {
+        setClauses.push('hashtags_json = ?')
+        values.push(template.hashtags_json)
+      }
+      if (selectedFields.includes('model')) {
+        setClauses.push('model_attributes_json = ?')
+        values.push(template.model_attributes_json)
+      }
+
+      if (setClauses.length > 0) {
+        setClauses.push('updated_at = CURRENT_TIMESTAMP')
+        await c.env.DB.prepare(
+          `UPDATE styles SET ${setClauses.join(', ')} WHERE id = ? AND user_id = ? AND salon_id = ?`
         )
-        .run()
+          .bind(...values, styleId, user.id, user.active_salon_id)
+          .run()
+      }
 
       const hasImage = await c.env.DB.prepare(
         `SELECT id FROM style_images WHERE style_id = ? AND image_role = 'FRONT'`
@@ -1622,13 +1683,27 @@ style.post('/api/style/bulk-apply-template', async (c) => {
         .bind(styleId)
         .first<{ id: number }>()
 
+      // 一部項目のみ反映した場合でも完了判定が正しくなるよう、更新後の
+      // 実際の値を読み直して判定する(チェックを外した項目は元の値のまま)。
+      const current = await c.env.DB.prepare(
+        'SELECT title, comment, length_value, menu_detail_text, stylist_id FROM styles WHERE id = ?'
+      )
+        .bind(styleId)
+        .first<{
+          title: string | null
+          comment: string | null
+          length_value: string | null
+          menu_detail_text: string | null
+          stylist_id: number | null
+        }>()
+
       const isReady =
         !!hasImage &&
-        !!template.title_template &&
-        !!template.comment_template &&
-        !!template.length_value &&
-        !!template.menu_detail_text &&
-        !!effectiveStylistId
+        !!current?.title &&
+        !!current?.comment &&
+        !!current?.length_value &&
+        !!current?.menu_detail_text &&
+        !!current?.stylist_id
 
       await c.env.DB.prepare('UPDATE styles SET internal_save_status = ? WHERE id = ?')
         .bind(isReady ? 'ready' : 'draft', styleId)

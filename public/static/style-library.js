@@ -238,6 +238,12 @@ document.addEventListener('DOMContentLoaded', () => {
         return
       }
 
+      const fields = Array.from(document.querySelectorAll('.bulk-apply-field-checkbox:checked')).map((cb) => cb.value)
+      if (fields.length === 0) {
+        alert('適用する項目を選択してください')
+        return
+      }
+
       const styleIds = Array.from(document.querySelectorAll('.template-target-checkbox:checked')).map((cb) =>
         Number(cb.getAttribute('data-image-id'))
       )
@@ -245,14 +251,13 @@ document.addEventListener('DOMContentLoaded', () => {
         alert('適用先のスタイルにチェックを入れてください')
         return
       }
-      if (!confirm(`チェック中の${styleIds.length}件のスタイルにテンプレートを適用します。よろしいですか？`)) return
 
       bulkApplyBtn.disabled = true
       try {
         const res = await fetch('/api/style/bulk-apply-template', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ templateId, styleIds })
+          body: JSON.stringify({ templateId, styleIds, fields })
         })
         const data = await res.json()
         if (data.success) {
