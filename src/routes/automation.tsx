@@ -947,7 +947,7 @@ automation.get('/api/blog-automation/jobs/:id', async (c) => {
   // どの設定が不足しているかを明示したメッセージで即座に失敗させる。
   if (!row.hpb_category_value) {
     const categoryLabel = row.category_name ? `記事カテゴリ「${row.category_name}」` : 'この記事の記事カテゴリ'
-    const message = `${categoryLabel}にHPBブログカテゴリが設定されていません。生成テンプレート画面(記事カテゴリの設定)からHPBブログカテゴリを選択・保存してから再度お試しください`
+    const message = `${categoryLabel}にHPBブログカテゴリが設定されていません。記事テンプレート作成画面(記事カテゴリの設定)からHPBブログカテゴリを選択・保存してから再度お試しください`
     await c.env.DB.prepare(
       `UPDATE blog_post_jobs SET status = 'failed', result_step = 'form_fill', result_message = ?, completed_at = CURRENT_TIMESTAMP WHERE id = ?`
     )

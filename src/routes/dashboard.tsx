@@ -1175,7 +1175,7 @@ dashboard.get('/settings/salon-info', async (c) => {
               <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
               サロンボードから情報取得
             </p>
-            <p class="text-sm text-gray-600 mt-1">AI生成に必要なサロンのデータをサロンボードから取得します。</p>
+            <p class="text-sm text-gray-600 mt-1">AI生成に必要な情報をサロンボードから取得します。</p>
           </div>
           <div class="flex flex-col items-center gap-1">
             <button id="salon-info-sync-btn" type="button" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap">

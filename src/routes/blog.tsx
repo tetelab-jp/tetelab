@@ -287,7 +287,7 @@ blog.get('/blog/salon', async (c) => {
 
       <p class="text-xs text-gray-400">
         住所・営業時間などの基本情報とフッター設定は
-        <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
+        <a href="/blog/template" class="text-pink-600 hover:underline">記事テンプレート作成</a>
         画面に移動しました。
       </p>
 
@@ -751,7 +751,7 @@ blog.get('/blog/template', async (c) => {
   const hasReferenceMaterial = Boolean(profile?.salonboard_synced_at) && referenceArticleCount > 0
 
   return c.render(
-    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-template" salonName={user.salon_name} title="生成テンプレート" styleEnabled={user.style_enabled !== 0}>
+    <PageLayout seoEnabled={user.seo_enabled !== 0} reviewEnabled={user.review_enabled !== 0} isImpersonated={user.is_impersonated === 1} active="blog-template" salonName={user.salon_name} title="記事テンプレート作成" styleEnabled={user.style_enabled !== 0}>
       {saved && (
         <div class="bg-green-50 border border-green-200 text-green-700 text-sm rounded-lg px-4 py-3">
           <i class="fas fa-circle-check mr-2"></i>保存しました
@@ -1012,7 +1012,7 @@ blog.get('/blog/template', async (c) => {
 
       <script src="/static/blog-template.js"></script>
     </PageLayout>,
-    { title: '生成テンプレート' }
+    { title: '記事テンプレート作成' }
   )
 })
 
@@ -1866,7 +1866,7 @@ blog.get('/blog/generate', async (c) => {
       {catList.length === 0 ? (
         <div class="bg-white rounded-xl border border-gray-100 p-6 text-sm text-gray-400">
           まだ記事カテゴリがありません。先に
-          <a href="/blog/template" class="text-pink-600 hover:underline">生成テンプレート</a>
+          <a href="/blog/template" class="text-pink-600 hover:underline">記事テンプレート作成</a>
           で記事カテゴリを作成してください。
         </div>
       ) : (
