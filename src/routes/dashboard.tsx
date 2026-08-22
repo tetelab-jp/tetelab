@@ -1169,7 +1169,7 @@ dashboard.get('/settings/salon-info', async (c) => {
       blogEnabled={user.blog_enabled !== 0}
     >
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-wrap gap-3">
           <div>
             <p class="font-semibold">
               <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
@@ -1177,8 +1177,8 @@ dashboard.get('/settings/salon-info', async (c) => {
             </p>
             <p class="text-sm text-gray-600 mt-1">AI生成に必要な情報をサロンボードから取得します。</p>
           </div>
-          <div class="flex flex-col items-center gap-1">
-            <button id="salon-info-sync-btn" type="button" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap">
+          <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
+            <button id="salon-info-sync-btn" type="button" class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap">
               サロンボードから情報取得
             </button>
             <p id="salon-info-last-at" class="text-xs text-gray-400 whitespace-nowrap">

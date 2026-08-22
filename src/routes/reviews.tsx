@@ -40,7 +40,7 @@ async function getBackfillState(c: AppContext, salonId: number) {
 function SyncStatusPanel({ backfillDone, lastSyncRunAt }: { backfillDone: boolean; lastSyncRunAt: string | null }) {
   return (
     <div id="review-sync-panel" class="bg-white rounded-xl border border-gray-100 p-6">
-      <div class="flex items-center justify-between flex-wrap gap-3">
+      <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-wrap gap-3">
         <div>
           <p class="font-semibold">
             <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
@@ -52,11 +52,11 @@ function SyncStatusPanel({ backfillDone, lastSyncRunAt }: { backfillDone: boolea
               : 'サロンボードの口コミ一覧とHPBの公開口コミ一覧を突き合わせて、過去全件を取り込みます(通常1〜2分程度で完了します)。'}
           </p>
         </div>
-        <div class="flex flex-col items-center gap-1">
+        <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
           <button
             id="review-sync-start-btn"
             type="button"
-            class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap disabled:opacity-50"
+            class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap disabled:opacity-50"
           >
             {backfillDone ? 'サロンボードから口コミを同期' : '取り込みを開始'}
           </button>
