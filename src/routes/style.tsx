@@ -354,16 +354,16 @@ function StyleListSection({
                 <button
                   type="button"
                   id="template-target-select-all-btn"
-                  class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                  class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-xs font-semibold px-3 py-1.5 rounded-lg"
                 >
-                  <i class="fas fa-check-double mr-1.5"></i>このページを全選択
+                  <i class="fas fa-check-double mr-1"></i>このページを全選択
                 </button>
                 <button
                   type="button"
                   id="template-target-deselect-all-btn"
-                  class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+                  class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-xs font-semibold px-3 py-1.5 rounded-lg"
                 >
-                  <i class="fas fa-xmark mr-1.5"></i>このページを全解除
+                  <i class="fas fa-xmark mr-1"></i>このページを全解除
                 </button>
               </div>
             )}
@@ -633,34 +633,32 @@ style.get('/style/import', async (c) => {
       </div>
 
       <div id="import-list-container" data-cache-scope={`${user.id}_${user.active_salon_id ?? ''}`} class="bg-white rounded-xl border border-gray-100 p-6 hidden">
-        <div class="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-          <p class="font-semibold sm:flex-1">
-            <i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択（<span id="import-list-count">0</span>件）
-          </p>
-          <button
-            type="button"
-            id="import-execute-btn"
-            class="import-execute-btn w-full sm:w-auto flex-shrink-0 bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 sm:px-8 sm:py-3.5 rounded-lg disabled:opacity-50"
-          >
-            <span class="import-execute-btn-label">登録スタイルへ追加</span>
-          </button>
-        </div>
+        <p class="font-semibold mb-4">
+          <i class="fas fa-list-check mr-2 text-pink-500"></i>取り込むスタイルを選択（<span id="import-list-count">0</span>件）
+        </p>
         <div class="grid grid-cols-2 gap-2 mb-3">
           <button
             type="button"
             id="import-select-all-btn"
-            class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+            class="w-full bg-pink-50 hover:bg-pink-100 border border-pink-300 text-pink-600 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
           >
-            <i class="fas fa-check-double mr-1.5"></i>スタイルを全選択
+            <i class="fas fa-check-double mr-1"></i>スタイルを全選択
           </button>
           <button
             type="button"
             id="import-deselect-all-btn"
-            class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap"
+            class="w-full bg-gray-50 hover:bg-gray-100 border border-gray-300 text-gray-600 text-xs font-semibold px-3 py-1.5 rounded-lg whitespace-nowrap"
           >
-            <i class="fas fa-xmark mr-1.5"></i>スタイルを全解除
+            <i class="fas fa-xmark mr-1"></i>スタイルを全解除
           </button>
         </div>
+        <button
+          type="button"
+          id="import-execute-btn"
+          class="import-execute-btn w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold text-sm sm:text-base px-6 py-3.5 rounded-lg disabled:opacity-50 mb-3"
+        >
+          <span class="import-execute-btn-label">登録スタイルへ追加</span>
+        </button>
         <p id="import-execute-status" class="text-xs text-gray-500 mb-3 min-h-[1rem]"></p>
         <ul id="import-list" class="text-sm divide-y divide-gray-50"></ul>
         <PaginationBar idPrefix="import" />

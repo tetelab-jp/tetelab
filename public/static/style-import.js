@@ -16,6 +16,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const pageNextBtn = document.getElementById('import-page-next')
   const pageFwd5Btn = document.getElementById('import-page-fwd5')
   const pageLastBtn = document.getElementById('import-page-last')
+  const pageJumpInput = document.getElementById('import-page-jump-input')
+  const pageJumpBtn = document.getElementById('import-page-jump-btn')
   const lastFetchAtEl = document.getElementById('style-fetch-last-at')
   const progressModal = document.getElementById('import-progress-modal')
   const progressText = document.getElementById('import-progress-text')
@@ -206,6 +208,22 @@ document.addEventListener('DOMContentLoaded', () => {
   if (pageNextBtn) pageNextBtn.addEventListener('click', () => goToPage(currentPage + 1))
   if (pageFwd5Btn) pageFwd5Btn.addEventListener('click', () => goToPage(currentPage + 5))
   if (pageLastBtn) pageLastBtn.addEventListener('click', () => goToPage(Math.max(1, Math.ceil(allStyles.length / PAGE_SIZE))))
+  function jumpToInputPage() {
+    if (!pageJumpInput) return
+    const page = parseInt(pageJumpInput.value, 10)
+    if (!Number.isFinite(page)) return
+    goToPage(page)
+    pageJumpInput.value = ''
+  }
+  if (pageJumpBtn) pageJumpBtn.addEventListener('click', jumpToInputPage)
+  if (pageJumpInput) {
+    pageJumpInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault()
+        jumpToInputPage()
+      }
+    })
+  }
 
   function saveCache(styles) {
     try {

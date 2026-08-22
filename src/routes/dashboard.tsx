@@ -270,6 +270,7 @@ dashboard.get('/dashboard', async (c) => {
         <DashboardNavCard
           icon="fa-images"
           title="スタイル投稿"
+          colorClasses="bg-pink-100 text-pink-600"
           autoOn={styleScheduleRow?.enabled === 1}
           count={styleTotalRow?.total ?? 0}
           unit="スタイル"
@@ -280,6 +281,7 @@ dashboard.get('/dashboard', async (c) => {
         <DashboardNavCard
           icon="fa-pen-to-square"
           title="ブログ投稿"
+          colorClasses="bg-blue-100 text-blue-600"
           autoOn={blogScheduleRow?.enabled === 1}
           count={blogArticlesRow?.total ?? 0}
           unit="記事"
@@ -290,6 +292,7 @@ dashboard.get('/dashboard', async (c) => {
         <DashboardNavCard
           icon="fa-comments"
           title="口コミ管理"
+          colorClasses="bg-purple-100 text-purple-600"
           autoOn={reviewReplyScheduleRow?.enabled === 1}
           count={reviewUnrepliedRow?.cnt ?? 0}
           unit="未返信"
@@ -300,6 +303,7 @@ dashboard.get('/dashboard', async (c) => {
         <DashboardNavCard
           icon="fa-list-check"
           title="SEO"
+          colorClasses="bg-amber-100 text-amber-600"
           autoOn={rankingScheduleRow?.enabled === 1}
           count={seoKeywordRow?.cnt ?? 0}
           unit="対策KW"
@@ -840,9 +844,13 @@ dashboard.post('/settings/account/password', async (c) => {
 // 2026-08-22追記(ユーザー指定): 以前は「開くボタン」のカードと、自動ON/OFF
 // +件数だけのカードを別々の行に分けていたが、後者はタイトルだけのテキスト
 // 項目だったため、各機能の「〜を開く」カードに集約した。
+// 2026-08-22追記(ユーザー指定): アイコンを目立たせたキャッチなデザインに変更し、
+// サロンボード連携設定カードと同じくカード全体をリンクにしてホバー時に
+// 色が変わるようにする(押せることが視覚的にわかるように)。
 function DashboardNavCard({
   icon,
   title,
+  colorClasses,
   autoOn,
   count,
   unit,
@@ -852,6 +860,7 @@ function DashboardNavCard({
 }: {
   icon: string
   title: string
+  colorClasses: string
   autoOn: boolean
   count: number
   unit: string
@@ -860,35 +869,40 @@ function DashboardNavCard({
   linkLabel: string
 }) {
   return (
-    <div class="bg-white rounded-xl border border-gray-100 p-5 flex flex-col">
-      <div class="flex items-center justify-between gap-2 mb-2">
-        <p class="font-semibold">
-          <i class={`fas ${icon} mr-2 text-pink-500`}></i>
-          {title}
-        </p>
+    <a
+      href={href}
+      class="group bg-white rounded-xl border border-gray-100 hover:border-pink-300 hover:bg-pink-50/40 transition-colors p-5 flex flex-col"
+    >
+      <div class="flex items-start justify-between gap-2 mb-3">
+        <span class={'w-11 h-11 rounded-xl flex items-center justify-center text-xl flex-shrink-0 ' + colorClasses}>
+          <i class={`fas ${icon}`}></i>
+        </span>
         <span
           class={
-            'flex-shrink-0 text-sm font-bold px-3 py-1 rounded-full ' +
+            'flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-full ' +
             (autoOn ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400')
           }
         >
           {autoOn ? '自動ON' : '自動OFF'}
         </span>
       </div>
-      <p class="text-lg font-bold text-gray-800 mb-2">
+      <p class="font-semibold text-gray-800">{title}</p>
+      <p class="text-lg font-bold text-gray-800 mt-1 mb-2">
         {count}
         <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
       </p>
       <p class="text-sm text-gray-600 mb-3 flex-1">{description}</p>
-      <a href={href} class="text-sm font-semibold text-pink-600 hover:underline">
-        {linkLabel} <i class="fas fa-arrow-right ml-1"></i>
-      </a>
-    </div>
+      <span class="text-sm font-semibold text-pink-600 flex items-center gap-1">
+        {linkLabel} <i class="fas fa-arrow-right group-hover:translate-x-0.5 transition-transform"></i>
+      </span>
+    </a>
   )
 }
 
 // 2026-08-22追記(ユーザー指定): モバイルではDashboardNavCard(説明文付き)ではなく、
 // アイコンを主役にしたアプリのホーム画面のようなタイルを2x2で並べる。
+// 自動化の有効/無効はドットではなく文字付きバッジで、押せることは右下の
+// 矢印アイコンでそれぞれ明示する。
 function DashboardNavIconTile({
   icon,
   label,
@@ -909,9 +923,16 @@ function DashboardNavIconTile({
   return (
     <a
       href={href}
-      class="relative bg-white rounded-2xl border border-gray-100 p-4 flex flex-col items-center gap-2 text-center active:scale-95 transition-transform"
+      class="relative bg-white rounded-2xl border border-gray-100 hover:border-pink-300 active:scale-95 transition-all shadow-sm p-4 flex flex-col items-center gap-2 text-center"
     >
-      {autoOn && <span class="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-green-500"></span>}
+      <span
+        class={
+          'absolute top-2.5 right-2.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full whitespace-nowrap ' +
+          (autoOn ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400')
+        }
+      >
+        {autoOn ? '自動ON' : '自動OFF'}
+      </span>
       <span class={'w-14 h-14 rounded-2xl flex items-center justify-center text-2xl ' + colorClasses}>
         <i class={`fas ${icon}`}></i>
       </span>
@@ -920,6 +941,7 @@ function DashboardNavIconTile({
         {count}
         {unit}
       </span>
+      <i class="fas fa-chevron-right text-gray-300 text-xs absolute bottom-3 right-3"></i>
     </a>
   )
 }
