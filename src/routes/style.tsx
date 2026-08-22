@@ -1743,7 +1743,7 @@ style.get('/style/template', async (c) => {
       isImpersonated={user.is_impersonated === 1}
       active="style-template"
       salonName={user.salon_name}
-      title="テンプレート作成・適用"
+      title="スタイル一括修正"
       blogEnabled={user.blog_enabled !== 0}
     >
       {saved && (
@@ -1760,6 +1760,7 @@ style.get('/style/template', async (c) => {
           <i class="fas fa-plus mr-1"></i>新規作成
         </a>
       </div>
+      <p class="text-sm text-gray-500">登録スタイルの情報をテンプレートで一括修正することが可能です。(画像以外)</p>
 
       {templates.length === 0 ? (
         <div class="bg-white rounded-xl border border-gray-100 p-6">
@@ -1816,7 +1817,7 @@ style.get('/style/template', async (c) => {
 
       <script src="/static/style-library.js"></script>
     </PageLayout>,
-    { title: 'テンプレート作成・適用' }
+    { title: 'スタイル一括修正' }
   )
 })
 
