@@ -37,6 +37,7 @@ const NAV_ITEMS: {
   { key: 'blog-generate', href: '/blog/generate', icon: 'fa-robot', label: 'AI記事生成', group: 'blog' },
   { key: 'blog-template', href: '/blog/template', icon: 'fa-wand-magic-sparkles', label: '生成テンプレート', group: 'blog' },
   { key: 'blog-salon', href: '/blog/salon', icon: 'fa-shop', label: 'HPBからブログ追加', group: 'blog' },
+  { key: 'salon-info', href: '/settings/salon-info', icon: 'fa-circle-info', label: 'サロン情報', group: 'blog' },
   { key: 'ranking-keywords', href: '/seo/keywords', icon: 'fa-list-check', label: '対策キーワード設定', group: 'ranking' },
   { key: 'ranking-measure', href: '/seo', icon: 'fa-magnifying-glass-chart', label: 'エリア順位測定', group: 'ranking' },
   { key: 'review-list', href: '/reviews/list', icon: 'fa-comments', label: '未返信口コミ', group: 'review' },
@@ -44,7 +45,6 @@ const NAV_ITEMS: {
   { key: 'review-trend', href: '/reviews/trend', icon: 'fa-chart-line', label: '口コミ評価推移', group: 'review' },
   { key: 'review-by-stylist', href: '/reviews/by-stylist', icon: 'fa-star', label: 'スタイリスト別評価', group: 'review' },
   { key: 'style-test-run', href: '/style/test-run', icon: 'fa-clock-rotate-left', label: '実行履歴', group: 'settings' },
-  { key: 'salon-info', href: '/settings/salon-info', icon: 'fa-shop', label: 'サロン情報', group: 'settings' },
   { key: 'auto-update', href: '/settings/auto-update', icon: 'fa-clock', label: '自動更新設定', group: 'settings' },
   { key: 'settings', href: '/settings/salonboard', icon: 'fa-key', label: 'サロンボード連携設定', group: 'settings' },
   { key: 'settings-account', href: '/settings/account', icon: 'fa-user-gear', label: 'アカウント設定', group: 'settings' }
