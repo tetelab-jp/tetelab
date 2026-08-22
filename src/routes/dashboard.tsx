@@ -61,16 +61,45 @@ dashboard.get('/dashboard', async (c) => {
     .bind(user.id, user.active_salon_id)
     .first<{ total: number }>()
 
-  const styleSelectedRow = await c.env.DB.prepare(
-    'SELECT COUNT(*) as selected FROM styles WHERE user_id = ? AND salon_id = ? AND auto_post_enabled_flag = 1'
-  )
-    .bind(user.id, user.active_salon_id)
-    .first<{ selected: number }>()
-
   const stylistCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM stylists WHERE user_id = ? AND salon_id = ?')
     .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
   const couponCountRow = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM coupons WHERE user_id = ? AND salon_id = ?')
+    .bind(user.id, user.active_salon_id)
+    .first<{ cnt: number }>()
+
+  // 2026-08-22追記(ユーザー指定): ダッシュボードに「スタイル投稿/ブログ投稿/
+  // 口コミ/SEO測定」の4項目(自動化ON/OFFと件数)をまとめて表示するための集計。
+  // 各機能の自動化ON/OFF状態は/settings/auto-updateと同じテーブルを参照する。
+  const styleScheduleRow = await c.env.DB.prepare(
+    'SELECT enabled FROM style_post_schedules WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ enabled: number }>()
+  const blogScheduleRow = await c.env.DB.prepare(
+    'SELECT enabled FROM blog_post_schedules WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ enabled: number }>()
+  const reviewReplyScheduleRow = await c.env.DB.prepare(
+    'SELECT enabled FROM review_reply_schedules WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ enabled: number }>()
+  const rankingScheduleRow = await c.env.DB.prepare(
+    'SELECT enabled FROM ranking_schedules WHERE user_id = ? AND salon_id = ?'
+  )
+    .bind(user.id, user.active_salon_id)
+    .first<{ enabled: number }>()
+
+  const reviewUnrepliedRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM reviews WHERE salon_id = ? AND replied_at IS NULL'
+  )
+    .bind(user.active_salon_id)
+    .first<{ cnt: number }>()
+  const seoKeywordRow = await c.env.DB.prepare(
+    'SELECT COUNT(*) as cnt FROM ranking_query_keywords WHERE query_id IN (SELECT id FROM ranking_queries WHERE user_id = ? AND salon_id = ?)'
+  )
     .bind(user.id, user.active_salon_id)
     .first<{ cnt: number }>()
 
@@ -121,9 +150,9 @@ dashboard.get('/dashboard', async (c) => {
         <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-3">
           <p class="font-semibold"><i class="fas fa-rotate mr-2 text-pink-500"></i>サロンボードと同期する</p>
           <p class="text-sm text-gray-500 leading-relaxed">
-            作業開始の前に必ずこちらから同期をしてください。
+            作業開始の前に必ず同期をしてください。
             <br />
-            登録されているスタイリスト・クーポンの一覧を取得し、スタイル投稿フォームで選べるようにします。
+            HPBのスタイリスト・クーポンの一覧を取得し、投稿フォームで選べるようにします。
             <br />
             ※サロンボードのスタイリストやクーポンを追加・変更した場合は再度同期してください。
           </p>
@@ -234,31 +263,48 @@ dashboard.get('/dashboard', async (c) => {
         </div>
       </div>
 
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-          <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
-            {isConnected ? (
-              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
-            ) : cred ? (
-              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
-            ) : (
-              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
-            )}
-          </p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">スタイル画像（選択中/総数）</p>
-          <p class="text-lg font-bold text-gray-800">
-            {styleSelectedRow?.selected ?? 0} / {styleTotalRow?.total ?? 0} 枚
-          </p>
-        </div>
-        <div class="bg-white rounded-xl border border-gray-100 p-5">
-          <p class="text-xs text-gray-400 mb-1">ブログ記事（自動投稿ON/総数）</p>
-          <p class="text-lg font-bold text-gray-800">
-            {blogArticlesRow?.auto_post_on ?? 0} / {blogArticlesRow?.total ?? 0} 件
-          </p>
-        </div>
+      <div class="bg-white rounded-xl border border-gray-100 p-5 max-w-xs">
+        <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
+        <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+          {isConnected ? (
+            <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+          ) : cred ? (
+            <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+          ) : (
+            <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+          )}
+        </p>
+      </div>
+
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <DashboardStatCard
+          icon="fa-images"
+          title="スタイル投稿"
+          autoOn={styleScheduleRow?.enabled === 1}
+          count={styleTotalRow?.total ?? 0}
+          unit="スタイル"
+        />
+        <DashboardStatCard
+          icon="fa-pen-to-square"
+          title="ブログ投稿"
+          autoOn={blogScheduleRow?.enabled === 1}
+          count={blogArticlesRow?.total ?? 0}
+          unit="記事"
+        />
+        <DashboardStatCard
+          icon="fa-comments"
+          title="口コミ"
+          autoOn={reviewReplyScheduleRow?.enabled === 1}
+          count={reviewUnrepliedRow?.cnt ?? 0}
+          unit="未返信"
+        />
+        <DashboardStatCard
+          icon="fa-list-check"
+          title="SEO測定"
+          autoOn={rankingScheduleRow?.enabled === 1}
+          count={seoKeywordRow?.cnt ?? 0}
+          unit="対策KW"
+        />
       </div>
 
       {cred && (
@@ -771,6 +817,46 @@ dashboard.post('/settings/account/password', async (c) => {
 // 3カテゴリ(スタイル投稿/ブログ投稿/SEO)を同一の見た目のルール(色付きアイコン
 // バッジ付きヘッダー+はっきりした枠線を持つ1枚のカード)で統一して並べるための
 // 共通ラッパー。カテゴリごとの識別はcolorClasses(アイコンバッジの配色)のみで行う。
+// 2026-08-22追記(ユーザー指定): ダッシュボードの「スタイル投稿/ブログ投稿/
+// 口コミ/SEO測定」4項目カード。各機能の自動化ON/OFFと件数(登録数/未返信数等)
+// を1枚のカードにまとめて表示する。
+function DashboardStatCard({
+  icon,
+  title,
+  autoOn,
+  count,
+  unit
+}: {
+  icon: string
+  title: string
+  autoOn: boolean
+  count: number
+  unit: string
+}) {
+  return (
+    <div class="bg-white rounded-xl border border-gray-100 p-5">
+      <div class="flex items-center justify-between gap-2 mb-2">
+        <p class="text-xs font-semibold text-gray-500 truncate">
+          <i class={`fas ${icon} mr-1 text-pink-500`}></i>
+          {title}
+        </p>
+        <span
+          class={
+            'flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full ' +
+            (autoOn ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400')
+          }
+        >
+          {autoOn ? '自動ON' : '自動OFF'}
+        </span>
+      </div>
+      <p class="text-lg font-bold text-gray-800">
+        {count}
+        <span class="text-xs font-normal text-gray-400 ml-1">{unit}</span>
+      </p>
+    </div>
+  )
+}
+
 function AutoUpdateSection({
   icon,
   colorClasses,
