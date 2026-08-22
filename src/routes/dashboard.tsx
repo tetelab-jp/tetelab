@@ -1168,24 +1168,28 @@ dashboard.get('/settings/salon-info', async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
     >
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
-        <div class="flex-1 min-w-[240px]">
-          <p class="text-xs text-gray-400">
-            サロンボードと連携し、HPB(ホットペッパービューティー)の公開ページから①〜⑤の情報を取得します。
-          </p>
+      <div class="bg-white rounded-xl border border-gray-100 p-6">
+        <div class="flex items-center justify-between flex-wrap gap-3">
+          <div>
+            <p class="font-semibold">
+              <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
+              サロンボードから情報取得
+            </p>
+            <p class="text-sm text-gray-600 mt-1">AI生成に必要なサロンのデータをサロンボードから取得します。</p>
+          </div>
+          <div class="flex flex-col items-center gap-1">
+            <button id="salon-info-sync-btn" type="button" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg whitespace-nowrap">
+              サロンボードから情報取得
+            </button>
+            <p id="salon-info-last-at" class="text-xs text-gray-400 whitespace-nowrap">
+              最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
+            </p>
+          </div>
         </div>
-        <div class="flex flex-col items-center gap-1">
-          <button id="salon-info-sync-btn" type="button" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap">
-            サロンボードから情報取得
-          </button>
-          <p id="salon-info-last-at" class="text-xs text-gray-400 whitespace-nowrap">
-            最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
-          </p>
-        </div>
-        <p id="salon-info-sync-status" class="text-sm text-gray-500 w-full"></p>
+        <p id="salon-info-sync-status" class="text-sm text-gray-500 mt-3"></p>
       </div>
 
-      <SalonInfoSection title="①サロントップ" icon="fa-shop">
+      <SalonInfoSection title="サロントップ" icon="fa-shop">
         <SalonInfoField label="キャッチコピー" value={profile?.hpb_catch ?? null} />
         <SalonInfoField label="紹介文" value={profile?.hpb_copy ?? null} />
         <SalonInfoField label="サロンからの一言" value={profile?.hpb_message ?? null} />
@@ -1195,7 +1199,7 @@ dashboard.get('/settings/salon-info', async (c) => {
         <SalonInfoField label="来店者の性別・年代比率" value={profile?.hpb_customer_ratio ?? null} />
       </SalonInfoSection>
 
-      <SalonInfoSection title="②スタイリスト個別プロフィール" icon="fa-users">
+      <SalonInfoSection title="スタイリスト個別プロフィール" icon="fa-users">
         {stylists.length === 0 ? (
           <p class="text-sm text-gray-300">未取得(サロンボードと連携済みのスタイリストのみ対象です)</p>
         ) : (
@@ -1214,15 +1218,15 @@ dashboard.get('/settings/salon-info', async (c) => {
         )}
       </SalonInfoSection>
 
-      <SalonInfoSection title="③こだわり" icon="fa-heart">
+      <SalonInfoSection title="こだわり" icon="fa-heart">
         <SalonInfoField label="こだわりページ" value={profile?.hpb_kodawari_text ?? null} />
       </SalonInfoSection>
 
-      <SalonInfoSection title="④特集" icon="fa-star">
+      <SalonInfoSection title="特集" icon="fa-star">
         <SalonInfoField label="特集(サロントップのカルーセル)" value={profile?.hpb_specials_text ?? null} />
       </SalonInfoSection>
 
-      <SalonInfoSection title="⑤クーポン内容" icon="fa-ticket">
+      <SalonInfoSection title="クーポン内容" icon="fa-ticket">
         {coupons.length === 0 ? (
           <p class="text-sm text-gray-300">未取得</p>
         ) : (

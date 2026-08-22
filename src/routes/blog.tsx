@@ -535,6 +535,14 @@ blog.post('/blog/salon/mark-synced', async (c) => {
   let articleCount = 0
   let hpbError: string | null = null
 
+  // 2026-08-22追記(ユーザー指摘の調査用): こだわり・クーポンの取得は
+  // これまで失敗時に無条件で空にフォールバックしており(全体を止めない
+  // ベストエフォート方針自体は維持)、失敗理由が一切ユーザーに見えなかった。
+  // 「こだわりが未取得のまま」という報告の原因切り分けのため、失敗時は
+  // エラー内容をhpbErrorに含めて画面に表示できるようにする。
+  let kodawariFetchError: string | null = null
+  let couponFetchError: string | null = null
+
   if (!salon?.hpb_sln_id) {
     hpbError = 'HPB公開ページのサロンIDが未検出のため、キャッチ・コピー・メッセージ・ブログ記事の取得はスキップされました'
   } else {
@@ -542,8 +550,14 @@ blog.post('/blog/salon/mark-synced', async (c) => {
       const [profileInfo, blogResult, kodawariPages, couponResult] = await Promise.all([
         fetchSalonProfileFromHpb(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }),
         fetchHpbBlogArticles(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }),
-        fetchHpbKodawariPages(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch(() => []),
-        fetchHpbCouponList(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch(() => ({ items: [], pagesScanned: 0 }))
+        fetchHpbKodawariPages(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch((err) => {
+          kodawariFetchError = String(err?.message || err).slice(0, 300)
+          return []
+        }),
+        fetchHpbCouponList(salon.hpb_sln_id, { proxyUrl: c.env.RANKING_PROXY_URL }).catch((err) => {
+          couponFetchError = String(err?.message || err).slice(0, 300)
+          return { items: [], pagesScanned: 0 }
+        })
       ])
       hpbCatch = profileInfo.catchCopy
       hpbCopy = profileInfo.description
@@ -647,9 +661,17 @@ blog.post('/blog/salon/mark-synced', async (c) => {
     )
       .bind(
         user.id, user.active_salon_id, hpbCatch, hpbCopy, hpbMessage, hpbAvgPriceFirst, hpbAvgPriceRepeat, hpbCustomerRatio,
-        hpbAtmosphereText, hpbSalonDataText, hpbSpecialsText, hpbKodawariText
+        hpbAtmosphereText, hpbSalonDataText, hpbSpecialsText, hpbKodawariText, hpbCouponsText
       )
       .run()
+  }
+
+  const fetchErrors = [
+    kodawariFetchError ? `こだわり取得エラー: ${kodawariFetchError}` : null,
+    couponFetchError ? `クーポン取得エラー: ${couponFetchError}` : null
+  ].filter(Boolean)
+  if (fetchErrors.length > 0) {
+    hpbError = [hpbError, ...fetchErrors].filter(Boolean).join(' / ')
   }
 
   return c.json({ success: true, articleCount, hpbError })
