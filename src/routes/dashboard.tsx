@@ -1168,21 +1168,21 @@ dashboard.get('/settings/salon-info', async (c) => {
       styleEnabled={user.style_enabled !== 0}
       blogEnabled={user.blog_enabled !== 0}
     >
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <p class="font-semibold text-sm">HPB公開ページから取得した、AI記事生成の参考材料</p>
-          <p class="text-xs text-gray-400 mt-1">
-            サロンボード連携時にHPB(ホットペッパービューティー)の公開ページから自動取得し、AI記事生成の参考情報として使われます。内容の更新は「HPBからブログ追加」画面の「サロンボードからブログ読み込み」から行えます。
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
+        <div class="flex-1 min-w-[240px]">
+          <p class="text-xs text-gray-400">
+            サロンボードと連携し、HPB(ホットペッパービューティー)の公開ページから①〜⑤の情報を取得します。
           </p>
         </div>
-        <div class="flex flex-col items-end gap-1">
-          <a href="/blog/salon" class="text-sm text-pink-600 hover:underline whitespace-nowrap">
-            HPBからブログ追加へ<i class="fas fa-arrow-right ml-1"></i>
-          </a>
-          <p class="text-xs text-gray-400">
+        <div class="flex flex-col items-center gap-1">
+          <button id="salon-info-sync-btn" type="button" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg whitespace-nowrap">
+            サロンボードから情報取得
+          </button>
+          <p id="salon-info-last-at" class="text-xs text-gray-400 whitespace-nowrap">
             最終取得: {profile?.salonboard_synced_at ? formatJstDateTimeCompact(profile.salonboard_synced_at) : '未取得'}
           </p>
         </div>
+        <p id="salon-info-sync-status" class="text-sm text-gray-500 w-full"></p>
       </div>
 
       <SalonInfoSection title="①サロントップ" icon="fa-shop">
@@ -1236,6 +1236,8 @@ dashboard.get('/settings/salon-info', async (c) => {
           </div>
         )}
       </SalonInfoSection>
+
+      <script src="/static/salon-info.js"></script>
     </PageLayout>,
     { title: 'サロン情報' }
   )
