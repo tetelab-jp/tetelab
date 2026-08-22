@@ -221,15 +221,15 @@ blog.get('/blog/salon', async (c) => {
         </div>
       )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-6 flex items-center gap-4 flex-wrap">
+      <div class="bg-white rounded-xl border border-gray-100 p-6 flex flex-col sm:flex-row sm:items-center gap-4 flex-wrap">
         <div class="flex-1 min-w-[240px]">
           <p class="font-semibold text-sm">サロンボードから読み込む</p>
           <p class="text-xs text-gray-400 mt-1">
             スタイリスト・クーポン・サロン名のほか、HPB公開ページのキャッチ・コピー・メッセージ・平均予約金額・来店者の性別/年代比率と過去のブログ記事(最大100件、参考記事{referenceArticleCount}件)を取得し、AI記事生成の参考材料にします
           </p>
         </div>
-        <div class="flex flex-col items-center gap-1">
-          <button id="blog-salon-sync-btn" class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
+        <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
+          <button id="blog-salon-sync-btn" class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-4 py-2 rounded-lg">
             サロンボードからブログ読み込み
           </button>
           <p id="blog-salon-last-at" class="text-xs text-gray-400">
@@ -255,30 +255,34 @@ blog.get('/blog/salon', async (c) => {
             選択した記事を登録ブログへ追加します。本文は一覧の抜粋がそのまま入るため、必要に応じて追加後に編集してください。カテゴリ・投稿者はHPB公開ページの表示から一致するものを自動設定します(一致しない場合は未設定のままなので、追加後に編集画面で設定してください)。タイトルをタップすると内容を確認できます。
           </p>
           <form method="post" action="/blog/salon/import-references">
-            <button type="submit" class="mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+            <button type="submit" class="w-full sm:w-auto mb-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
             <ul class="divide-y divide-gray-100 border border-gray-100 rounded-lg">
               {referenceArticles.map((a) => (
-                <li class="flex items-start gap-3 p-3">
-                  <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox mt-1 w-4 h-4 accent-pink-500 flex-shrink-0" />
+                <li class="flex items-center gap-3 p-3">
+                  <input type="checkbox" name="reference_id" value={a.id} class="blog-ref-checkbox w-4 h-4 accent-pink-500 flex-shrink-0" />
                   <a href={`/blog/salon/reference/${a.id}/preview`} class="min-w-0 flex-1 text-left">
                     <p class="text-sm font-medium text-gray-700 truncate">{a.title || '（無題）'}</p>
-                    <p class="text-xs text-gray-400 mt-0.5">
-                      {a.posted_date ? `${compactDate(a.posted_date)} ・ ` : ''}
-                      {a.excerpt.slice(0, 60)}
-                    </p>
-                    {(a.category_name || a.stylist_name) && (
-                      <p class="text-xs text-gray-400 mt-0.5">
-                        {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 mr-1">{a.category_name}</span>}
-                        {a.stylist_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5">{a.stylist_name}</span>}
-                      </p>
-                    )}
+                    <div class="flex flex-wrap items-center gap-x-2 gap-y-1 mt-1">
+                      {a.posted_date && (
+                        <span class="inline-flex items-center gap-1 text-xs font-semibold text-pink-600">
+                          <i class="fas fa-calendar-day"></i>{compactDate(a.posted_date)}
+                        </span>
+                      )}
+                      {a.stylist_name && (
+                        <span class="inline-flex items-center gap-1 text-xs font-semibold text-gray-700">
+                          <i class="fas fa-user"></i>{a.stylist_name}
+                        </span>
+                      )}
+                      {a.category_name && <span class="inline-block bg-gray-100 text-gray-500 rounded px-1.5 py-0.5 text-xs">{a.category_name}</span>}
+                    </div>
+                    <p class="text-xs text-gray-400 mt-1 truncate">{a.excerpt.slice(0, 60)}</p>
                   </a>
                 </li>
               ))}
             </ul>
-            <button type="submit" class="mt-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
+            <button type="submit" class="w-full sm:w-auto mt-3 bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg">
               登録ブログへ追加
             </button>
           </form>
@@ -889,7 +893,7 @@ blog.get('/blog/template', async (c) => {
             </p>
             <a
               href="/blog/template?new=1"
-              class="inline-block bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
+              class="block sm:inline-block w-full sm:w-auto text-center bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg"
             >
               新しい記事テンプレートを追加する
             </a>
@@ -919,7 +923,7 @@ blog.get('/blog/template', async (c) => {
                   type="button"
                   id="template-edit-open-btn"
                   disabled
-                  class="bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                  class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white text-sm font-semibold px-5 py-2.5 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   既存テンプレートを編集
                 </button>
@@ -1915,21 +1919,15 @@ blog.get('/blog/generate', async (c) => {
               <p class="font-semibold">生成の条件</p>
             </div>
             <div class="space-y-2">
-              <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" name="use_reference_articles" checked class="accent-pink-500" />
+              <label class="flex items-center gap-2 text-base font-medium text-gray-700">
+                <input type="checkbox" name="use_reference_articles" checked class="w-5 h-5 accent-pink-500" />
                 HPBの過去のブログの文章パターンを参考にする
               </label>
-              <label class="flex items-center gap-2 text-sm">
-                <input type="checkbox" name="use_hpb_info" checked class="accent-pink-500" />
-                HPBに掲載している情報を参考にする
+              <label class="flex items-center gap-2 text-base font-medium text-gray-700">
+                <input type="checkbox" name="use_hpb_info" checked class="w-5 h-5 accent-pink-500" />
+                HPBに掲載しているサロン情報を参考にする
               </label>
             </div>
-          </div>
-          <div class="bg-white rounded-xl border border-gray-100 p-6">
-            <label class="flex items-center gap-2 text-sm">
-              <input type="checkbox" name="footer_enabled" checked class="accent-pink-500" />
-              フッターを追加する
-            </label>
           </div>
           <button
             id="blog-generate-btn"
@@ -1951,7 +1949,10 @@ blog.get('/blog/generate', async (c) => {
 blog.post('/blog/generate', async (c) => {
   const user = c.get('user')
   const body = await c.req.parseBody()
-  const footerEnabled = body.footer_enabled === 'on' || body.footer_enabled === 'true'
+  // 2026-08-22追記(ユーザー指定): 画面から「フッターを追加する」チェック
+  // ボックスを削除したため、常にONで作成する(footer_enabled_flagは記事編集
+  // 画面から後で個別にOFFへ変更できる)。
+  const footerEnabled = true
   // 2026-08-22追記(ユーザー指定): 「生成の条件」チェックボックスで生成の
   // たびに指定する。カテゴリ側のuse_reference_articles設定はこの画面からの
   // 生成では使わず、フォームのチェック状態を優先する。

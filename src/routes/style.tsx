@@ -573,7 +573,7 @@ style.get('/style/import', async (c) => {
       )}
 
       <div class="bg-white rounded-xl border border-gray-100 p-6">
-        <div class="flex items-center justify-between flex-wrap gap-3">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between flex-wrap gap-3">
           <div>
             <p class="font-semibold">
               <i class="fas fa-arrows-rotate mr-2 text-pink-500"></i>
@@ -581,11 +581,11 @@ style.get('/style/import', async (c) => {
             </p>
             <p class="text-sm text-gray-600 mt-1">サロンボードに登録済みのスタイルを取得します。取得後、取り込むスタイルを選択できます。</p>
           </div>
-          <div class="flex flex-col items-center gap-1">
+          <div class="flex flex-col items-center gap-1 w-full sm:w-auto">
             <button
               id="fetch-list-btn"
               disabled={!cred}
-              class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm whitespace-nowrap disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
+              class="w-full sm:w-auto bg-pink-500 hover:bg-pink-600 text-white font-semibold px-5 py-2.5 rounded-lg text-sm whitespace-nowrap disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed"
             >
               <i class="fas fa-cloud-arrow-down mr-2"></i>
               <span id="fetch-list-btn-label">サロンボードからスタイル取得</span>
