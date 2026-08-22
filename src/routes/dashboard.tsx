@@ -270,9 +270,9 @@ dashboard.get('/dashboard', async (c) => {
         />
       </div>
 
-      {cred && (
-        <div class="max-w-2xl">
-          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-2">
+      <div class="flex flex-row items-stretch gap-4">
+        {cred && (
+          <div class="bg-white rounded-xl border border-gray-100 p-6 space-y-2 flex-1 min-w-0">
             <p class="font-semibold"><i class="fas fa-key mr-2 text-pink-500"></i>サロンボード連携設定</p>
             <p class="text-xs text-gray-400">
               サロンID・ログインID・パスワードの確認/更新は
@@ -280,20 +280,20 @@ dashboard.get('/dashboard', async (c) => {
               から行えます。
             </p>
           </div>
-        </div>
-      )}
+        )}
 
-      <div class="bg-white rounded-xl border border-gray-100 p-5 max-w-xs">
-        <p class="text-xs text-gray-400 mb-1">サロンボード連携</p>
-        <p class={'text-lg font-bold ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
-          {isConnected ? (
-            <><i class="fas fa-circle-check mr-1"></i>連携済み</>
-          ) : cred ? (
-            <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
-          ) : (
-            <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
-          )}
-        </p>
+        <div class="bg-white rounded-xl border border-gray-100 p-5 flex-shrink-0">
+          <p class="text-xs text-gray-400 mb-1 whitespace-nowrap">サロンボード連携</p>
+          <p class={'text-lg font-bold whitespace-nowrap ' + (isConnected ? 'text-green-600' : cred ? 'text-amber-500' : 'text-gray-400')}>
+            {isConnected ? (
+              <><i class="fas fa-circle-check mr-1"></i>連携済み</>
+            ) : cred ? (
+              <><i class="fas fa-triangle-exclamation mr-1"></i>未確認/失敗</>
+            ) : (
+              <><i class="fas fa-circle-xmark mr-1"></i>未設定</>
+            )}
+          </p>
+        </div>
       </div>
 
       {cred && <script src="/static/salonboard-sync.js"></script>}
