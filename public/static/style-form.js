@@ -92,20 +92,34 @@ document.addEventListener('DOMContentLoaded', () => {
   // されてしまうため、クライアント側でも同じ基準でチェックしてエラー表示する。
   const hashtagsInput = form ? form.querySelector('input[name="hashtags"]') : null
   const hashtagsError = form ? form.querySelector('.hashtags-error') : null
+  const hashtagsCount = form ? form.querySelector('.hashtags-count') : null
   const HASHTAG_TAG_PATTERN = /^[\p{L}\p{N}]+$/u
+  const MAX_HASHTAGS = 20
 
-  function isHashtagsValid() {
-    if (!hashtagsInput) return true
+  function getHashtagsList() {
+    if (!hashtagsInput) return []
     return hashtagsInput.value
       .split('/')
       .map((s) => s.trim())
       .filter(Boolean)
-      .every((tag) => HASHTAG_TAG_PATTERN.test(tag))
+  }
+
+  function isHashtagsValid() {
+    const tags = getHashtagsList()
+    return tags.length <= MAX_HASHTAGS && tags.every((tag) => HASHTAG_TAG_PATTERN.test(tag))
   }
 
   function updateHashtagsError() {
-    if (!hashtagsInput || !hashtagsError) return
-    hashtagsError.classList.toggle('hidden', isHashtagsValid())
+    if (!hashtagsInput) return
+    if (hashtagsCount) {
+      const count = getHashtagsList().length
+      hashtagsCount.textContent = `${count}/${MAX_HASHTAGS}個`
+      hashtagsCount.classList.toggle('text-red-500', count > MAX_HASHTAGS)
+      hashtagsCount.classList.toggle('text-gray-400', count <= MAX_HASHTAGS)
+    }
+    if (hashtagsError) {
+      hashtagsError.classList.toggle('hidden', isHashtagsValid())
+    }
   }
 
   if (hashtagsInput) {
@@ -182,7 +196,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!isHashtagsValid()) {
         e.preventDefault()
         updateHashtagsError()
-        alert('ハッシュタグの各タグは文字・数字のみ使用できます(空白・記号は使用できません)。')
+        alert('ハッシュタグは20個まで、各タグは文字・数字のみ使用できます(空白・記号は使用できません)。')
         return
       }
       if (!isRequiredFieldsFilled()) {

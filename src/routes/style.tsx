@@ -1070,7 +1070,7 @@ function StyleForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り、20個まで）</label>
         <input
           type="text"
           name="hashtags"
@@ -1078,8 +1078,9 @@ function StyleForm({
           placeholder="奈良美容室/髪質改善/ブリーチ毛ケア"
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        <p class="hashtags-count text-xs text-gray-400 mt-1">{hashtags.length}/20個</p>
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          各タグは文字・数字のみ使用できます(空白・記号は使用できません)。
+          各タグは文字・数字のみ使用できます(空白・記号は使用できません)。20個を超えたタグは保存されません。
         </p>
       </div>
 
@@ -1146,6 +1147,7 @@ style.get('/style/new', async (c) => {
 // (英数字・記号無し)。JSを経由しない直接POSTでも同じ制約を強制するため、
 // サーバー側でも同じパターンでフィルタする(部分一致ではなく1タグ丸ごと)。
 const HASHTAG_ALLOWED_PATTERN = /^[\p{L}\p{N}]+$/u
+const MAX_HASHTAGS = 20
 
 function parseStyleForm(body: Record<string, any>) {
   const category = String(body.category_value || 'SG01') as 'SG01' | 'SG02'
@@ -1158,6 +1160,7 @@ function parseStyleForm(body: Record<string, any>) {
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
+    .slice(0, MAX_HASHTAGS)
 
   return {
     // 2026-08-09追記: 実際のサロンボードの文字数上限は30/50/120であり、
@@ -1975,15 +1978,16 @@ function TemplateForm({
       </div>
 
       <div>
-        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り）</label>
+        <label class="block text-sm font-medium text-gray-700 mb-1">ハッシュタグ（スラッシュ区切り、20個まで）</label>
         <input
           type="text"
           name="hashtags"
           value={hashtags.join('/')}
           class="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
         />
+        <p class="hashtags-count text-xs text-gray-400 mt-1">{hashtags.length}/20個</p>
         <p class="hashtags-error hidden text-xs text-red-500 mt-1">
-          各タグは文字・数字のみ使用できます(空白・記号は使用できません)。
+          各タグは文字・数字のみ使用できます(空白・記号は使用できません)。20個を超えたタグは保存されません。
         </p>
       </div>
 
@@ -2026,6 +2030,7 @@ function parseTemplateForm(body: Record<string, any>) {
     .map((s) => s.trim())
     .filter(Boolean)
     .filter((s) => HASHTAG_ALLOWED_PATTERN.test(s))
+    .slice(0, MAX_HASHTAGS)
 
   return {
     templateName: String(body.template_name || '').trim(),
