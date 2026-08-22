@@ -232,8 +232,8 @@ type StyleListRow = {
 }
 
 // 2026-08-21追記: 登録済みスタイル(自動スタイル投稿の対象)は
-// サロンあたり300件までに制限する(要望対応)。
-const MAX_REGISTERED_STYLES = 300
+// サロンあたり500件までに制限する(要望対応。2026-08-22追記: 300→500へ引き上げ)。
+const MAX_REGISTERED_STYLES = 500
 
 async function countRegisteredStyles(c: AppContext, userId: number, salonId: number | null): Promise<number> {
   const row = await c.env.DB.prepare('SELECT COUNT(*) as cnt FROM styles WHERE user_id = ? AND salon_id = ?')
