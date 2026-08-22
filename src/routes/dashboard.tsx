@@ -1019,9 +1019,7 @@ dashboard.get('/settings/auto-update', async (c) => {
 
           <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
             <i class="fas fa-circle-info mr-2"></i>
-            自動投稿を有効にすると自動投稿対象のスタイルを登録順に{POST_INTERVAL_MINUTES_LABEL}分おきに1件ずつ「登録＋反映申請」まで自動実行します。
-            <br />
-            ※深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く時間帯
+            有効にすると{POST_INTERVAL_MINUTES_LABEL}分おきに1スタイルを投稿します。(深夜{BLACKOUT_START_LABEL}〜{BLACKOUT_END_LABEL}を除く)
             <br />
             現在<b>{styleSelectedCount}件</b>が対象です。
           </div>
@@ -1084,9 +1082,9 @@ dashboard.get('/settings/auto-update', async (c) => {
 
           <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
             <i class="fas fa-circle-info mr-2"></i>
-            自動投稿を有効にすると、SALON BOARDへ毎朝8:00に1本自動投稿します。
+            有効にすると毎朝8:00に1本自動投稿します。
             <br />
-            ※「投稿する月を限定する」を設定した記事はその月の1日に優先投稿されます(月1回まで)
+            ※「投稿する月を限定する」を設定した記事はその月に優先投稿されます。
             <br />
             現在<b>{blogAutoPostCount}件</b>が対象です。
           </div>
@@ -1119,7 +1117,7 @@ dashboard.get('/settings/auto-update', async (c) => {
       )}
 
       {seoEnabled && (
-        <AutoUpdateSection icon="fa-magnifying-glass-chart" colorClasses="bg-amber-100 text-amber-600" title="SEO">
+        <AutoUpdateSection icon="fa-magnifying-glass-chart" colorClasses="bg-amber-100 text-amber-600" title="SEO測定">
           <div>
             <p class="text-xs font-semibold text-gray-400 mb-2">自動測定</p>
             <form method="post" action="/seo/schedule" class="bg-gray-50 rounded-lg p-4">
@@ -1143,7 +1141,7 @@ dashboard.get('/settings/auto-update', async (c) => {
 
           <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
             <i class="fas fa-circle-info mr-2"></i>
-            定期測定を有効にすると、「対策キーワード設定」に登録した条件を毎週月曜日の夜20:00に自動計測します。
+            有効にすると毎週月曜日の夜20:00に「対策キーワード設定」に登録した条件を自動計測します。
             <br />
             前回の定期実行：{rankingLastRunAt ? formatJstDateTime(rankingLastRunAt) : 'なし'}
           </div>
@@ -1175,7 +1173,7 @@ dashboard.get('/settings/auto-update', async (c) => {
 
           <div class="bg-blue-50 border border-blue-200 rounded-xl p-5 text-sm text-blue-800">
             <i class="fas fa-circle-info mr-2"></i>
-            自動返信を有効にすると、HPB掲載済み・星4以上の口コミに毎朝9:00にAIが返信文を作成し自動投稿します。
+            有効にすると毎朝9:00にHPB掲載済み・星4以上の口コミにAIが返信文を作成し口コミの返信を自動投稿します。
             <br />
             ※星3以下は対象外です。「未返信口コミ」から手動またはAI生成→手動投稿してください
             <br />
