@@ -38,7 +38,16 @@ document.addEventListener('DOMContentLoaded', () => {
   const styleImagePreview = document.getElementById('style-image-preview')
   if (styleImageInput && styleImageDropzoneLabel) {
     styleImageInput.addEventListener('change', () => {
-      const file = styleImageInput.files && styleImageInput.files[0]
+      let file = styleImageInput.files && styleImageInput.files[0]
+      // 2026-08-22追記(ユーザー指定): 動画ファイルをアップロードできない
+      // 仕様にする。accept="image/*"は機種・ブラウザによっては動画も選択
+      // できてしまうため、選択直後にMIMEタイプを確認しクリアする
+      // (サーバー側にも同じ検証あり。ここはユーザー体験のための早期チェック)。
+      if (file && file.type && !file.type.startsWith('image/')) {
+        alert('動画ファイルはアップロードできません。画像ファイルを選択してください。')
+        styleImageInput.value = ''
+        file = null
+      }
       styleImageDropzoneLabel.textContent = file ? file.name : 'タップして画像を選択'
       if (file && styleImagePreview) {
         const reader = new FileReader()
