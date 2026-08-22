@@ -889,7 +889,7 @@ function StyleForm({
   stylists: { id: number; name: string }[]
   coupons: { id: number; name: string }[]
   templates: TemplateForAutofill[]
-  imageError?: boolean
+  imageError?: string
   limitError?: boolean
 }) {
   const category = detail?.category_value || 'SG01'
@@ -909,7 +909,9 @@ function StyleForm({
       {imageError && (
         <div class="rounded-lg bg-red-50 border border-red-200 text-red-700 px-4 py-3 text-sm">
           <i class="fas fa-circle-exclamation mr-2"></i>
-          画像の処理に失敗しました。別の画像でもう一度お試しください。
+          {imageError === 'video'
+            ? '動画ファイルはアップロードできません。画像ファイルを選択してください。'
+            : '画像の処理に失敗しました。別の画像でもう一度お試しください。'}
         </div>
       )}
       {limitError && (
@@ -1195,6 +1197,14 @@ async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number
   const file = body.image as File | undefined
   if (!file || !(file instanceof File) || file.size === 0) return
 
+  // 2026-08-22追記(ユーザー指定): 動画ファイルをアップロードできない仕様に
+  // する。accept="image/*"はクライアント側のヒントに過ぎず、機種・ブラウザ
+  // によっては動画も選択できてしまうため、サーバー側でもMIMEタイプを検証する。
+  const mimeType = (file as any).type || ''
+  if (!mimeType.startsWith('image/')) {
+    throw new Error('UNSUPPORTED_FILE_TYPE')
+  }
+
   const arrayBuffer = await file.arrayBuffer()
   // プロキシ経由のアップロードが大きいPOSTボディで失敗しやすいため、保存前に
   // 縦4:横3・最大600x800px・300KB以下のJPEGへ正規化する(image-process.ts参照)。
@@ -1284,7 +1294,8 @@ style.post('/style/new', async (c) => {
     // レコードが残る恐れもあった)。ステータスをdraftへ差し戻し、
     // ユーザーへ編集画面でエラーを伝える。
     await c.env.DB.prepare(`UPDATE styles SET internal_save_status = 'draft' WHERE id = ?`).bind(styleId).run().catch(() => {})
-    return c.redirect(`/style/${styleId}/edit?imageError=1`)
+    const errorKind = err?.message === 'UNSUPPORTED_FILE_TYPE' ? 'video' : '1'
+    return c.redirect(`/style/${styleId}/edit?imageError=${errorKind}`)
   }
 
   return c.redirect('/style/library?saved=1')
@@ -1327,7 +1338,7 @@ style.get('/style/:id/edit', async (c) => {
         stylists={stylists}
         coupons={coupons}
         templates={[]}
-        imageError={c.req.query('imageError') === '1'}
+        imageError={c.req.query('imageError') || undefined}
       />
     </PageLayout>,
     { title: 'スタイル編集' }
@@ -1348,7 +1359,8 @@ style.post('/style/:id/edit', async (c) => {
   try {
     await saveImageIfProvided(c, user, id, body)
   } catch (err: any) {
-    return c.redirect(`/style/${id}/edit?imageError=1`)
+    const errorKind = err?.message === 'UNSUPPORTED_FILE_TYPE' ? 'video' : '1'
+    return c.redirect(`/style/${id}/edit?imageError=${errorKind}`)
   }
 
   const hasImage = await c.env.DB.prepare(
