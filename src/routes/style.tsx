@@ -381,6 +381,7 @@ function StyleListSection({
                 class="flex items-center gap-2 md:gap-4 py-1.5 md:py-3"
                 data-image-id={s.id}
                 data-auto-post={s.auto_post_enabled_flag === 1 ? '1' : '0'}
+                data-page={Math.floor(idx / 100) + 1}
               >
                 <div class="flex flex-col items-center gap-1 flex-shrink-0 md:flex-row md:gap-4">
                   <input
@@ -443,6 +444,19 @@ function StyleListSection({
               </div>
             ))}
             </div>
+            {isTemplateMode && (
+              <div id="template-target-pagination" class="hidden items-center justify-between text-sm text-gray-500 mt-3 pt-3 border-t border-gray-100">
+                <span id="template-target-pagination-label"></span>
+                <div class="flex gap-3">
+                  <button type="button" id="template-target-page-prev" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+                    ← 前へ
+                  </button>
+                  <button type="button" id="template-target-page-next" class="hover:text-pink-600 disabled:opacity-30 disabled:cursor-not-allowed" disabled>
+                    次へ →
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -948,8 +962,19 @@ function StyleForm({
           スタイル画像（FRONT）<span style="color:#d32475">*</span>
         </label>
         {detail?.front_style_image_id && (
-          <img src={`/style/image/${detail.front_style_image_id}`} class="w-32 h-40 object-cover rounded-lg border border-gray-200 mb-2" />
+          <div class="relative inline-block mb-2" id="style-image-existing-wrap">
+            <img src={`/style/image/${detail.front_style_image_id}`} class="w-32 h-40 object-cover rounded-lg border border-gray-200" />
+            <button
+              type="button"
+              id="style-image-existing-remove-btn"
+              class="absolute top-2 right-2 w-7 h-7 rounded-full bg-gray-800/70 hover:bg-gray-900/80 text-white text-sm flex items-center justify-center"
+              aria-label="登録済みの画像を削除"
+            >
+              <i class="fas fa-xmark"></i>
+            </button>
+          </div>
         )}
+        <input type="hidden" name="remove_image" id="style-image-remove-flag" value="0" />
         <label
           for="style-image-input"
           id="style-image-dropzone"
@@ -1203,7 +1228,24 @@ function computeInternalSaveStatus(parsed: ReturnType<typeof parseStyleForm>, ha
 
 async function saveImageIfProvided(c: AppContext, user: AppUser, styleId: number, body: Record<string, any>) {
   const file = body.image as File | undefined
-  if (!file || !(file instanceof File) || file.size === 0) return
+  if (!file || !(file instanceof File) || file.size === 0) {
+    // 2026-08-22追記(ユーザー指定): 既に登録済みの画像をバツボタンで削除
+    // できるようにする。新しい画像が同時に選択されていない場合のみ、
+    // remove_image=1で削除フラグが立っていれば既存画像を削除する
+    // (新しい画像が選択されていればそちらで上書きされるため優先する)。
+    if (body.remove_image === '1') {
+      const existingFront = await c.env.DB.prepare(
+        `SELECT id, r2_key FROM style_images WHERE style_id = ? AND image_role = 'FRONT'`
+      )
+        .bind(styleId)
+        .first<{ id: number; r2_key: string }>()
+      if (existingFront) {
+        await c.env.STYLE_IMAGES.delete(existingFront.r2_key).catch(() => {})
+        await c.env.DB.prepare(`DELETE FROM style_images WHERE id = ?`).bind(existingFront.id).run()
+      }
+    }
+    return
+  }
 
   // 2026-08-22追記(ユーザー指定): 動画ファイルをアップロードできない仕様に
   // する。accept="image/*"はクライアント側のヒントに過ぎず、機種・ブラウザ

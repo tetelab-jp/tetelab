@@ -180,7 +180,7 @@ export async function generateCategoryDraft(
 {"draft": "伝えたいこと（2〜3文）"}`
 
   const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'category_draft')
-  return String(parsed.draft || '').trim()
+  return normalizeGeneratedText(String(parsed.draft || '')).trim()
 }
 
 export type ArticleGenerationInput = {
@@ -249,6 +249,16 @@ function fillPromptVariables(template: string, input: ArticleGenerationInput): s
     .replaceAll('{スタイリスト}', input.stylistName ? extractLastName(input.stylistName) : '')
     .replaceAll('{クーポン名}', input.couponName || '')
     .replaceAll('{本文上限}', String(input.bodyMaxChars))
+}
+
+// 2026-08-22追記(ユーザー指摘によるバグ修正): gpt-4o-miniがJSON出力の際、
+// 改行を実際の制御文字ではなく「\」+「n」という2文字のリテラル(二重エスケープ)
+// として書き出すことがあり、JSON.parse後も文字列内に見た目上の「\n」が
+// そのまま残って本文にそのまま表示されてしまう不具合が実機で確認された。
+// 生成結果に対する後処理として、リテラルな「\n」「\t」を実際の改行・タブに
+// 変換する(通常のJSON.parseで正しく改行された文章には影響しない)。
+function normalizeGeneratedText(text: string): string {
+  return text.replace(/\\n/g, '\n').replace(/\\t/g, '\t')
 }
 
 /**
@@ -328,8 +338,8 @@ export async function generateArticleContent(env: Bindings, input: ArticleGenera
 
   const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'article_content')
   return {
-    title: String(parsed.title || '').trim().slice(0, 25),
-    body: String(parsed.body || '').trim().slice(0, input.bodyMaxChars)
+    title: normalizeGeneratedText(String(parsed.title || '')).trim().slice(0, 25),
+    body: normalizeGeneratedText(String(parsed.body || '')).trim().slice(0, input.bodyMaxChars)
   }
 }
 
@@ -404,7 +414,7 @@ ${reviewLines.join('\n')}
 {"reply": "返信本文"}`
 
   const parsed = await callChatJson(env, systemLines.join('\n'), userPrompt, 'review_reply')
-  const body = String(parsed.reply || '').trim()
+  const body = normalizeGeneratedText(String(parsed.reply || '')).trim()
 
   // 2026-08-18追記(ユーザー指定): 口コミ投稿者の名前と本文は必ず改行する。
   // AI生成のばらつきを避けるため、呼びかけ行はここで機械的に組み立てる。
