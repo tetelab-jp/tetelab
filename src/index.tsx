@@ -839,7 +839,7 @@ const bindings: Bindings = {
   try {
     // 2026-08-17追記(ユーザー指定): ブログ「サロンボードから読み込む」を拡張し、
     // HPB公開ページからキャッチ・コピー・からの一言(メッセージ)と、過去の
-    // ブログ記事(最大100件、一覧ページの抜粋のみ)を取得してAI生成の参考材料に
+    // ブログ記事(最大300件、一覧ページの抜粋のみ)を取得してAI生成の参考材料に
     // する。廃止する文章スタイル選択ドロップダウン(style_mode/reference_text)の
     // 置き換え(詳細はmigrations-pg/0031_*.sql参照)。
     await bindings.DB.prepare(`ALTER TABLE salon_profiles ADD COLUMN IF NOT EXISTS hpb_catch TEXT`).run()
