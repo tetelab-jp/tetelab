@@ -884,7 +884,7 @@ blog.get('/blog/template', async (c) => {
               </div>
               <div>
                 <label class="block text-sm font-medium text-gray-700 mb-1">
-                  配信する月を限定する<span class="text-xs text-gray-400 ml-2">選んだ月ごろの内容として生成され、その記事の投稿予定月にもなります</span>
+                  投稿する月を限定する<span class="text-xs text-gray-400 ml-2">選んだ月ごろの内容として生成され、その記事の投稿予定月にもなります</span>
                 </label>
                 <div class="flex flex-wrap gap-3">
                   {(() => {
@@ -1466,7 +1466,7 @@ function ArticleForm({
           </div>
           <div>
             <label class="block text-sm font-medium text-gray-700 mb-1">
-              月タグ<span class="text-xs text-gray-400 ml-2">選んだ月だけ投稿対象になります(未選択なら毎月対象)</span>
+              投稿する月を限定する<span class="text-xs text-gray-400 ml-2">チェックした月の1日に優先投稿されます(月1回まで)。未選択なら毎月投稿対象</span>
             </label>
             <div class="flex flex-wrap gap-2">
               {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
