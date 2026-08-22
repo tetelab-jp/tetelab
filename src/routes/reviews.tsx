@@ -510,11 +510,14 @@ reviews.get('/reviews/replied', async (c) => {
   const state = await getBackfillState(c, salonId)
   const backfillDone = !!state?.backfill_completed_at
 
+  // 2026-08-22追記(ユーザー指定): この一覧はSalonMotion経由で返信した
+  // 口コミのみを掲載する。reply_method='external'(サロン担当者がSALON
+  // BOARD/HPBへ直接返信したものを口コミ同期で検知した分)は対象外とする。
   const { results: rows } = backfillDone
     ? await c.env.DB.prepare(
         `SELECT id, posted_at, score_overall, content, hpb_nickname, stylist_name_raw, matched_at,
                 replied_at, reply_content, reply_method, ai_reply_draft
-         FROM reviews WHERE salon_id = ? AND replied_at IS NOT NULL
+         FROM reviews WHERE salon_id = ? AND replied_at IS NOT NULL AND reply_method IN ('auto', 'manual')
          ORDER BY replied_at DESC
          LIMIT ${REVIEW_LIST_PAGE_SIZE}`
       )

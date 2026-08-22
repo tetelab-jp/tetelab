@@ -342,7 +342,16 @@ export async function fetchHpbKodawariPages(
     const html = await fetchHtml(url, dispatcher, options.signal)
     const { page, otherPageUrls } = parseHpbKodawariPage(html)
     pages.push(page)
-    for (const otherUrl of otherPageUrls) {
+    for (const rawUrl of otherPageUrls) {
+      // 2026-08-22追記(ユーザー指摘の調査用): ul.kodawariTabのhrefが相対パスの
+      // 場合に備え、現在のページURLを基準に絶対URLへ解決してから辿る
+      // (既に絶対URLの場合はそのまま維持される)。
+      let otherUrl: string
+      try {
+        otherUrl = new URL(rawUrl, url).href
+      } catch {
+        continue
+      }
       if (!visited.has(otherUrl)) {
         visited.add(otherUrl)
         queue.push(otherUrl)
