@@ -488,7 +488,7 @@ function TemplateBulkApplySection({
         <i class="fas fa-wand-magic-sparkles mr-2"></i>チェック中のスタイルに適用
       </button>
       <p class="text-xs text-gray-400">
-        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像・スタイル名を除く）を一括で反映します。
+        下のリストでチェックしたスタイルに、選んだテンプレートの内容（画像を除く）を一括で反映します。
       </p>
     </div>
   )
@@ -1568,7 +1568,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
   }
 
   const template = await c.env.DB.prepare(
-    `SELECT id, comment_template, category_value, length_value, menu_values_json,
+    `SELECT id, title_template, comment_template, category_value, length_value, menu_values_json,
             menu_detail_text, stylist_id, coupon_id, hashtags_json, model_attributes_json
      FROM templates WHERE id = ? AND user_id = ? AND salon_id = ?`
   )
@@ -1598,12 +1598,13 @@ style.post('/api/style/bulk-apply-template', async (c) => {
 
       await c.env.DB.prepare(
         `UPDATE styles SET
-           comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
+           title = ?, comment = ?, category_value = ?, length_value = ?, menu_values_json = ?,
            menu_detail_text = ?, stylist_id = ?, coupon_id = ?, hashtags_json = ?, model_attributes_json = ?,
            updated_at = CURRENT_TIMESTAMP
          WHERE id = ? AND user_id = ? AND salon_id = ?`
       )
         .bind(
+          template.title_template,
           template.comment_template,
           template.category_value,
           template.length_value,
@@ -1627,7 +1628,7 @@ style.post('/api/style/bulk-apply-template', async (c) => {
 
       const isReady =
         !!hasImage &&
-        !!owned.title &&
+        !!template.title_template &&
         !!template.comment_template &&
         !!template.length_value &&
         !!template.menu_detail_text &&
